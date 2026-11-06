@@ -1,0 +1,3 @@
+---
+ran_oai_enb_image: oaisoftwarealliance/oai-enb:latest
+ran_oai_gnb_image: oaisoftwarealliance/oai-gnb:latest

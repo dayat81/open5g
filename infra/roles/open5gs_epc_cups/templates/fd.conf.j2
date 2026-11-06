@@ -1,0 +1,13 @@
+Identity = "{{ item.identity }}.lab.invalid";
+Realm = "lab.invalid";
+No_SCTP;
+# Internal lab transport only: no certificates or private keys are stored here.
+No_TLS;
+LoadExtension = "/opt/open5gs/lib/freeDiameter/dbg_msg_dumps.fdx" : "0x8888";
+LoadExtension = "/opt/open5gs/lib/freeDiameter/dict_rfc5777.fdx";
+LoadExtension = "/opt/open5gs/lib/freeDiameter/dict_mip6i.fdx";
+LoadExtension = "/opt/open5gs/lib/freeDiameter/dict_nasreq.fdx";
+LoadExtension = "/opt/open5gs/lib/freeDiameter/dict_nas_mipv6.fdx";
+LoadExtension = "/opt/open5gs/lib/freeDiameter/dict_dcca.fdx";
+LoadExtension = "/opt/open5gs/lib/freeDiameter/dict_dcca_3gpp.fdx";
+ConnectPeer = "{{ item.peer }}.lab.invalid" { ConnectTo = "{{ item.peer_address }}"; TcTimer = 60; TwTimer = 30; No_TLS; };

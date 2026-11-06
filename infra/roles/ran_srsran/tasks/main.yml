@@ -1,0 +1,38 @@
+---
+- name: Render srsRAN environment using vaulted UE key material
+  ansible.builtin.template:
+    src: ran.env.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root }}/ran.env'
+    mode: '0640'
+  no_log: '{{ not iac_dry_run }}'
+- name: Render srsRAN profiles
+  ansible.builtin.template:
+    src: docker-compose-ran.yml.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root }}/docker-compose-ran.yml'
+    mode: '0640'
+- name: Install srsRAN radio resource configuration
+  ansible.builtin.template:
+    src: rr.conf.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root + "/conf/ran" }}/rr.conf'
+    mode: '0640'
+- name: Start srsUE before eNodeB
+  community.docker.docker_compose_v2:
+    project_src: '{{ lab_root }}'
+    files: [docker-compose-ran.yml]
+    services: [ue]
+    state: present
+  when: not iac_dry_run
+- name: Give srsUE time to initialize ZMQ
+  ansible.builtin.wait_for: {timeout: 8}
+  when: not iac_dry_run
+- name: Start the eNodeB
+  community.docker.docker_compose_v2:
+    project_src: '{{ lab_root }}'
+    files: [docker-compose-ran.yml]
+    services: [enb]
+    state: present
+  when: not iac_dry_run
+- name: Refresh routes after RAN starts
+  ansible.builtin.command: '{{ lab_root }}/lab-routes.sh'
+  when: not iac_dry_run
+  changed_when: true

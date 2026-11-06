@@ -1,0 +1,44 @@
+name: lab5g-dev-ran
+x-srs: &srs
+  image: '{{ srsran_image }}'
+  restart: 'no'
+  cpus: 2.5
+  mem_limit: 2048m
+  env_file: ./ran.env
+networks:
+  s1mme: {external: true, name: lab5g-dev_s1mme}
+  s1u: {external: true, name: lab5g-dev_s1u}
+  uu:
+    internal: true
+    ipam: {config: [{subnet: {{ docker_networks.uu.subnet }}, gateway: {{ docker_networks.uu.gateway }}}]}
+services:
+  enb:
+    <<: *srs
+    container_name: l5gd-enb
+    command:
+      - enb
+      - '--rf.device_name=zmq'
+{% if ran_srsran_profile == 'lte-only' %}
+      - '--rf.device_args=tx_port=tcp://*:2000,rx_port=tcp://{{ ran.ue_uu }}:2001,id=enb,base_srate=23.04e6'
+{% else %}
+      - '--rf.device_args=fail_on_disconnect=true,tx_port0=tcp://*:2000,rx_port0=tcp://{{ ran.ue_uu }}:2001,tx_port1=tcp://*:2100,rx_port1=tcp://{{ ran.ue_uu }}:2101,id=enb,base_srate=23.04e6'
+{% endif %}
+    volumes: ['./conf/ran/rr.conf:/etc/srsran/rr.conf:ro']
+    networks: {s1mme: {ipv4_address: {{ ran.enb_s1 }}}, s1u: {ipv4_address: {{ ran.enb_s1u }}}, uu: {ipv4_address: {{ ran.enb_uu }}}}
+  ue:
+    <<: *srs
+    container_name: l5gd-ue
+    command:
+      - ue
+      - '--rf.device_name=zmq'
+{% if ran_srsran_profile == 'lte-only' %}
+      - '--rf.device_args=tx_port=tcp://{{ ran.ue_uu }}:2001,rx_port=tcp://{{ ran.enb_uu }}:2000,id=ue,base_srate=23.04e6'
+{% else %}
+      - '--rf.device_args=tx_port0=tcp://{{ ran.ue_uu }}:2001,rx_port0=tcp://{{ ran.enb_uu }}:2000,tx_port1=tcp://{{ ran.ue_uu }}:2101,rx_port1=tcp://{{ ran.enb_uu }}:2100,id=ue,base_srate=23.04e6'
+      - '--rat.nr.bands=3'
+      - '--rat.nr.nof_carriers=1'
+      - '--rrc.release=15'
+{% endif %}
+    cap_add: [NET_ADMIN]
+    devices: ['/dev/net/tun']
+    networks: {uu: {ipv4_address: {{ ran.ue_uu }}}}

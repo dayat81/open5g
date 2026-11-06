@@ -1,0 +1,13 @@
+---
+- name: Render private subscriber seed script from vaulted values
+  ansible.builtin.template:
+    src: seed-subscriber.js.j2
+    dest: '{{ lab_root }}/secrets/seed-subscriber.js'
+    mode: '0600'
+  no_log: true
+  when: not iac_dry_run
+- name: Seed the example subscriber idempotently
+  ansible.builtin.command: docker exec -i l5gd-mongo mongosh --quiet --file /dev/stdin
+  args: {stdin: '{{ lookup("file", lab_root + "/secrets/seed-subscriber.js") }}'}
+  when: not iac_dry_run
+  changed_when: false

@@ -1,0 +1,55 @@
+---
+- name: Check the optional deployment preconditions
+  ansible.builtin.assert:
+    that:
+      - host_prep_lab_ssh_public_key | length > 20
+      - lab_vm_name == 'lab5g-dev'
+      - lab_iso_subnet == '172.22.20.0/24'
+
+- name: Install KVM tools
+  ansible.builtin.apt:
+    name: [libvirt-daemon-system, libvirt-clients, qemu-kvm, cloud-image-utils, virtinst]
+    state: present
+
+- name: Create VM working directory
+  ansible.builtin.file: {path: '{{ host_prep_lab_hypervisor_root }}', state: directory, mode: '0750'}
+
+- name: Define the development libvirt network
+  community.libvirt.virt_net:
+    name: '{{ lab_libvirt_network }}'
+    state: active
+    autostart: true
+    xml: '{{ lookup("template", "libvirt-network.xml.j2") }}'
+
+- name: Render cloud-init user data
+  ansible.builtin.template:
+    src: cloud-user-data.yml.j2
+    dest: '{{ host_prep_lab_hypervisor_root }}/user-data'
+    mode: '0600'
+- name: Render cloud-init metadata
+  ansible.builtin.copy:
+    content: |
+      instance-id: lab5g-dev-001
+      local-hostname: lab5g-dev
+    dest: '{{ host_prep_lab_hypervisor_root }}/meta-data'
+    mode: '0600'
+- name: Build the seed ISO
+  ansible.builtin.command: cloud-localds '{{ host_prep_lab_hypervisor_root }}/seed.iso' '{{ host_prep_lab_hypervisor_root }}/user-data' '{{ host_prep_lab_hypervisor_root }}/meta-data'
+  args: {creates: '{{ host_prep_lab_hypervisor_root }}/seed.iso'}
+
+- name: Create a copy-on-write VM disk
+  ansible.builtin.command: qemu-img create -f qcow2 -b '{{ lab_base_image }}' -F qcow2 '{{ host_prep_lab_hypervisor_root }}/lab5g-dev.qcow2' '{{ lab_vm_disk_gib }}G'
+  args: {creates: '{{ host_prep_lab_hypervisor_root }}/lab5g-dev.qcow2'}
+
+- name: Check whether the VM already exists
+  ansible.builtin.command: virsh dominfo '{{ lab_vm_name }}'
+  register: host_prep_domain
+  changed_when: false
+  failed_when: false
+- name: Import the development VM
+  ansible.builtin.command: >-
+    virt-install --name {{ lab_vm_name }} --memory {{ lab_vm_memory_mib }} --vcpus {{ lab_vm_vcpu }}
+    --cpu host-passthrough --disk path={{ host_prep_lab_hypervisor_root }}/lab5g-dev.qcow2,format=qcow2,bus=virtio
+    --disk path={{ host_prep_lab_hypervisor_root }}/seed.iso,device=cdrom --network network={{ lab_libvirt_network }},model=virtio
+    --os-variant {{ host_prep_lab_cloud_image_os_variant }} --import --noautoconsole --graphics none
+  when: host_prep_domain.rc != 0

@@ -1,0 +1,10 @@
+logger: {level: info}
+upf:
+  pfcp: {server: [{address: {{ core.upf_pfcp }}}]}
+  gtpu: {server: [{address: {{ core.upf_s5 }}}]}
+  session:
+{% for session in ue_sessions %}
+    - subnet: {{ session.subnet }}
+      gateway: {{ session.gateway }}
+      dnn: {{ session.dnn }}
+{% endfor %}

@@ -44,3 +44,6 @@ lab/**/override.env
 # Editor and OS
 .DS_Store
 *.swp
+
+# Ansible scratch created beside the playbook project
+.ansible/

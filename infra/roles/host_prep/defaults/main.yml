@@ -1,0 +1,4 @@
+---
+host_prep_lab_hypervisor_root: /var/lib/libvirt/lab5g-dev
+host_prep_lab_ssh_public_key: ''
+host_prep_lab_cloud_image_os_variant: ubuntu22.04

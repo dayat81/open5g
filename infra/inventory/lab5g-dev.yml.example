@@ -1,0 +1,12 @@
+---
+all:
+  children:
+    kvm_hosts:
+      hosts: {}
+      # Optional and disabled by default; define a dedicated development KVM host.
+    lab5g_dev:
+      hosts:
+        lab5g-dev:
+          ansible_host: 172.22.20.21
+          ansible_user: lab
+          ansible_ssh_private_key_file: '/absolute/path/to/lab_id_ed25519'

@@ -1,0 +1,84 @@
+---
+# Full address plan for a NEW, isolated development deployment.
+lab_environment: lab5g-dev
+lab_root: /home/lab/lab5g-dev
+lab_vm_create: false
+lab_vm_name: lab5g-dev
+lab_vm_vcpu: 8
+lab_vm_memory_mib: 16384
+lab_vm_disk_gib: 40
+lab_vm_ip: 172.22.20.21
+lab_libvirt_network: lab5g-dev-iso
+lab_libvirt_bridge: virbr-l5gdev
+lab_iso_subnet: 172.22.20.0/24
+lab_iso_gateway: 172.22.20.1
+lab_iso_dhcp_start: 172.22.20.10
+lab_iso_dhcp_end: 172.22.20.50
+lab_base_image: /var/lib/libvirt/images/base-ubuntu-cloud.qcow2
+plmn: {mcc: '001', mnc: '01'}
+
+docker_networks:
+  s1mme: {subnet: 10.99.1.0/24, gateway: 10.99.1.254}
+  s1u: {subnet: 10.99.2.0/24, gateway: 10.99.2.254}
+  s11: {subnet: 10.99.4.0/24, gateway: 10.99.4.254}
+  s5s8: {subnet: 10.99.5.0/24, gateway: 10.99.5.254}
+  pfcp: {subnet: 10.99.6.0/24, gateway: 10.99.6.254}
+  s6a: {subnet: 10.99.7.0/24, gateway: 10.99.7.254}
+  gx: {subnet: 10.99.8.0/24, gateway: 10.99.8.254}
+  sgi: {subnet: 10.99.9.0/24, gateway: 10.99.9.254}
+  mgmt: {subnet: 10.99.10.0/24, gateway: 10.99.10.254}
+  uu: {subnet: 10.99.11.0/24, gateway: 10.99.11.254}
+core:
+  mongo: 10.99.10.2
+  hss_s6a: 10.99.7.11
+  hss_mgmt: 10.99.10.3
+  pcrf_gx: 10.99.8.11
+  pcrf_mgmt: 10.99.10.4
+  mme_s1: 10.99.1.10
+  mme_s11: 10.99.4.10
+  mme_s6a: 10.99.7.10
+  sgwc_s11: 10.99.4.11
+  sgwc_s5: 10.99.5.11
+  sgwc_pfcp: 10.99.6.11
+  sgwu_pfcp: 10.99.6.12
+  sgwu_s1u: 10.99.2.12
+  sgwu_s5: 10.99.5.13
+  smf_s5: 10.99.5.12
+  smf_pfcp: 10.99.6.13
+  smf_gx: 10.99.8.12
+  upf_pfcp: 10.99.6.14
+  upf_s5: 10.99.5.14
+  upf_sgi: 10.99.9.10
+  server: 10.99.9.20
+ran:
+  enb_s1: 10.99.1.20
+  enb_s1u: 10.99.2.20
+  enb_uu: 10.99.11.20
+  ue_uu: 10.99.11.21
+ue_sessions:
+  - {dnn: internet, subnet: 10.45.0.0/16, gateway: 10.45.0.1}
+slice_upfs:
+  - name: slice-a
+    dnn: slice-a
+    pfcp: 10.99.6.15
+    s5: 10.99.5.15
+    sgi: 10.99.9.15
+    subnet: 10.46.0.0/16
+    gateway: 10.46.0.1
+  - name: slice-b
+    dnn: slice-b
+    pfcp: 10.99.6.16
+    s5: 10.99.5.16
+    sgi: 10.99.9.16
+    subnet: 10.47.0.0/16
+    gateway: 10.47.0.1
+smf_sessions: "{{ ue_sessions }}"
+# WIP: requested future Internet egress hop, not yet a validated replacement.
+internet_egress_enabled: false
+cgnat_ip: 10.99.9.30
+cgnat_tun: tun0
+socks_proxy_host: 172.22.20.1
+socks_proxy_port: 1080
+oai_profile_enabled: false
+iac_dry_run: false
+iac_render_dir: /tmp/iac-lab5g-dev-rendered

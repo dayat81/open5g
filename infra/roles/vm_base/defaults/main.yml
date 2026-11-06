@@ -1,0 +1,5 @@
+---
+vm_base_docker_version: '27.5.1'
+vm_base_docker_binaries_dir: /opt/lab5g-dev-offline/docker
+vm_base_docker_image_archives_dir: /opt/lab5g-dev-offline/images
+vm_base_docker_service_enabled: true

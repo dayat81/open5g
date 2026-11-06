@@ -1,0 +1,9 @@
+.env
+vault.yml
+inventory/lab5g-dev.yml
+rendered/
+*.retry
+__pycache__/
+.pytest_cache/
+.venv/
+.collections/

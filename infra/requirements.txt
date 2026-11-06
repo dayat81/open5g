@@ -1,0 +1,6 @@
+ansible-core>=2.16,<2.19
+ansible-lint>=24,<26
+yamllint>=1.35
+PyYAML>=6
+jsonschema>=4,<5
+Jinja2>=3.1

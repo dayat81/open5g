@@ -1,0 +1,22 @@
+logger: {level: info}
+smf:
+  freeDiameter: /etc/o5/fd/smf.conf
+  pfcp:
+    server: [{address: {{ core.smf_pfcp }}}]
+    client:
+      upf:
+        - address: {{ core.upf_pfcp }}
+{% for slice in slice_upfs %}
+        - address: {{ slice.pfcp }}
+{% endfor %}
+  gtpc: {server: [{address: {{ core.smf_s5 }}}]}
+  gtpu: {server: [{address: {{ core.smf_s5 }}}]}
+  session:
+{% for session in ue_sessions + slice_upfs %}
+    - subnet: {{ session.subnet }}
+      gateway: {{ session.gateway }}
+      dnn: {{ session.dnn }}
+{% endfor %}
+  dns: [{{ core.server }}]
+  mtu: 1400
+  ctf: {enabled: no}
