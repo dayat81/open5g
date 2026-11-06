@@ -20,7 +20,7 @@ APN is not S-NSSAI. 5GC N3, N6, N4, and a PCF are a different core. Putting AMF 
 
 **Gx RAR is capability-dependent.** The desired primary apply path is a live Gx RAR. The policy module rejects stock Open5GS 2.8 immediate QCI/ARP changes on an existing bearer and APN-AMBR RAR until a verified patch exists. This repository does not contain a working RAR integration, a PCRF adapter, or measured session evidence.
 
-**Multi-user dashboard.** Students work on server-assigned IMSIs. An instructor can edit and apply student IMSIs only inside that instructor's group. An admin manages assignment, catalog, and caps, and does not get a shared core-control panel. The checked-in piece is the policy module and PostgreSQL schema under [`dashboard/backend`](dashboard/backend). The HTTP service and the Next.js UI are not in this commit.
+**Multi-user dashboard.** Students work on server-assigned IMSIs. An instructor can edit and apply student IMSIs only inside that instructor's group. An admin manages assignment, catalog, and caps, and does not get a shared core-control panel. The checked-in service is the FastAPI app and policy module under [`dashboard/backend`](dashboard/backend). The Next.js UI is not in the tree yet.
 
 ## Topology
 

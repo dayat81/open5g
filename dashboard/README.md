@@ -13,15 +13,14 @@ python3 -m venv .venv
 .venv/bin/pytest -q
 ```
 
-The last local run of that command reported 12 passed. It does not apply the migration or open a port.
+`pytest -q` in this directory: 19 passed (12 domain tests plus the HTTP tests). The HTTP tests apply `migrations/001_init.sql` to a local PostgreSQL database and then roll the data back. They do not start a core.
 
 The stock apply function rejects immediate QCI/ARP changes on an existing bearer and APN-AMBR RAR for Open5GS 2.8, and it rejects any immediate Gx RAR because no adapter is implemented. A rejected result is not `pushed` or `active`. RAA 2001, when evaluated by the pure helper, is only `pushed`. Active still requires correlated session, PGW-C, or PFCP evidence. No live RAR or metric path is connected.
 
-## What is not in the tree
+## HTTP API (implemented, stock adapter rejects)
 
-- HTTP API and session cookies
-- Next.js UI
-- A production identity provider
-- Exporters, drill-down data from a core, or eBPF counters
+`python -m open5g_dashboard` serves the app after `OPEN5G_DATABASE_URL` and `OPEN5G_SESSION_PEPPER` (32+ characters) are set. There is no default password. Sessions use an HttpOnly `SameSite=Lax` cookie plus a CSRF token checked on mutating requests. Ownership is loaded from the assignment row. Immediate apply calls `stock_immediate_apply` and is stored as `rejected`, `executed=false`, `core_restart=false`. RAA 2001 is not treated as `active`. The demo sample route is off unless `OPEN5G_ENABLE_DEMO_ROUTES=1`, and its body is labeled `fake`.
+
+Not in this tree: Next.js UI, a production identity provider, a connected metric exporter, and eBPF counters. `/api/metrics/drilldown` returns an empty stub. `/api/core/restart` does not restart anything.
 
 The localStorage prototype is `docs/ux/prototype/`. It is a no-auth demo and does not replace the Next.js app.

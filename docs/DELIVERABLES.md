@@ -7,7 +7,7 @@ Status of branch `cursor/open5g-scaffold-341a` after the docs pack and the sanit
 | Item | Path | State |
 |---|---|---|
 | Repository purpose, Affero GPL notes, ignore rules | `README.md`, `NOTICE`, `.gitignore` | On `master` |
-| Profile policy module, PostgreSQL schema, hashed test lock | `dashboard/backend/` | Committed. Domain `pytest -q`: 12 passed. Migration not applied in that run. |
+| Profile policy module, FastAPI session API, PostgreSQL migration | `dashboard/backend/` | Committed. `pytest -q`: 19 passed, including migration apply and object-level authz. Stock apply is stored as rejected. |
 | UX sanitized pack | `docs/ux/` | Included. `prototype/` is localStorage, no auth, not the Next.js app. |
 | Feasibility memo and IA | `docs/design/` and `docs/pages/` mirrors | Included Markdown digests. |
 | PRD v0.4 Page snapshot | `docs/pages/prd-lab-5g-nsa-dashboard-v0.4.INTERIM-SNAPSHOT.md` | **Superseded / pending v0.5.** Not canonical. |
@@ -30,7 +30,6 @@ Status of branch `cursor/open5g-scaffold-341a` after the docs pack and the sanit
 |---|---|---|
 | Canonical Product Manager PRD v0.5, roadmap, decision log, risk register | `docs/prd/` | **Pending.** Placeholder only. |
 | Next.js Overview and IMSI editor | `dashboard/frontend/` | Not committed. |
-| FastAPI app and PostgreSQL migration test | `dashboard/backend` HTTP layer | Not in these archive commits. Uncommitted local files may exist and are not part of this manifest until they are committed. |
 | eBPF classifier skeleton and exporter | `ebpf/` beyond the README | Not committed. The lab package placeholder is not that skeleton. |
 
 ## Gates A–F
