@@ -1,0 +1,22 @@
+.skip {
+  position: absolute;
+  left: var(--space-3);
+  top: var(--space-3);
+  transform: translateY(-150%);
+  background: var(--surface-default);
+  color: var(--text-primary);
+  padding: var(--space-2) var(--space-3);
+  z-index: 20;
+}
+.skip:focus {
+  transform: none;
+}
+.demo-banner {
+  border-left-color: var(--warn);
+  background: var(--warn-soft);
+}
+@media (max-width: 800px) {
+  .nav {
+    display: block;
+  }
+}

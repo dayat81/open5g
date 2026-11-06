@@ -8,7 +8,8 @@ Status of branch `cursor/open5g-scaffold-341a` after the docs pack and the sanit
 |---|---|---|
 | Repository purpose, Affero GPL notes, ignore rules | `README.md`, `NOTICE`, `.gitignore` | On `master` |
 | Profile policy module, FastAPI session API, PostgreSQL migration | `dashboard/backend/` | Committed. `pytest -q`: 19 passed, including migration apply and object-level authz. Stock apply is stored as rejected. |
-| UX sanitized pack | `docs/ux/` | Included. `prototype/` is localStorage, no auth, not the Next.js app. |
+| UX sanitized pack | `docs/ux/` | Included. `prototype/` is localStorage, no auth, and is not the Next.js app. |
+| Next.js Overview and IMSI editor | `dashboard/frontend/` | Included. Demo mode is labeled and isolated. `npm test` 4 passed; lint, typecheck, and `next build` succeeded. `badge lifecycle-active` is not used for apply results. |
 | Feasibility memo and IA | `docs/design/` and `docs/pages/` mirrors | Included Markdown digests. |
 | Canonical PRD v0.6 | `docs/prd/PRD-v0.6.md`, `ROADMAP.md`, `DECISIONS.md`, `RISKS.md`, `README.md` | Included. Bytes match `docs/provenance/prd-v0.6/MANIFEST.md`. Supersedes the v0.4 snapshot and the pending v0.5 export. |
 | PRD v0.4 Page snapshot | `docs/pages/historical/prd-lab-5g-nsa-dashboard-v0.4.INTERIM-SNAPSHOT.md` | Historical only. The old path is a pointer, not the current PRD. |
@@ -29,7 +30,7 @@ Status of branch `cursor/open5g-scaffold-341a` after the docs pack and the sanit
 
 | Item | Path | State |
 |---|---|---|
-| Next.js Overview and IMSI editor | `dashboard/frontend/` | Not committed. Hi-fi under `docs/ux/hifi/` is the mapping source, not the app. |
+| Full session UI and production auth | `dashboard/frontend/` | The Next.js app does not invent a login. API mode requires an existing profile id, If-Match, and CSRF. |
 | eBPF packet parsing, loader, and lab BTF check | `ebpf/` | Not implemented. Compile check does not attach a program. Kernel/BTF/hook compatibility on lab5g-dev is unverified. |
 
 ## Gates A–F
@@ -40,7 +41,7 @@ Status of branch `cursor/open5g-scaffold-341a` after the docs pack and the sanit
 | B | Integrated NR cell snapshot **NOT ACCEPTED** (NA evidence: achieved-but-not-accepted). PRD D3 requires a **separate SgNB**. **WIP**. The OAI stack note in the PRD is a recommendation **pending approval**, not a decision. `/workspace/sgnb-feasibility.md` is **not in this repo**. |
 | C | PRD roadmap names eBPF app detection as **PLANNED** and BTF **UNKNOWN**. A non-parsing skeleton compiles in this environment and is not attached. No lab evidence summary. |
 | D | PRD roadmap names live RAR as **PLANNED**. The scaffold rejects immediate apply. The PCRF patch is draft and was not compiled or tested. |
-| E | PRD roadmap names the self-service dashboard as **PLANNED**. Session authz is implemented and tested. The Next.js UI is not. |
+| E | PRD roadmap names the self-service dashboard as **PLANNED**. Session authz and a demo Next.js UI are in the tree. The UI is not a completed multi-user product and was not tested against a live core. |
 | F | PRD roadmap marks further usage as **Later**. Not started. |
 
 PoC slicing gates 1–4 in `docs/evidence/gate-poc-slicing/SUMMARY.md` are a different list. They are not Gates C–F.

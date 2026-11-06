@@ -21,6 +21,8 @@ The stock apply function rejects immediate QCI/ARP changes on an existing bearer
 
 `python -m open5g_dashboard` serves the app after `OPEN5G_DATABASE_URL` and `OPEN5G_SESSION_PEPPER` (32+ characters) are set. There is no default password. Sessions use an HttpOnly `SameSite=Lax` cookie plus a CSRF token checked on mutating requests. Ownership is loaded from the assignment row. Immediate apply calls `stock_immediate_apply` and is stored as `rejected`, `executed=false`, `core_restart=false`. RAA 2001 is not treated as `active`. The demo sample route is off unless `OPEN5G_ENABLE_DEMO_ROUTES=1`, and its body is labeled `fake`.
 
-Not in this tree: Next.js UI, a production identity provider, a connected metric exporter, and eBPF counters. `/api/metrics/drilldown` returns an empty stub. `/api/core/restart` does not restart anything.
+`frontend/` is the Next.js Overview, profile editor, and audit screen. It maps `docs/ux/hifi` classes. Demo mode is the default and is labeled as sample data. It does not replace or wrap `docs/ux/prototype/`.
+
+Not in this tree: a production identity provider, a connected metric exporter, and eBPF counters read from the kernel. `/api/metrics/drilldown` returns an empty stub. `/api/core/restart` does not restart anything. The eBPF skeleton under `ebpf/` compiles without loading.
 
 The localStorage prototype is `docs/ux/prototype/`. It is a no-auth demo and does not replace the Next.js app.
