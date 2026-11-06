@@ -1,0 +1,87 @@
+int pcrf_gx_send_pcc_rar(
+        uint8_t *gx_sid, const char *imsi_bcd, const char *apn, int *matched)
+{
+    int rv, ret = 0, i, result = OGS_ERROR;
+    struct msg *req = NULL;
+    struct avp *avp = NULL;
+    union avp_value val;
+    struct sess_state *sess_data = NULL, *svg = NULL;
+    struct session *session = NULL;
+    int new;
+    ogs_diam_gx_message_t gx_message;
+    ogs_assert(gx_sid); ogs_assert(imsi_bcd); ogs_assert(matched);
+    memset(&gx_message, 0, sizeof(gx_message));
+    if (fd_sess_fromsid_msg((os0_t)gx_sid, strlen((char *)gx_sid),
+            &session, &new) != 0 || new) return OGS_ERROR;
+    ret = fd_sess_state_retrieve(pcrf_gx_reg, session, &sess_data);
+    ogs_assert(ret == 0);
+    if (!sess_data || strcmp(sess_data->imsi_bcd, imsi_bcd) != 0 ||
+            (apn && strcmp(sess_data->apn, apn) != 0)) return OGS_ERROR;
+    (*matched)++;
+    if (pcrf_db_qos_data(sess_data->imsi_bcd, sess_data->apn,
+                &gx_message.session_data) != OGS_OK) goto out;
+    ret = fd_msg_new(ogs_diam_gx_cmd_rar, MSGFL_ALLOC_ETEID, &req);
+    ogs_assert(ret == 0);
+    {
+        struct msg_hdr *h;
+        ret = fd_msg_hdr(req, &h); ogs_assert(ret == 0);
+        h->msg_appl = OGS_DIAM_GX_APPLICATION_ID;
+    }
+    ret = ogs_diam_message_session_id_set(req, (os0_t)gx_sid,
+            strlen((char *)gx_sid)); ogs_assert(ret == 0);
+    ret = fd_msg_sess_set(req, session); ogs_assert(ret == 0);
+    if (gx_message.session_data.num_of_pcc_rule == 0) { result = OGS_OK; goto out; }
+    ret = fd_msg_avp_new(ogs_diam_gx_charging_rule_install, 0, &avp);
+    ogs_assert(ret == 0);
+    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
+    for (i = 0; i < gx_message.session_data.num_of_pcc_rule; i++) {
+        ogs_pcc_rule_t *rule = &gx_message.session_data.pcc_rule[i];
+        rv = encode_pcc_rule_definition(avp, rule, rule->num_of_flow > 0);
+        if (rv != OGS_OK) goto out;
+    }
+    ret = fd_msg_add_origin(req, 0); ogs_assert(ret == 0);
+    ret = fd_msg_avp_new(ogs_diam_destination_host, 0, &avp); ogs_assert(ret == 0);
+    val.os.data = sess_data->peer_host; val.os.len = strlen((char *)sess_data->peer_host);
+    ret = fd_msg_avp_setvalue(avp, &val); ogs_assert(ret == 0);
+    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
+    ret = fd_msg_avp_new(ogs_diam_destination_realm, 0, &avp); ogs_assert(ret == 0);
+    val.os.data = (uint8_t *)fd_g_config->cnf_diamrlm;
+    val.os.len = strlen(fd_g_config->cnf_diamrlm);
+    ret = fd_msg_avp_setvalue(avp, &val); ogs_assert(ret == 0);
+    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
+    ret = fd_msg_avp_new(ogs_diam_auth_application_id, 0, &avp); ogs_assert(ret == 0);
+    val.i32 = OGS_DIAM_GX_APPLICATION_ID;
+    ret = fd_msg_avp_setvalue(avp, &val); ogs_assert(ret == 0);
+    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
+    ret = fd_msg_avp_new(ogs_diam_re_auth_request_type, 0, &avp); ogs_assert(ret == 0);
+    val.i32 = OGS_DIAM_RE_AUTH_REQUEST_TYPE_AUTHORIZE_ONLY;
+    ret = fd_msg_avp_setvalue(avp, &val); ogs_assert(ret == 0);
+    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
+    ret = clock_gettime(CLOCK_REALTIME, &sess_data->ts); ogs_assert(ret == 0);
+    svg = sess_data;
+    ret = fd_sess_state_store(pcrf_gx_reg, session, &sess_data); ogs_assert(ret == 0);
+    ogs_assert(sess_data == NULL);
+    ret = fd_msg_send(&req, pcrf_gx_raa_cb, svg);
+    if (ret == 0) {
+        OGS_DIAM_STATS_MTX(OGS_DIAM_STATS_INC(nb_sent);
+                PCRF_DIAM_PRIV_STATS_INC(gx.tx_rar));
+        ogs_info("Admin DB-PCC RAR pushed IMSI=%s APN=%s", imsi_bcd, sess_data->apn);
+        result = OGS_OK;
+    }
+out:
+    if (req) { ret = fd_msg_free(req); ogs_assert(ret == 0); }
+    if (sess_data && result != OGS_OK) {
+        ret = fd_sess_state_store(pcrf_gx_reg, session, &sess_data);
+        ogs_assert(ret == 0); ogs_assert(sess_data == NULL);
+    }
+    OGS_SESSION_DATA_FREE(&gx_message.session_data);
+    return result;
+}
+uint8_t *pcrf_sess_find_by_ipv4(uint32_t addr)
+{
+    uint8_t *sid = NULL;
+    ogs_thread_mutex_lock(&pcrf_self()->hash_lock);
+    sid = ogs_hash_get(pcrf_self()->ip_hash, &addr, OGS_IPV4_LEN);
+    ogs_thread_mutex_unlock(&pcrf_self()->hash_lock);
+    return sid;
+}

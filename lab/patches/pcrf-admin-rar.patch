@@ -1,0 +1,261 @@
+DRAFT, NOT COMPILED, NOT TESTED
+WIP package v1 — PCRF admin-triggered Gx RAR
+Against: Open5GS v2.8.0 tree at /workspace/open5gs-v2.8.0 (tag packaging finalize)
+Generated: 2026-11-06 20:21:01 +07 (Asia/Bangkok)
+Touched: src/pcrf/pcrf-fd-path.h pcrf-init.c meson.build pcrf-gx-path.c + NEW pcrf-admin-rar.[ch]
+NOT included in this unified diff: fragments/hash.c.add (orphan draft; stock already has pcrf_sess_find_by_ipv4)
+Known draft issues: admin-rar.c calls pcrf_sess_find_by_ipv4(inet_addr(...)) but stock API expects const void *key; not compiled/tested.
+
+diff -ruN /tmp/tmp.TEieHD3Pwq/a/src/pcrf/meson.build /tmp/tmp.TEieHD3Pwq/b/src/pcrf/meson.build
+--- /tmp/tmp.TEieHD3Pwq/a/src/pcrf/meson.build	2026-11-06 20:21:01.159171807 +0700
++++ /tmp/tmp.TEieHD3Pwq/b/src/pcrf/meson.build	2026-11-06 20:21:01.167171750 +0700
+@@ -19,6 +19,8 @@
+     pcrf-context.h
+     pcrf-fd-path.h
+     pcrf-event.h
++    pcrf-admin-rar.h
++    pcrf-admin-rar.c
+     pcrf-sm.h
+     metrics.h
+ 
+diff -ruN /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-admin-rar.c /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-admin-rar.c
+--- /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-admin-rar.c	1970-01-01 07:00:00.000000000 +0700
++++ /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-admin-rar.c	2026-11-06 20:21:01.167171750 +0700
+@@ -0,0 +1,80 @@
++/*
++ * Lab-only admin trigger. Unix socket + pre-shared token; no network listener.
++ * Request: <token> <IMSI> [APN]\n. Response: matched/pushed/no-active-session.
++ */
++#include "pcrf-context.h"
++#include "pcrf-fd-path.h"
++#include "pcrf-admin-rar.h"
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <poll.h>
++#include <fcntl.h>
++#include <ctype.h>
++#define ADMIN_SOCKET "/run/open5gs-pcrf-admin.sock"
++static int admin_fd = -1;
++static int write_all(int fd, const char *s) {
++    size_t left = strlen(s);
++    while (left) { ssize_t n = write(fd, s, left); if (n <= 0) return -1; s += n; left -= n; }
++    return 0;
++}
++int pcrf_admin_rar_init(void)
++{
++    struct sockaddr_un addr;
++    int flags;
++    if (!getenv("PCRF_ADMIN_TOKEN") || getenv("PCRF_ADMIN_TOKEN")[0] == '\0') {
++        ogs_error("PCRF_ADMIN_TOKEN must be set; admin RAR disabled");
++        return OGS_ERROR;
++    }
++    admin_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
++    if (admin_fd < 0) return OGS_ERROR;
++    unlink(ADMIN_SOCKET);
++    memset(&addr, 0, sizeof(addr));
++    addr.sun_family = AF_UNIX;
++    strcpy(addr.sun_path, ADMIN_SOCKET);
++    if (bind(admin_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
++            chmod(ADMIN_SOCKET, 0600) != 0 || listen(admin_fd, 4) != 0) {
++        ogs_error("pcrf admin socket setup failed: %s", strerror(errno));
++        close(admin_fd); admin_fd = -1; return OGS_ERROR;
++    }
++    flags = fcntl(admin_fd, F_GETFD); fcntl(admin_fd, F_SETFD, flags | FD_CLOEXEC);
++    ogs_info("Authenticated PCRF admin RAR trigger ready on %s", ADMIN_SOCKET);
++    return OGS_OK;
++}
++void pcrf_admin_rar_final(void)
++{
++    if (admin_fd >= 0) close(admin_fd);
++    admin_fd = -1; unlink(ADMIN_SOCKET);
++}
++void pcrf_admin_rar_dispatch(void)
++{
++    struct pollfd pfd = { .fd = admin_fd, .events = POLLIN };
++    int fd, matched = 0, pushed = 0;
++    char buf[256], *save = NULL, *token, *imsi, *apn, *ue_ip, *end;
++    const char *secret = getenv("PCRF_ADMIN_TOKEN");
++    if (admin_fd < 0 || poll(&pfd, 1, 0) <= 0 || !(pfd.revents & POLLIN)) return;
++    fd = accept4(admin_fd, NULL, NULL, SOCK_CLOEXEC);
++    if (fd < 0) return;
++    ssize_t len = read(fd, buf, sizeof(buf)-1);
++    if (len <= 0) { close(fd); return; }
++    buf[len] = '\0';
++    token = strtok_r(buf, " \t\r\n", &save);
++    imsi = strtok_r(NULL, " \t\r\n", &save);
++    apn = strtok_r(NULL, " \t\r\n", &save);
++    ue_ip = strtok_r(NULL, " \t\r\n", &save);
++    if (!secret || !token || !imsi || strcmp(secret, token) != 0)
++        { write_all(fd, "unauthorized\n"); close(fd); return; }
++    if (!apn || !ue_ip || inet_addr(ue_ip) == INADDR_NONE)
++        { write_all(fd, "usage: token IMSI APN UE_IPV4\n"); close(fd); return; }
++    if (strlen(imsi) < 5 || strlen(imsi) > 15)
++        { write_all(fd, "invalid-imsi\n"); close(fd); return; }
++    for (end = imsi; *end; end++) if (!isdigit((unsigned char)*end))
++        { write_all(fd, "invalid-imsi\n"); close(fd); return; }
++    {
++        uint8_t *sid = pcrf_sess_find_by_ipv4(inet_addr(ue_ip));
++        if (sid && pcrf_gx_send_pcc_rar(sid, imsi, apn, &matched) == OGS_OK) pushed++;
++    }
++    if (!matched) write_all(fd, "no-active-session\n");
++    else { char response[80]; snprintf(response, sizeof(response),
++            "pushed=%d matched=%d\n", pushed, matched); write_all(fd, response); }
++    close(fd);
++}
+diff -ruN /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-admin-rar.h /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-admin-rar.h
+--- /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-admin-rar.h	1970-01-01 07:00:00.000000000 +0700
++++ /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-admin-rar.h	2026-11-06 20:21:01.171171721 +0700
+@@ -0,0 +1,7 @@
++/* Dev-only authenticated admin trigger for database-sourced Gx RAR. */
++#ifndef PCRF_ADMIN_RAR_H
++#define PCRF_ADMIN_RAR_H
++int pcrf_admin_rar_init(void);
++void pcrf_admin_rar_final(void);
++void pcrf_admin_rar_dispatch(void);
++#endif
+diff -ruN /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-fd-path.h /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-fd-path.h
+--- /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-fd-path.h	2026-11-06 20:21:01.155171837 +0700
++++ /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-fd-path.h	2026-11-06 20:21:01.167171750 +0700
+@@ -66,6 +66,9 @@
+ void pcrf_rx_final(void);
+ 
+ int pcrf_gx_send_rar(
++int pcrf_gx_send_pcc_rar(
++        uint8_t *gx_sid, const char *imsi_bcd, const char *apn, int *matched);
++uint8_t *pcrf_sess_find_by_ipv4(uint32_t addr);
+         uint8_t *gx_sid, uint8_t *rx_sid, ogs_diam_rx_message_t *rx_message);
+ int pcrf_rx_send_asr(
+         uint8_t *rx_sid, uint32_t abort_cause);
+diff -ruN /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-gx-path.c /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-gx-path.c
+--- /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-gx-path.c	2026-11-06 20:21:01.159171807 +0700
++++ /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-gx-path.c	2026-11-06 20:21:01.171171721 +0700
+@@ -1828,3 +1828,90 @@
+ 
+     return OGS_OK;
+ }
++int pcrf_gx_send_pcc_rar(
++        uint8_t *gx_sid, const char *imsi_bcd, const char *apn, int *matched)
++{
++    int rv, ret = 0, i, result = OGS_ERROR;
++    struct msg *req = NULL;
++    struct avp *avp = NULL;
++    union avp_value val;
++    struct sess_state *sess_data = NULL, *svg = NULL;
++    struct session *session = NULL;
++    int new;
++    ogs_diam_gx_message_t gx_message;
++    ogs_assert(gx_sid); ogs_assert(imsi_bcd); ogs_assert(matched);
++    memset(&gx_message, 0, sizeof(gx_message));
++    if (fd_sess_fromsid_msg((os0_t)gx_sid, strlen((char *)gx_sid),
++            &session, &new) != 0 || new) return OGS_ERROR;
++    ret = fd_sess_state_retrieve(pcrf_gx_reg, session, &sess_data);
++    ogs_assert(ret == 0);
++    if (!sess_data || strcmp(sess_data->imsi_bcd, imsi_bcd) != 0 ||
++            (apn && strcmp(sess_data->apn, apn) != 0)) return OGS_ERROR;
++    (*matched)++;
++    if (pcrf_db_qos_data(sess_data->imsi_bcd, sess_data->apn,
++                &gx_message.session_data) != OGS_OK) goto out;
++    ret = fd_msg_new(ogs_diam_gx_cmd_rar, MSGFL_ALLOC_ETEID, &req);
++    ogs_assert(ret == 0);
++    {
++        struct msg_hdr *h;
++        ret = fd_msg_hdr(req, &h); ogs_assert(ret == 0);
++        h->msg_appl = OGS_DIAM_GX_APPLICATION_ID;
++    }
++    ret = ogs_diam_message_session_id_set(req, (os0_t)gx_sid,
++            strlen((char *)gx_sid)); ogs_assert(ret == 0);
++    ret = fd_msg_sess_set(req, session); ogs_assert(ret == 0);
++    if (gx_message.session_data.num_of_pcc_rule == 0) { result = OGS_OK; goto out; }
++    ret = fd_msg_avp_new(ogs_diam_gx_charging_rule_install, 0, &avp);
++    ogs_assert(ret == 0);
++    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
++    for (i = 0; i < gx_message.session_data.num_of_pcc_rule; i++) {
++        ogs_pcc_rule_t *rule = &gx_message.session_data.pcc_rule[i];
++        rv = encode_pcc_rule_definition(avp, rule, rule->num_of_flow > 0);
++        if (rv != OGS_OK) goto out;
++    }
++    ret = fd_msg_add_origin(req, 0); ogs_assert(ret == 0);
++    ret = fd_msg_avp_new(ogs_diam_destination_host, 0, &avp); ogs_assert(ret == 0);
++    val.os.data = sess_data->peer_host; val.os.len = strlen((char *)sess_data->peer_host);
++    ret = fd_msg_avp_setvalue(avp, &val); ogs_assert(ret == 0);
++    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
++    ret = fd_msg_avp_new(ogs_diam_destination_realm, 0, &avp); ogs_assert(ret == 0);
++    val.os.data = (uint8_t *)fd_g_config->cnf_diamrlm;
++    val.os.len = strlen(fd_g_config->cnf_diamrlm);
++    ret = fd_msg_avp_setvalue(avp, &val); ogs_assert(ret == 0);
++    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
++    ret = fd_msg_avp_new(ogs_diam_auth_application_id, 0, &avp); ogs_assert(ret == 0);
++    val.i32 = OGS_DIAM_GX_APPLICATION_ID;
++    ret = fd_msg_avp_setvalue(avp, &val); ogs_assert(ret == 0);
++    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
++    ret = fd_msg_avp_new(ogs_diam_re_auth_request_type, 0, &avp); ogs_assert(ret == 0);
++    val.i32 = OGS_DIAM_RE_AUTH_REQUEST_TYPE_AUTHORIZE_ONLY;
++    ret = fd_msg_avp_setvalue(avp, &val); ogs_assert(ret == 0);
++    ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp); ogs_assert(ret == 0);
++    ret = clock_gettime(CLOCK_REALTIME, &sess_data->ts); ogs_assert(ret == 0);
++    svg = sess_data;
++    ret = fd_sess_state_store(pcrf_gx_reg, session, &sess_data); ogs_assert(ret == 0);
++    ogs_assert(sess_data == NULL);
++    ret = fd_msg_send(&req, pcrf_gx_raa_cb, svg);
++    if (ret == 0) {
++        OGS_DIAM_STATS_MTX(OGS_DIAM_STATS_INC(nb_sent);
++                PCRF_DIAM_PRIV_STATS_INC(gx.tx_rar));
++        ogs_info("Admin DB-PCC RAR pushed IMSI=%s APN=%s", imsi_bcd, sess_data->apn);
++        result = OGS_OK;
++    }
++out:
++    if (req) { ret = fd_msg_free(req); ogs_assert(ret == 0); }
++    if (sess_data && result != OGS_OK) {
++        ret = fd_sess_state_store(pcrf_gx_reg, session, &sess_data);
++        ogs_assert(ret == 0); ogs_assert(sess_data == NULL);
++    }
++    OGS_SESSION_DATA_FREE(&gx_message.session_data);
++    return result;
++}
++uint8_t *pcrf_sess_find_by_ipv4(uint32_t addr)
++{
++    uint8_t *sid = NULL;
++    ogs_thread_mutex_lock(&pcrf_self()->hash_lock);
++    sid = ogs_hash_get(pcrf_self()->ip_hash, &addr, OGS_IPV4_LEN);
++    ogs_thread_mutex_unlock(&pcrf_self()->hash_lock);
++    return sid;
++}
+diff -ruN /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-init.c /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-init.c
+--- /tmp/tmp.TEieHD3Pwq/a/src/pcrf/pcrf-init.c	2026-11-06 20:21:01.155171837 +0700
++++ /tmp/tmp.TEieHD3Pwq/b/src/pcrf/pcrf-init.c	2026-11-06 20:21:01.167171750 +0700
+@@ -20,6 +20,7 @@
+ #include "pcrf-context.h"
+ #include "pcrf-fd-path.h"
+ #include "pcrf-sm.h"
++#include "pcrf-admin-rar.h"
+ #include "metrics.h"
+ 
+ static ogs_thread_t *thread;
+@@ -50,6 +51,9 @@
+     rv = pcrf_context_parse_config();
+     if (rv != OGS_OK) return rv;
+ 
++    rv = pcrf_admin_rar_init();
++    if (rv != OGS_OK) return OGS_ERROR;
++
+     ogs_metrics_context_open(ogs_metrics_self());
+ 
+     if (ogs_app()->db_uri) {
+@@ -68,6 +72,8 @@
+     return OGS_OK;
+ }
+ 
++    pcrf_admin_rar_final();
++
+ void pcrf_terminate(void)
+ {
+     if (!initialized) return;
+@@ -114,6 +120,8 @@
+         ogs_timer_mgr_expire(ogs_app()->timer_mgr);
+ 
+         for ( ;; ) {
++            pcrf_admin_rar_dispatch();
++
+             pcrf_event_t *e = NULL;
+ 
+             rv = ogs_queue_trypop(ogs_app()->queue, (void**)&e);

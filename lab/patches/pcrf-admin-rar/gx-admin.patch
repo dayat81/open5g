@@ -1,0 +1,25 @@
+--- a/src/pcrf/pcrf-fd-path.h
++++ b/src/pcrf/pcrf-fd-path.h
+@@ -68,0 +69,3 @@ int pcrf_gx_send_rar(
++int pcrf_gx_send_pcc_rar(
++        uint8_t *gx_sid, const char *imsi_bcd, const char *apn, int *matched);
++uint8_t *pcrf_sess_find_by_ipv4(uint32_t addr);
+--- a/src/pcrf/pcrf-init.c
++++ b/src/pcrf/pcrf-init.c
+@@ -22,0 +23,1 @@
++#include "pcrf-admin-rar.h"
+@@ -52,0 +54,3 @@ int pcrf_initialize(void)
++    rv = pcrf_admin_rar_init();
++    if (rv != OGS_OK) return OGS_ERROR;
++
+@@ -70,0 +75,2 @@ void pcrf_terminate(void)
++    pcrf_admin_rar_final();
++
+@@ -116,0 +123,2 @@ static void pcrf_main(void *data)
++            pcrf_admin_rar_dispatch();
++
+--- a/src/pcrf/meson.build
++++ b/src/pcrf/meson.build
+@@ -21,0 +22,2 @@ libpcrf_sources = files('''
++    pcrf-admin-rar.h
++    pcrf-admin-rar.c

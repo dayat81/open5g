@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Overview · Prototype lab 5G</title>
+  <link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="components.css"><link rel="stylesheet" href="proto.css">
+</head>
+<body data-page="overview">
+<div class="page">
+  <header class="topbar">
+    <a class="brand brand-link" href="index.html">Dashboard lab 5G <span class="prototype-label">PROTOTYPE</span></a>
+    <div class="meta"><span class="pill ok">Lab simulasi · data contoh</span><label class="role-control">Role <select id="role-switch" aria-label="Pilih role demo"><option value="student">Student</option><option value="instructor">Instructor</option></select></label><button class="btn ghost small" id="reset-demo" type="button">Reset demo</button></div>
+  </header>
+  <nav class="nav" aria-label="Navigasi utama">
+    <div class="nav-brand"><img src="icons/pcrf.svg" alt="" class="node-icon"> EPC CUPS</div>
+    <div class="section-label">Utama</div><a class="active" href="index.html" aria-current="page">Eksperimen</a>
+    <a href="editor.html">Profil PCRF</a><div class="hint">Editor intent + apply</div>
+    <a href="#observability">Observability</a><div class="hint">Sesi · usage · bukti</div>
+    <div class="section-label">Lainnya</div><button class="nav-button" id="open-instructor" type="button">Kelas <span class="badge unknown">demo 403</span></button>
+    <div class="hint">In-scope Instructor + batas kepemilikan grup</div>
+    <span class="nav-disabled" aria-disabled="true">Admin</span><div class="hint">Kontrol global tidak tersedia</div>
+    <div class="nav-foot">Berjalan lokal<br>tanpa API / core</div>
+  </nav>
+  <main class="main">
+    <div class="title-row"><div><div class="eyebrow">Eksperimen / exp-lab-epc-03</div><h1>Overview lab</h1><p class="sub">Satu tampilan untuk membedakan apa yang <strong>diminta</strong>, <strong>didorong</strong>, dan <strong>terbukti berjalan</strong>.</p></div><a class="btn primary link-button" href="editor.html">Edit profil IMSI <span aria-hidden="true">→</span></a></div>
+
+    <div class="banner compact"><span class="us-tag">SIMULASI</span><strong>Intent ≠ Applied ≠ Measured.</strong> RAA ACK berarti <span class="mono">pushed</span>; Active hanya setelah bukti sesi. Tidak ada Restart core.</div>
+    <section class="profile-strip" aria-label="Konteks eksperimen"><div><span class="k">IMSI assigned</span><strong class="mono">510…789</strong></div><div><span class="k">Grup</span><strong class="mono">kelas-5g-a</strong></div><div><span class="k">Profil</span><strong class="mono">prf-a1c2</strong></div><div class="profile-strip-status" id="profile-lifecycle"></div></section>
+
+    <section aria-labelledby="kpi-title"><h2 class="section-title" id="kpi-title">Ringkasan eksperimen</h2><div class="cards" id="kpis"></div></section>
+
+    <section class="panel full capability-panel" aria-labelledby="capabilities-title"><h2 id="capabilities-title">Capability per operasi <span class="tag">Open5GS 2.8 stock · contoh</span></h2><div class="capability-grid"><div><span class="badge applied">supported (contoh)</span><strong>Gx RAR · new PCC rule</strong><small>Jalur immediate untuk rule baru</small></div><div><span class="badge fail">unsupported → reject</span><strong>QCI / ARP · existing bearer</strong><small>Fallback perlu konfirmasi</small></div><div><span class="badge fail">unsupported → reject</span><strong>APN-AMBR</strong><small>Fallback perlu konfirmasi</small></div></div><p class="note">Bukan bukti adapter. Kemampuan diperiksa per operasi, bukan satu toggle RAR global.</p></section>
+
+    <section class="panel full" aria-labelledby="apply-title"><div class="panel-heading"><div><div class="eyebrow">US-02 · Gx RAR</div><h2 id="apply-title">Status apply &amp; bukti per IMSI</h2></div><button class="btn measured-button" id="evidence-button" type="button"></button></div><div id="apply-status"></div><p class="hint-line" id="evidence-help"></p></section>
+
+    <div class="grid2" id="observability">
+      <section class="panel"><h2>Intent ↔ Applied ↔ Measured <span class="tag">US-03</span></h2><div class="state-mini" id="state-comparison"></div><div class="mismatch-strip"><strong>Mismatch bukan error tersembunyi:</strong> logical_slice adalah Intent; bearer EPC tidak membuktikan “slice”. Keadaan tanpa data ditampilkan sebagai unknown, bukan sukses.</div></section>
+      <section class="panel"><h2>Sesi / bearers <span class="tag">bukti contoh</span></h2><div id="session-details"></div><p class="note">Antarmuka: S1-U · S5-U · SGi · Gx · Sx. S-NSSAI: n/a (EPC).</p></section>
+    </div>
+
+    <section class="panel full"><h2>PCC · keputusan dan bukti terpisah</h2><div class="table-wrap"><table class="wf"><thead><tr><th>app_id / match</th><th>classifier_source</th><th>Decided</th><th>Installed / enforcement</th><th>Observed</th></tr></thead><tbody id="pcc-rows"></tbody></table></div><p class="note">SNI/hostname = klasifikasi eBPF/unknown; bukan enforcement Gx native. Target DB/PCRF = mock, unverified.</p></section>
+
+    <section class="panel full"><div class="panel-heading"><div><h2>KPI usage · provenance</h2><p class="note">Sumber dan freshness selalu terlihat. Data 0 bukan failed.</p></div><button class="btn secondary" id="mark-stale" type="button">Simulasikan data stale</button></div><div class="table-wrap"><table class="wf"><thead><tr><th>app_id</th><th>bytes / window</th><th>source / instance</th><th>capture point</th><th>freshness</th><th>confidence</th></tr></thead><tbody id="usage-rows"></tbody></table></div><p class="note">Stock Gx Usage-Monitoring tidak diklaim. PFCP counter dan eBPF classification adalah sumber yang berbeda.</p></section>
+
+    <section class="panel full instructor-teaser"><div><h2>Batas akses kelas</h2><p>Instructor boleh edit/apply IMSI in-group; out-of-group harus ditolak dan diaudit.</p></div><button class="btn secondary" data-instructor-demo type="button">Lihat demo HTTP 403</button></section>
+    <footer class="wf-foot">Prototype interaktif lokal · mock data only / bukan bukti adapter · tidak terhubung ke PCRF/Open5GS · status dan angka adalah simulasi.</footer>
+  </main>
+</div>
+<div id="modal-root"></div><div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+<script src="app.js"></script>
+</body></html>

@@ -20,7 +20,7 @@ APN is not S-NSSAI. 5GC N3, N6, N4, and a PCF are a different core. Putting AMF 
 
 **Gx RAR is capability-dependent.** The desired primary apply path is a live Gx RAR. The policy module rejects stock Open5GS 2.8 immediate QCI/ARP changes on an existing bearer and APN-AMBR RAR until a verified patch exists. This repository does not contain a working RAR integration, a PCRF adapter, or measured session evidence.
 
-**Multi-user dashboard.** Students work on server-assigned IMSIs. An instructor can edit and apply student IMSIs only inside that instructor's group. An admin manages assignment, catalog, and caps, and does not get a shared core-control panel. The checked-in piece is the policy module and PostgreSQL schema under [`dashboard/backend`](dashboard/backend). The HTTP service and the Next.js UI are not in this commit.
+**Multi-user dashboard.** Students work on server-assigned IMSIs. An instructor can edit and apply student IMSIs only inside that instructor's group. An admin manages assignment, catalog, and caps, and does not get a shared core-control panel. The checked-in service is the FastAPI app and policy module under [`dashboard/backend`](dashboard/backend). The Next.js UI is not in the tree yet.
 
 ## Topology
 
@@ -42,12 +42,12 @@ eBPF, if it is later built, would be a proposed detection point. It would not be
 
 | Path | What it is |
 |---|---|
-| [`lab/`](lab/README.md) | Future lab5g-dev material. Run steps there are not authorized and were not executed. |
+| [`lab/`](lab/README.md) | Sanitized lab5g-dev WIP reference. Not deployed from this checkout. |
 | [`ebpf/`](ebpf/README.md) | Proposed detection. No program is checked in. |
 | [`dashboard/`](dashboard/README.md) | Multi-user dashboard scaffold. Policy rules and schema only, so far. |
-| [`docs/prd/`](docs/prd/README.md) | Incoming canonical Product Manager pack. |
-| [`docs/ux/`](docs/ux/README.md) | Incoming UX ready pack. |
-| [`docs/evidence/`](docs/evidence/README.md) | Gate evidence, only when a real summary is supplied. |
+| [`docs/prd/`](docs/prd/PRD-v0.6.md) | Canonical Product Manager pack v0.6 (PRD, roadmap, decisions, risks). |
+| [`docs/ux/`](docs/ux/README.md) | Sanitized UX pack: hi-fi, localStorage prototype, lo-fi. The prototype is not the app. |
+| [`docs/evidence/`](docs/evidence/README.md) | Gate evidence only when a summary is actually in the tree. |
 | [`docs/DELIVERABLES.md`](docs/DELIVERABLES.md) | Included and pending deliverables, Gates A–F. |
 | [`NOTICE`](NOTICE) | Affero GPL facts for the upstream programs. |
 

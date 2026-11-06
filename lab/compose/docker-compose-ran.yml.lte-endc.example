@@ -1,0 +1,27 @@
+# WORK IN PROGRESS snapshot 2026-11-06 20:16:41 +07
+# Sanitized example — not a deployable mirror of the live lab.
+
+name: lab5g-dev-ran
+x-srs: &srs
+  image: gradiant/srsran-4g:25_10
+  restart: "no"
+  cpus: 1.0
+  mem_limit: 512m
+  env_file: ./ran.env
+networks:
+  s1mme: {external: true, name: lab5g-dev_s1mme}
+  s1u: {external: true, name: lab5g-dev_s1u}
+  uu: {internal: true, ipam: {config: [{subnet: 10.99.11.0/24, gateway: 10.99.11.254}]}}
+services:
+  enb:
+    <<: *srs
+    container_name: l5gd-enb
+    command: ["enb","--rf.device_name=zmq","--rf.device_args=tx_port=tcp://*:2000,rx_port=tcp://10.99.11.21:2001,id=enb,base_srate=23.04e6"]
+    networks: {s1mme: {ipv4_address: 10.99.1.20}, s1u: {ipv4_address: 10.99.2.20}, uu: {ipv4_address: 10.99.11.20}}
+  ue:
+    <<: *srs
+    container_name: l5gd-ue
+    command: ["ue","--rf.device_name=zmq","--rf.device_args=tx_port=tcp://10.99.11.21:2001,rx_port=tcp://10.99.11.20:2000,id=ue,base_srate=23.04e6"]
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun"]
+    networks: {uu: {ipv4_address: 10.99.11.21}}

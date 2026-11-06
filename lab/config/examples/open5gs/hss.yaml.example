@@ -1,0 +1,7 @@
+# Sanitized Open5GS config example
+
+db_uri: mongodb://10.99.10.2/open5gs
+logger:
+  level: info
+hss:
+  freeDiameter: /etc/o5/fd/hss.conf

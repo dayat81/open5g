@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<title>LOFI — Editor profil PCRF / IMSI · aligned PRD v0.2→v0.3→v0.4 + Soft Arch closing — for Hidayat final review</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #f4f4f5;
+    color: #3f3f46;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    grid-template-rows: 48px 1fr;
+    border: 1px solid #a1a1aa;
+    background: #f4f4f5;
+  }
+  .topbar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid #a1a1aa;
+    background: #fff;
+    gap: 12px;
+  }
+  .topbar .brand { font-weight: 600; color: #27272a; }
+  .topbar .meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    border: 1px dashed #a1a1aa;
+    background: #fff;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    color: #52525b;
+  }
+  .pill.solid { border-style: solid; }
+  .role-badge {
+    border: 1px solid #71717a;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #fff;
+  }
+  .nav {
+    border-right: 1px solid #a1a1aa;
+    background: #fff;
+    padding: 12px 0;
+  }
+  .nav .section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #71717a;
+    padding: 8px 14px 4px;
+  }
+  .nav a {
+    display: block;
+    padding: 8px 14px;
+    color: #3f3f46;
+    text-decoration: none;
+    border-left: 3px solid transparent;
+  }
+  .nav a.active {
+    background: #f4f4f5;
+    border-left-color: #52525b;
+    font-weight: 600;
+  }
+  .nav .nav-disabled {
+    display: block;
+    padding: 8px 14px;
+    color: #a1a1aa;
+    border-left: 3px solid transparent;
+    cursor: not-allowed;
+    font-style: italic;
+  }
+  .nav .hint {
+    font-size: 10px;
+    color: #a1a1aa;
+    padding: 2px 14px 8px;
+  }
+  .main { padding: 16px 18px 48px; position: relative; }
+  .anno {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font-size: 10px;
+    color: #71717a;
+    border: 1px dashed #a1a1aa;
+    padding: 2px 8px;
+    background: #fff;
+    z-index: 2;
+    max-width: 280px;
+    text-align: right;
+  }
+  h1 { font-size: 16px; font-weight: 600; color: #18181b; margin-bottom: 4px; }
+  .sub { color: #52525b; font-size: 12px; margin-bottom: 12px; }
+  .banner {
+    border: 2px dashed #71717a;
+    background: #fafafa;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: #52525b;
+  }
+  .banner strong { color: #18181b; }
+  .banner .us-tag {
+    display: inline-block;
+    font-size: 10px;
+    border: 1px solid #a1a1aa;
+    padding: 0 5px;
+    margin-right: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .asumsi {
+    border: 1px dashed #a1a1aa;
+    background: #fff;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    font-size: 11px;
+    color: #52525b;
+  }
+  .asumsi h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #71717a;
+    margin-bottom: 4px;
+  }
+  .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid #71717a;
+    vertical-align: middle;
+    margin-right: 4px;
+  }
+  .dot.intent { border-color: #2563eb; background: transparent; }
+  .dot.applied { border-color: #d97706; background: transparent; }
+  .dot.measured { border-color: #16a34a; background: transparent; }
+  .dot.unknown { border-color: #a1a1aa; border-style: dashed; background: transparent; }
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border: 1px solid #a1a1aa;
+    color: #52525b;
+    margin-right: 4px;
+  }
+  .badge.intent { border-color: #2563eb; color: #1e40af; }
+  .badge.applied { border-color: #d97706; color: #92400e; }
+  .badge.measured { border-color: #16a34a; color: #166534; }
+  .badge.unknown { border-style: dashed; color: #71717a; }
+  .badge.stale { border-style: dashed; color: #a16207; }
+  .badge.fail { border-style: solid; color: #52525b; border-color: #71717a; }
+  .badge.warn-rule {
+    border-style: dashed;
+    color: #92400e;
+    border-color: #a16207;
+    display: inline-block;
+    margin-top: 2px;
+  }
+  .tbd {
+    border: 1px dashed #a1a1aa;
+    color: #a1a1aa;
+    padding: 2px 6px;
+    font-size: 10px;
+    display: inline-block;
+  }
+  .profile-header {
+    border: 1px solid #a1a1aa;
+    background: #fff;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    align-items: flex-start;
+  }
+  .ph-block { min-width: 140px; }
+  .ph-block .k {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #71717a;
+    margin-bottom: 2px;
+  }
+  .ph-block .v { font-size: 13px; color: #18181b; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .ph-block .v.mono { font-size: 14px; font-weight: 600; }
+  .split {
+    display: grid;
+    grid-template-columns: 60% 40%;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .panel {
+    border: 1px solid #a1a1aa;
+    background: #fff;
+    padding: 10px 12px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    font-weight: 600;
+    color: #18181b;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .panel h2 .tag {
+    font-weight: 500;
+    font-size: 10px;
+    border: 1px solid #a1a1aa;
+    padding: 1px 6px;
+    color: #52525b;
+  }
+  .section {
+    border: 1px dashed #d4d4d8;
+    padding: 8px;
+    margin-bottom: 8px;
+  }
+  .section:last-child { margin-bottom: 0; }
+  .section h3 {
+    font-size: 11px;
+    font-weight: 600;
+    color: #52525b;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .fields.three { grid-template-columns: 1fr 1fr 1fr; }
+  .fields.six { grid-template-columns: repeat(3, 1fr); }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field.span2 { grid-column: span 2; }
+  .field label { font-size: 10px; color: #71717a; }
+  .field .box {
+    border: 1px solid #a1a1aa;
+    background: #fafafa;
+    padding: 6px 8px;
+    font-size: 12px;
+    min-height: 28px;
+  }
+  .field .box.ro {
+    background: #f4f4f5;
+    border-style: dashed;
+  }
+  .field .hint { font-size: 10px; color: #a1a1aa; }
+  table.wf {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  table.wf th, table.wf td {
+    border: 1px solid #d4d4d8;
+    padding: 4px 5px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.wf th {
+    background: #f4f4f5;
+    color: #52525b;
+    font-weight: 600;
+    font-size: 10px;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed #d4d4d8;
+  }
+  button.btn {
+    border: 1px solid #71717a;
+    background: #fff;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: #3f3f46;
+    cursor: default;
+    font-family: inherit;
+  }
+  button.btn.primary {
+    background: #e4e4e7;
+    border-width: 2px;
+    font-weight: 600;
+  }
+  button.btn.secondary { border-style: dashed; }
+  button.btn.ghost {
+    border-style: dotted;
+    color: #52525b;
+  }
+  .apply-note {
+    font-size: 11px;
+    color: #52525b;
+    border: 1px dashed #a1a1aa;
+    padding: 4px 8px;
+    background: #fafafa;
+    flex: 1;
+    min-width: 200px;
+  }
+  .stack { display: flex; flex-direction: column; gap: 8px; }
+  .state-card {
+    border: 1px solid #a1a1aa;
+    padding: 8px;
+    background: #fafafa;
+  }
+  .state-card.intent { border-color: #2563eb; background: #fff; }
+  .state-card.applied { border-color: #d97706; background: #fff; }
+  .state-card.measured { border-color: #16a34a; background: #fff; }
+  .state-card h4 {
+    font-size: 11px;
+    margin-bottom: 4px;
+    color: #18181b;
+  }
+  .state-card .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 11px;
+    padding: 2px 0;
+    border-bottom: 1px dotted #e4e4e7;
+  }
+  .state-card .row:last-child { border-bottom: none; }
+  .timeline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    font-size: 10px;
+    margin: 6px 0;
+  }
+  .tl-step {
+    border: 1px solid #a1a1aa;
+    padding: 2px 6px;
+    background: #fff;
+    color: #52525b;
+  }
+  .tl-step.now {
+    border-width: 2px;
+    font-weight: 600;
+    color: #18181b;
+  }
+  .tl-step.done { background: #f4f4f5; }
+  .tl-arrow { color: #a1a1aa; }
+  .tl-enum {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 9px;
+    color: #a1a1aa;
+  }
+  .evidence {
+    border: 1px dashed #a1a1aa;
+    padding: 6px;
+    font-size: 11px;
+    color: #52525b;
+    margin-top: 4px;
+  }
+  .evidence .k { font-size: 10px; color: #71717a; text-transform: uppercase; }
+  .note {
+    font-size: 11px;
+    color: #71717a;
+    margin-top: 6px;
+    font-style: italic;
+  }
+  .modal-area {
+    margin-top: 14px;
+    border: 2px dashed #71717a;
+    background: #fff;
+    padding: 14px 16px;
+    position: relative;
+  }
+  .modal-area .modal-label {
+    position: absolute;
+    top: -9px;
+    left: 12px;
+    background: #f4f4f5;
+    padding: 0 6px;
+    font-size: 10px;
+    color: #52525b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .modal-area h3 {
+    font-size: 13px;
+    margin-bottom: 6px;
+    color: #18181b;
+  }
+  .modal-area ul {
+    margin: 6px 0 10px 18px;
+    font-size: 12px;
+    color: #52525b;
+  }
+  .modal-actions { display: flex; gap: 8px; }
+  .warn-box {
+    border: 1px dashed #a1a1aa;
+    background: #fafafa;
+    padding: 8px;
+    font-size: 12px;
+    color: #52525b;
+    margin-bottom: 10px;
+  }
+  .us-map {
+    border: 1px dashed #a1a1aa;
+    background: #fff;
+    padding: 8px 12px;
+    margin-top: 14px;
+    font-size: 11px;
+    color: #52525b;
+  }
+  .us-map h2 { font-size: 12px; margin-bottom: 6px; color: #18181b; }
+  footer.wf-foot {
+    margin-top: 10px;
+    font-size: 10px;
+    color: #a1a1aa;
+    border-top: 1px dashed #d4d4d8;
+    padding-top: 8px;
+  }
+  @media print {
+    .page { border: none; max-width: none; }
+    body { background: #fff; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand">Dashboard lab 5G · Open5GS EPC CUPS</div>
+    <div class="meta">
+      <span class="role-badge">Role: Student</span>
+      <span class="pill solid">Lab status: Core reachable (contoh)</span>
+      <span class="pill">experiment: exp-lab-epc-03</span>
+    </div>
+  </header>
+
+  <nav class="nav" aria-label="Navigasi utama">
+    <div class="section-label">Utama</div>
+    <a href="01-overview-lofi.html">Eksperimen</a>
+    <a class="active" href="02-imsi-profile-editor-lofi.html">Profil PCRF</a>
+    <div class="hint">Editor intent + apply</div>
+    <a href="01-overview-lofi.html#observability">Observability</a>
+    <div class="section-label">Lainnya</div>
+    <a href="01-overview-lofi.html#instructor-scope">Kelas</a>
+    <div class="hint">Instructor: edit/apply IMSI in-group saja · audit actor+owner (K2)</div>
+    <span class="nav-disabled" aria-disabled="true">Admin</span>
+    <div class="hint">Global core controls bukan untuk student</div>
+  </nav>
+
+  <main class="main">
+    <div class="anno">aligned PRD v0.2→v0.3→v0.4 + Soft Arch closing — for Hidayat final review</div>
+
+    <h1>Editor profil PCRF · IMSI assigned</h1>
+    <p class="sub">
+      Form = Intent (draft). Panel kanan = Intent | Applied | Measured terpisah.
+      Field names = draft Soft Arch (bukan API final). Ki/OPc tidak ditampilkan. S-NSSAI = n/a (EPC).
+    </p>
+
+    <!-- K1 banner: Gx RAR primary -->
+    <div class="banner" id="banner-rar">
+      <span class="us-tag">K1</span><span class="us-tag">PRD v0.3</span><span class="us-tag">PRD v0.4</span><span class="us-tag">US-02</span>
+      <strong>Primary Apply = Gx RAR immediate</strong> (capability <em>per operasi</em>, bukan satu toggle).
+      Status apply/RAR per IMSI: <span class="mono">saved | pushed | active | partial | timeout | gagal/failed</span> + freshness.
+      <strong>RAA ACK ≠ Active</strong> — Active hanya via bukti session per operasi.
+      <strong>Apply tidak memicu auto restart core.</strong>
+      Jika operasi/adapter tidak didukung: UI <strong>reject-with-reason</strong> dan tawarkan
+      <strong>fallback re-attach</strong> (wajib konfirmasi) — bukan jalur utama.
+      Active tetap butuh bukti sesi, bukan sekadar sukses simpan DB.
+    </div>
+
+    <div class="asumsi">
+      <h3>Keputusan tertutup (Hidayat → PRD v0.3 / v0.4)</h3>
+      <div><strong>K1 · Apply:</strong> Gx RAR primary; re-attach = fallback bila RAR/operasi unsupported (reject + confirm). Apply <em>tidak</em> auto-restart core.</div>
+      <div><strong>K2 · Instructor:</strong> Boleh edit/apply IMSI student in-group saja; audit <span class="mono">actor</span> + <span class="mono">owner</span>. Out-of-group = <span class="mono">HTTP 403 cross_group_forbidden</span> + audit.
+      Wireframe primary role di sini = Student; instructor memakai form yang sama dengan scope group-bound.</div>
+      <div><strong>PRD v0.4 · per-operasi:</strong> RAR new PCC rule = supported (contoh); RAR modify QCI/ARP existing bearer = unsupported → reject; RAR APN-AMBR = unsupported stock Open5GS 2.8 → reject sampai patch. Mock spec only / bukan bukti adapter.</div>
+    </div>
+
+    <div class="asumsi" id="capability-matrix">
+      <h3>Capability chips (PRD v0.4 · data contoh)</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;font-size:11px;margin-top:4px;">
+        <span class="badge applied">RAR new PCC rule: supported (contoh)</span>
+        <span class="badge fail">RAR modify QCI existing bearer: unsupported → reject</span>
+        <span class="badge fail">RAR APN-AMBR: unsupported → reject</span>
+        <span class="badge">fallback re-attach: confirm</span>
+      </div>
+    </div>
+
+    <!-- Profile header -->
+    <div class="profile-header">
+      <div class="ph-block">
+        <div class="k">imsi (assigned-only, read-only)</div>
+        <div class="v mono">510…789</div>
+        <div class="hint" style="font-size:10px;color:#a1a1aa;">US-01 · server-side · bukan ketik bebas · jika &gt;1 → selector list assigned</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">group / ownership (K2)</div>
+        <div class="v mono" style="font-size:12px;">kelas-5g-a</div>
+        <div class="hint" style="font-size:10px;color:#a1a1aa;">owner=student · instructor edit in-group → audit actor+owner</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">profile_id</div>
+        <div class="v mono">prf-a1c2</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">desired_version</div>
+        <div class="v mono">v3</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">applied_version</div>
+        <div class="v mono">v2</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">observed_version</div>
+        <div class="v mono">v2 <span class="badge stale">stale?</span></div>
+      </div>
+      <div class="ph-block" style="flex:1;">
+        <div class="k">Lifecycle · Soft Arch #3 (label UI + mono enum)</div>
+        <div class="v" style="margin-top:4px;">
+          <span class="badge intent">Draft</span><span class="mono" style="font-size:10px;">saved</span>
+          <span class="badge">Tervalidasi</span><span class="mono" style="font-size:10px;">validated</span>
+          <span class="badge unknown">Queued</span><span class="mono" style="font-size:10px;">queued</span>
+          <span class="badge unknown">Pushed</span><span class="mono" style="font-size:10px;">pushed</span>
+          <span class="badge applied">Active*</span><span class="mono" style="font-size:10px;">active</span>
+          <span class="badge fail">Failed</span><span class="mono" style="font-size:10px;">failed</span>
+          <span class="badge stale">Drift</span><span class="mono" style="font-size:10px;">drift</span>
+        </div>
+        <div class="note">*Active = butuh bukti sesi, bukan sukses simpan DB · enum draft API (belum final)</div>
+      </div>
+    </div>
+
+    <div class="split">
+      <!-- LEFT: Intent form ~60% -->
+      <div class="panel">
+        <h2>
+          <span class="dot intent"></span> Form Intent (draft user)
+          <span class="tag">desired_version v3 · US-01</span>
+        </h2>
+
+        <div class="section">
+          <h3>Scope · experiment + APN / logical slice</h3>
+          <div class="fields">
+            <div class="field">
+              <label>experiment_id (selector)</label>
+              <div class="box">exp-lab-epc-03 · “Slice PCC demo”</div>
+            </div>
+            <div class="field">
+              <label>logical_slice / template</label>
+              <div class="box">slice-class-A <span class="tbd">limit = usulan</span></div>
+              <div class="hint">Admin template/kuota = usulan, bukan angka approved</div>
+            </div>
+            <div class="field">
+              <label>APN (EPC)</label>
+              <div class="box mono">internet</div>
+              <div class="hint">Lab = Open5GS EPC CUPS · bukan DNN/5GC</div>
+            </div>
+            <div class="field">
+              <label>S-NSSAI</label>
+              <div class="box ro">n/a — EPC · BUKAN sinonim APN · Option 7/4 stretch</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>QCI / ARP · Soft Arch #4 (field terpisah)</h3>
+          <div class="fields" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+            <div class="field">
+              <label>QCI</label>
+              <div class="box mono">6</div>
+            </div>
+            <div class="field">
+              <label>arp.priority</label>
+              <div class="box mono">5</div>
+            </div>
+            <div class="field">
+              <label>arp.preemption_capability</label>
+              <div class="box mono">not-preempt</div>
+            </div>
+            <div class="field">
+              <label>arp.preemption_vulnerability</label>
+              <div class="box mono">not-vulnerable</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>AMBR / MBR / GBR · Soft Arch #4 (per arah + unit; GBR≤MBR)</h3>
+          <div class="fields six">
+            <div class="field">
+              <label>ambr_ul</label>
+              <div class="box mono">50</div>
+            </div>
+            <div class="field">
+              <label>ambr_dl</label>
+              <div class="box mono">100</div>
+            </div>
+            <div class="field">
+              <label>unit (AMBR)</label>
+              <div class="box">Mbps</div>
+            </div>
+            <div class="field">
+              <label>mbr_ul</label>
+              <div class="box mono">20</div>
+            </div>
+            <div class="field">
+              <label>mbr_dl</label>
+              <div class="box mono">40</div>
+            </div>
+            <div class="field">
+              <label>unit (MBR)</label>
+              <div class="box">Mbps</div>
+            </div>
+            <div class="field">
+              <label>gbr_ul</label>
+              <div class="box mono">5</div>
+            </div>
+            <div class="field">
+              <label>gbr_dl</label>
+              <div class="box mono">10</div>
+            </div>
+            <div class="field">
+              <label>unit (GBR)</label>
+              <div class="box">Mbps</div>
+            </div>
+          </div>
+          <div class="box ro" style="margin-top:6px;border:1px dashed #a1a1aa;padding:6px 8px;font-size:11px;">
+            Validasi: <span class="mono">gbr_ul ≤ mbr_ul</span> (5 ≤ 20 ✓) · <span class="mono">gbr_dl ≤ mbr_dl</span> (10 ≤ 40 ✓) — per arah.
+            Angka = label contoh. Kuota agregat admin boleh pending (jujur).
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>app_rules[] · Soft Arch #2 · {match_type, pattern, app_id, priority, enabled, apply_targets}</h3>
+          <table class="wf">
+            <thead>
+              <tr>
+                <th>match_type</th>
+                <th>pattern</th>
+                <th>app_id</th>
+                <th>priority</th>
+                <th>enabled</th>
+                <th>apply_targets / badge</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono">SNI</td>
+                <td class="mono">meet.example</td>
+                <td class="mono">video-conf</td>
+                <td class="mono">10</td>
+                <td>true</td>
+                <td>
+                  classifier: eBPF · enforce: —<br/>
+                  <span class="badge warn-rule">intent klasifikasi; native PCC belum terverifikasi</span>
+                </td>
+              </tr>
+              <tr>
+                <td class="mono">IP</td>
+                <td class="mono">203.0.113.0/24</td>
+                <td class="mono">bulk-dl</td>
+                <td class="mono">20</td>
+                <td>true</td>
+                <td>
+                  apply_targets: subscriber DB / PCRF (contoh · adapter unverified)<br/>
+                  <span style="font-size:10px;color:#71717a;">stock IPFilterRule path</span>
+                </td>
+              </tr>
+              <tr>
+                <td class="mono">hostname</td>
+                <td class="mono">cdn.example.org</td>
+                <td class="mono">web-cdn</td>
+                <td class="mono">30</td>
+                <td>false</td>
+                <td>
+                  classifier: unknown/eBPF planned · enforce: n/a<br/>
+                  <span class="badge warn-rule">intent klasifikasi; native PCC belum terverifikasi</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="note">
+            Soft Arch #1+#2: SNI/hostname = classifier_source eBPF/unknown, TERPISAH dari enforcement Gx.
+            Badge PER-RULE (bukan hanya catatan global). Soft Arch #6: target DB/PCRF = data contoh / adapter unverified.
+          </p>
+        </div>
+
+        <div class="section">
+          <h3>usage threshold · Soft Arch #4 (scope app|session)</h3>
+          <div class="fields" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr;">
+            <div class="field">
+              <label>scope</label>
+              <div class="box mono">app</div>
+              <div class="hint">app | session</div>
+            </div>
+            <div class="field">
+              <label>app_id</label>
+              <div class="box mono">video-conf</div>
+              <div class="hint">wajib bila scope=app</div>
+            </div>
+            <div class="field">
+              <label>threshold</label>
+              <div class="box mono">500</div>
+            </div>
+            <div class="field">
+              <label>unit</label>
+              <div class="box">MB</div>
+            </div>
+            <div class="field">
+              <label>window_s</label>
+              <div class="box mono">300</div>
+            </div>
+          </div>
+          <p class="note">Jangan klaim Gx Usage-Monitoring stock Open5GS (US-06 / FR-08). Provenance wajib di KPI Overview.</p>
+        </div>
+
+        <div class="section">
+          <h3>Tidak ditampilkan</h3>
+          <div class="box ro" style="border:1px dashed #a1a1aa;padding:6px 8px;font-size:11px;color:#71717a;">
+            Ki / OPc — hidden (bukan bagian editor mahasiswa / instructor)
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn secondary">Save draft</button>
+          <button type="button" class="btn ghost">Validate</button>
+          <button type="button" class="btn ghost">Review diff</button>
+          <button type="button" class="btn primary">Apply…</button>
+          <button type="button" class="btn ghost">Restore version</button>
+          <div class="apply-note">
+            US-01: Save draft ber-versi, belum aktif.
+            K1/US-02/v0.4: Apply via Gx RAR per-operasi → saved|pushed|active|…; RAA ACK≠Active; no auto-restart core.
+            QCI/ARP existing + APN-AMBR → reject-with-reason (Open5GS 2.8). Fallback re-attach = confirm. Soft Arch #7: &lt;button&gt;.
+            K2: actor=instructor → audit actor+owner; out-of-group → 403 cross_group_forbidden.
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: status ~40% -->
+      <div class="panel">
+        <h2>Status panel · Intent | Applied | Measured</h2>
+        <p class="note" style="margin-top:0;margin-bottom:8px;">Bukan satu status OK global.</p>
+
+        <div class="stack">
+          <div class="state-card intent">
+            <h4><span class="dot intent"></span> Intent · desired_version v3</h4>
+            <div class="row"><span>lifecycle</span><span><span class="badge intent">Draft</span> <span class="mono">saved</span></span></div>
+            <div class="row"><span>APN / slice</span><span class="mono">internet / class-A</span></div>
+            <div class="row"><span>QCI / ARP</span><span class="mono">6 / pri=5 / not-preempt / not-vuln</span></div>
+            <div class="row"><span>app_rules</span><span class="mono">3 rows</span></div>
+            <div class="row"><span>version_etag</span><span class="mono">etag-a1c2-v3 · contoh</span></div>
+          </div>
+
+          <div class="state-card applied">
+            <h4><span class="dot applied"></span> Applied · applied_version v2</h4>
+            <div class="row"><span>lifecycle</span><span><span class="badge applied">Active*</span> <span class="mono">active</span></span></div>
+            <div class="row"><span>apply_job id</span><span class="mono">job-7f3a</span></div>
+            <div class="row">
+              <span>subscriber DB</span>
+              <span><span class="badge applied">ok*</span> <span style="font-size:10px;color:#a1a1aa;">contoh · unverified</span></span>
+            </div>
+            <div class="row">
+              <span>PCRF / Gx RAR</span>
+              <span><span class="badge applied">pushed</span> <span style="font-size:10px;color:#a1a1aa;">primary · capability-gated</span></span>
+            </div>
+            <div class="row"><span>eBPF</span><span class="badge unknown">unknown</span> <span style="font-size:10px;">classify ≠ enforce</span></div>
+            <div class="row"><span>apply/RAR per IMSI</span><span class="badge applied">pushed</span> → <span class="badge measured">active*</span> <span class="mono">freshness 8s</span></div>
+            <div class="row"><span>session</span><span class="badge measured">bukti sesi per operasi</span></div>
+            <div class="row"><span>last_error / reason / time</span><span class="mono">— / RAR ACK / 14:02:12</span></div>
+            <div class="note"><strong>RAA ACK ≠ Active</strong> — PCRF ACK → <span class="mono">pushed</span>; Active* hanya bukti session per operasi · Soft Arch #6: DB/PCRF = contoh/unverified · Apply tidak auto-restart core · re-attach hanya fallback (K1)</div>
+          </div>
+
+          <div class="state-card measured">
+            <h4><span class="dot measured"></span> Measured · observed_version v2</h4>
+            <div class="row"><span>UE IP</span><span class="mono">10.45.0.12</span></div>
+            <div class="row"><span>bearer / QCI</span><span class="mono">ebi=5 · QCI 6</span></div>
+            <div class="row"><span>TEID + endpoints</span><span class="mono">0x1a2b · S1-U</span></div>
+            <div class="row"><span>PGW-C / PGW-U</span><span class="mono">pgw-c-01 / pgw-u-01</span></div>
+            <div class="row"><span>exporter_instance</span><span class="mono">ebpf-exp-01</span></div>
+            <div class="row"><span>classifier_version</span><span class="mono">clf-v0.3</span></div>
+            <div class="row"><span>freshness / reset</span><span>12s <span class="badge stale">stale?</span> · on clf reload</span></div>
+          </div>
+        </div>
+
+        <h2 style="margin-top:12px;">Lifecycle timeline · Soft Arch #3</h2>
+        <div class="timeline">
+          <span class="tl-step done">Draft<span class="tl-enum">saved</span></span><span class="tl-arrow">→</span>
+          <span class="tl-step now">Tervalidasi<span class="tl-enum">validated</span></span><span class="tl-arrow">→</span>
+          <span class="tl-step">Queued<span class="tl-enum">queued</span></span><span class="tl-arrow">→</span>
+          <span class="tl-step">Pushed<span class="tl-enum">pushed</span></span><span class="tl-arrow">→</span>
+          <span class="tl-step">Active<span class="tl-enum">active</span></span>
+          <span class="tl-arrow">|</span>
+          <span class="tl-step">Failed<span class="tl-enum">failed</span></span>
+          <span class="tl-arrow">|</span>
+          <span class="tl-step">Drift<span class="tl-enum">drift</span></span>
+        </div>
+        <p class="note">Enum draft API konsisten dengan label UI. Belum kontrak final.</p>
+
+        <h2 style="margin-top:10px;">Evidence placeholders (empat lapisan · US-03)</h2>
+        <div class="evidence">
+          <div class="k">Detected</div>
+          evidence + time + source · contoh: SNI meet.example · classifier_source=eBPF · t−8s · confidence 0.82
+          · <em>bukan bukti enforcement</em>
+        </div>
+        <div class="evidence">
+          <div class="k">Decided</div>
+          PCRF rule name / SDF / QCI / gate · belum berarti terpasang · policy evidence terpisah dari classifier
+        </div>
+        <div class="evidence">
+          <div class="k">Installed</div>
+          binding SMF · bearer ID · TEID · endpoints (S1-U / S5-U / SGi) · enforcement_path / apply_targets
+        </div>
+        <div class="evidence">
+          <div class="k">Observed</div>
+          bytes/packets/rate · capture point · freshness · exporter_instance · classifier_version ·
+          bedakan missing/stale/unsupported/ambiguous dari zero/failed
+        </div>
+
+        <h2 style="margin-top:10px;">States lain (wireframe)</h2>
+        <div style="font-size:11px;color:#52525b;">
+          <span class="badge unknown">loading</span>
+          <span class="badge unknown">empty</span>
+          <span class="badge unknown">no-access</span>
+          <span class="badge">ownership conflict</span>
+          <span class="badge">concurrent update</span>
+          <span class="badge">RAR partial</span>
+          <span class="badge">RAR timeout</span>
+          <span class="badge fail">RAR gagal</span>
+          <span class="badge">fallback re-attach (confirm)</span>
+          <span class="badge">audit actor+owner</span>
+          <span class="badge fail">HTTP 403 cross_group_forbidden</span>
+          <span class="badge">out-of-group no-access + audit</span>
+          <span class="badge fail">reject: QCI/ARP existing bearer</span>
+          <span class="badge fail">reject: APN-AMBR</span>
+          <span class="badge">RAA ACK ≠ Active</span>
+          <span class="badge">no auto-restart core</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirm Apply modal — Soft Arch #7: role=dialog aria-modal · K1 dual state -->
+    <div class="modal-area" role="dialog" aria-modal="true" aria-labelledby="apply-dialog-title">
+      <span class="modal-label">Modal state A · Primary · Apply via Gx RAR</span>
+      <h3 id="apply-dialog-title">Confirm Apply via Gx RAR · desired_version v3</h3>
+      <div class="warn-box">
+        <strong>Primary path (K1):</strong> Apply akan mengirim <strong>Gx RAR immediate</strong> ke PCRF/PCEF untuk IMSI ini
+        — <strong>tidak memicu auto restart core</strong>.
+        Status per IMSI: <span class="mono">saved → pushed → active</span> (atau <span class="mono">partial | timeout | gagal</span>) + freshness.
+        <strong>RAA ACK ≠ Active</strong>: ACK cukup untuk <span class="mono">pushed</span>; Active hanya setelah bukti sesi <em>per operasi</em> — bukan sekadar sukses simpan DB.
+        Lifecycle Soft Arch tetap: saved→validated→queued→pushed→active|failed|drift.
+        Capability dicek <em>per operasi</em> (PRD v0.4), bukan satu toggle RAR.
+      </div>
+      <ul>
+        <li>Review diff: APN internet · QCI 6 · ambr 50/100 · mbr 20/40 · gbr 5/10 · 3 app_rules</li>
+        <li>Targets: subscriber DB · PCRF/Gx RAR (primary) · eBPF · session — data contoh / adapter unverified</li>
+        <li>SNI/hostname: intent klasifikasi; native PCC belum terverifikasi (Soft Arch #1–2)</li>
+        <li>Jika actor=instructor: audit <span class="mono">actor</span> + <span class="mono">owner</span> (K2); out-of-group → HTTP 403 <span class="mono">cross_group_forbidden</span></li>
+        <li>PRD v0.4: jika diff berisi modify QCI/ARP on existing bearer atau APN-AMBR → <strong>reject-with-reason</strong> (unsupported stock Open5GS 2.8) sampai patch</li>
+        <li>Gx Usage-Monitoring stock: jangan diklaim</li>
+      </ul>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary">Batal</button>
+        <button type="button" class="btn primary">Apply via Gx RAR</button>
+      </div>
+    </div>
+
+    <div class="modal-area" role="dialog" aria-modal="true" aria-labelledby="apply-fallback-title" style="margin-top:10px;">
+      <span class="modal-label">Modal state B · Alternate · RAR unsupported → Reject + Confirm re-attach fallback</span>
+      <h3 id="apply-fallback-title">Apply ditolak · adapter Gx RAR tidak didukung</h3>
+      <div class="warn-box">
+        <strong>Reject-with-reason (bukan silent success):</strong> Capability <em>per operasi</em> = unsupported / unavailable
+        (bukan satu toggle RAR global — PRD v0.4).
+        Immediate Apply untuk operasi ini <em>tidak dijalankan</em>. Apply juga <strong>tidak</strong> auto-restart core.
+        Fallback opsional: <strong>UE re-attach</strong> — wajib konfirmasi eksplisit user.
+        Re-attach <em>bukan</em> jalur utama (K1). Mock spec only / bukan bukti adapter.
+      </div>
+      <ul>
+        <li>Contoh alasan: <span class="mono">op=modify_qci_existing_bearer · capability=unsupported · stock Open5GS 2.8</span></li>
+        <li>Contoh alasan: <span class="mono">op=apn_ambr · capability=unsupported</span> (sampai patch)</li>
+        <li>Contoh alasan global: <span class="mono">rar_adapter.capability = unsupported</span> (contoh / unverified lab)</li>
+        <li>Status IMSI tetap <span class="mono">saved</span> (draft tervalidasi) sampai fallback dikonfirmasi atau operasi tersedia</li>
+        <li>Konfirmasi fallback akan menandai apply_job path = <span class="mono">reattach_fallback</span> + audit actor/owner</li>
+      </ul>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary">Tutup</button>
+        <button type="button" class="btn ghost">Confirm re-attach fallback…</button>
+      </div>
+    </div>
+
+    <div class="us-map">
+      <h2>Mapping user stories di layar ini</h2>
+      <div>US-01 → Save draft ber-versi; IMSI assigned-only; desired belum aktif</div>
+      <div>US-02 / K1 / v0.4 → modal A: Apply via Gx RAR (no auto-restart core; RAA ACK≠Active); modal B: per-operasi reject (QCI/ARP existing, APN-AMBR) + confirm re-attach</div>
+      <div>US-03 → evidence Detected/Decided/Installed/Observed di panel kanan</div>
+      <div>US-04 / K2 → Instructor edit/apply in-group; audit actor+owner; out-of-group HTTP 403 cross_group_forbidden</div>
+      <div>US-06 → note usage threshold + tautan provenance Overview</div>
+      <div>US-07 (diselaraskan K1) → banner RAR primary; fallback re-attach hanya bila unsupported</div>
+    </div>
+
+    <footer class="wf-foot">
+      LOFI grayscale/blueprint · aligned PRD v0.2→v0.3→v0.4 + Soft Arch closing — for Hidayat final review ·
+      split 60/40 · Soft Arch #7: &lt;button&gt; + dialog aria ·
+      Label EPC: S1-U, S5-U, SGi, Gx, Sx · Open5GS EPC CUPS ·
+      Semua data = contoh/label · mock spec only / bukan bukti adapter · bukan API final · lab PoC belum dimulai
+    </footer>
+  </main>
+</div>
+</body>
+</html>

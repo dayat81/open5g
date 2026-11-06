@@ -1,0 +1,54 @@
+# WORK IN PROGRESS snapshot 2026-11-06 20:16:41 +07
+# Sanitized example — not a deployable mirror of the live lab.
+
+name: lab5g-dev-ran
+x-srs: &srs
+  image: gradiant/srsran-4g:25_10
+  restart: "no"
+  cpus: 2.5
+  mem_limit: 2048m
+  env_file: ./ran.env
+networks:
+  s1mme: {external: true, name: lab5g-dev_s1mme}
+  s1u: {external: true, name: lab5g-dev_s1u}
+  uu: {internal: true, ipam: {config: [{subnet: 10.99.11.0/24, gateway: 10.99.11.254}]}}
+services:
+  enb:
+    <<: *srs
+    container_name: l5gd-enb
+    command:
+      - enb
+      - "--rf.device_name=zmq"
+      - "--rf.device_args=fail_on_disconnect=true,tx_port0=tcp://*:2000,rx_port0=tcp://10.99.11.21:2001,tx_port1=tcp://*:2100,rx_port1=tcp://10.99.11.21:2101,id=enb,base_srate=23.04e6"
+      - "--pcap.enable=true"
+      - "--pcap.filename=/tmp/enb_mac.pcap"
+      - "--pcap.nr_filename=/tmp/enb_mac_nr.pcap"
+      - "--pcap.s1ap_enable=true"
+      - "--pcap.s1ap_filename=/tmp/enb_s1ap.pcap"
+      - "--expert.metrics_csv_enable=true"
+      - "--expert.metrics_csv_filename=/tmp/enb_metrics.csv"
+      - "--log.rrc_level=debug"
+    volumes:
+      - ./conf/ran/rr.conf:/etc/srsran/rr.conf:ro
+    networks: {s1mme: {ipv4_address: 10.99.1.20}, s1u: {ipv4_address: 10.99.2.20}, uu: {ipv4_address: 10.99.11.20}}
+  ue:
+    <<: *srs
+    container_name: l5gd-ue
+    command:
+      - ue
+      - "--rf.device_name=zmq"
+      - "--rf.device_args=tx_port0=tcp://10.99.11.21:2001,rx_port0=tcp://10.99.11.20:2000,tx_port1=tcp://10.99.11.21:2101,rx_port1=tcp://10.99.11.20:2100,id=ue,base_srate=23.04e6"
+      - "--rat.nr.bands=3"
+      - "--rat.nr.nof_carriers=1"
+      - "--rrc.release=15"
+      - "--pcap.enable=MAC_NR,MAC,NAS"
+      - "--pcap.mac_filename=/tmp/ue_mac.pcap"
+      - "--pcap.mac_nr_filename=/tmp/ue_mac_nr.pcap"
+      - "--pcap.nas_filename=/tmp/ue_nas.pcap"
+      - "--general.metrics_csv_enable=true"
+      - "--general.metrics_csv_filename=/tmp/ue_metrics.csv"
+      - "--general.metrics_csv_flush_period_sec=1"
+      - "--log.rrc_level=debug"
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun"]
+    networks: {uu: {ipv4_address: 10.99.11.21}}

@@ -1,0 +1,15 @@
+# STAGED, NOT DEPLOYED — WIP v1 2026-11-06 20:21:58 +07 (Asia/Bangkok)
+# NOTE: subscriber-modification step (subscriber-a.js) EXCLUDED — was non-additive.
+set -eu
+cd /home/lab/lab5g-dev
+if [ -e .endc-busy ]; then exit 20; fi
+trap 'rm -f .poc-busy' EXIT
+: > .poc-busy
+for f in docker-compose.yml conf/smf.yaml conf/upf.yaml rebuild-smf-upf.sh docker-compose.override.dev.yml README.md; do [ -e "$f.bak-poc" ] || cp -a "$f" "$f.bak-poc"; done
+python3 poc-staging/apply.py
+docker compose -f docker-compose.yml config -q
+docker compose -f docker-compose.yml up -d --force-recreate smf upf-a upf-b
+for f in conf/fd/pcrf.conf conf/pcrf.yaml conf/fd/smf.conf; do echo ==== $f; cat "$f"; done
+docker ps --format '{{.Names}} {{.Status}}'
+docker logs --tail 35 l5gd-smf
+printf '\n== build ==\n'
