@@ -17,7 +17,7 @@ Status of branch `cursor/open5g-scaffold-341a` after the docs pack and the sanit
 | Local image ids | `lab/versions.md` | NA snapshot `docker image inspect` ids. RepoDigests were empty. Not re-pinned here. |
 | PCRF admin-RAR draft | `lab/patches/pcrf-admin-rar.patch` and `lab/patches/pcrf-admin-rar/` | **DRAFT, NOT COMPILED, NOT TESTED.** Not applied. |
 | Slicing PoC examples | `lab/config/examples/slicing-poc/` | **STAGED-NOT-DEPLOYED** |
-| eBPF lab note | `lab/config/examples/ebpf/` | Placeholder. **DRAFT-UNTESTED** |
+| eBPF skeleton | `ebpf/classifier/app_classifier.bpf.c`, `ebpf/exporter/contract.py` | Skeleton compiles here (`loaded=false`). It does not parse DNS/TLS/QUIC and does not read a map. Lab placeholder under `lab/config/examples/ebpf/` stays **DRAFT-UNTESTED**. |
 | Capability extract | `docs/capabilities.md` | NA reading of Open5GS v2.8.0. Not a live RAR integration in this repo. |
 | Evidence summaries | `docs/evidence/` | NA-reported. See that README for the exact labels. |
 | SgNB research | `docs/research/sgnb/` | **IN PROGRESS** |
@@ -30,7 +30,7 @@ Status of branch `cursor/open5g-scaffold-341a` after the docs pack and the sanit
 | Item | Path | State |
 |---|---|---|
 | Next.js Overview and IMSI editor | `dashboard/frontend/` | Not committed. Hi-fi under `docs/ux/hifi/` is the mapping source, not the app. |
-| eBPF classifier skeleton and exporter | `ebpf/` beyond the README | Not committed. The lab package placeholder is not that skeleton. |
+| eBPF packet parsing, loader, and lab BTF check | `ebpf/` | Not implemented. Compile check does not attach a program. Kernel/BTF/hook compatibility on lab5g-dev is unverified. |
 
 ## Gates A–F
 
@@ -38,7 +38,7 @@ Status of branch `cursor/open5g-scaffold-341a` after the docs pack and the sanit
 |---|---|
 | A | NA status table: **VERIFIED** (LTE attach + SGi ping). Evidence summary heading: **ACCEPTED**. NA-reported only. Not re-tested here. PRD v0.6 roadmap text still says Gate A is **PLANNED / BUILD**. Both labels are kept; neither was re-run in this checkout. |
 | B | Integrated NR cell snapshot **NOT ACCEPTED** (NA evidence: achieved-but-not-accepted). PRD D3 requires a **separate SgNB**. **WIP**. The OAI stack note in the PRD is a recommendation **pending approval**, not a decision. `/workspace/sgnb-feasibility.md` is **not in this repo**. |
-| C | PRD roadmap names eBPF app detection as **PLANNED** and BTF **UNKNOWN**. No evidence summary. No classifier is committed. |
+| C | PRD roadmap names eBPF app detection as **PLANNED** and BTF **UNKNOWN**. A non-parsing skeleton compiles in this environment and is not attached. No lab evidence summary. |
 | D | PRD roadmap names live RAR as **PLANNED**. The scaffold rejects immediate apply. The PCRF patch is draft and was not compiled or tested. |
 | E | PRD roadmap names the self-service dashboard as **PLANNED**. Session authz is implemented and tested. The Next.js UI is not. |
 | F | PRD roadmap marks further usage as **Later**. Not started. |
