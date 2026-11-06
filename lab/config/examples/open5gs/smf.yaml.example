@@ -1,0 +1,27 @@
+# Sanitized Open5GS config example
+
+logger:
+  level: info
+smf:
+  freeDiameter: /etc/o5/fd/smf.conf
+  pfcp:
+    server:
+    - address: 10.99.6.13
+    client:
+      upf:
+      - address: 10.99.6.14
+  gtpc:
+    server:
+    - address: 10.99.5.12
+  gtpu:
+    server:
+    - address: 10.99.5.12
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+      dnn: internet
+  dns:
+  - 10.99.9.20
+  mtu: 1400
+  ctf:
+    enabled: no

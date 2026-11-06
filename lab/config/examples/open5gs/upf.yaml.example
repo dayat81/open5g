@@ -1,0 +1,15 @@
+# Sanitized Open5GS config example
+
+logger:
+  level: info
+upf:
+  pfcp:
+    server:
+    - address: 10.99.6.14
+  gtpu:
+    server:
+    - address: 10.99.5.14
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+      dnn: internet

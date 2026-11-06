@@ -1,0 +1,78 @@
+# Sanitized compose reference
+
+name: lab5g-dev
+x-o5: &o5
+  image: gradiant/open5gs:2.8.0
+  restart: "no"
+  cpus: 1.0
+  mem_limit: 512m
+  volumes:
+    - ./conf:/etc/o5:ro
+networks:
+  s1mme: {internal: true, ipam: {config: [{subnet: 10.99.1.0/24, gateway: 10.99.1.254}]}}
+  s1u:   {internal: true, ipam: {config: [{subnet: 10.99.2.0/24, gateway: 10.99.2.254}]}}
+  s11:   {internal: true, ipam: {config: [{subnet: 10.99.4.0/24, gateway: 10.99.4.254}]}}
+  s5s8:  {internal: true, ipam: {config: [{subnet: 10.99.5.0/24, gateway: 10.99.5.254}]}}
+  pfcp:  {internal: true, ipam: {config: [{subnet: 10.99.6.0/24, gateway: 10.99.6.254}]}}
+  s6a:   {internal: true, ipam: {config: [{subnet: 10.99.7.0/24, gateway: 10.99.7.254}]}}
+  gx:    {internal: true, ipam: {config: [{subnet: 10.99.8.0/24, gateway: 10.99.8.254}]}}
+  sgi:   {internal: true, ipam: {config: [{subnet: 10.99.9.0/24, gateway: 10.99.9.254}]}}
+  mgmt:  {internal: true, ipam: {config: [{subnet: 10.99.10.0/24, gateway: 10.99.10.254}]}}
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: l5gd-mongo
+    command: ["mongod","--bind_ip_all","--wiredTigerCacheSizeGB","0.25"]
+    cpus: 1.0
+    mem_limit: 768m
+    networks: {mgmt: {ipv4_address: 10.99.10.2}}
+    volumes: ["./mongo-data:/data/db"]
+  hss:
+    <<: *o5
+    container_name: l5gd-hss
+    command: ["/opt/open5gs/bin/open5gs-hssd","-c","/etc/o5/hss.yaml"]
+    networks: {s6a: {ipv4_address: 10.99.7.11}, mgmt: {ipv4_address: 10.99.10.3}}
+    depends_on: [mongo]
+  pcrf:
+    <<: *o5
+    container_name: l5gd-pcrf
+    command: ["/opt/open5gs/bin/open5gs-pcrfd","-c","/etc/o5/pcrf.yaml"]
+    networks: {gx: {ipv4_address: 10.99.8.11}, mgmt: {ipv4_address: 10.99.10.4}}
+    depends_on: [mongo]
+  mme:
+    <<: *o5
+    container_name: l5gd-mme
+    command: ["/opt/open5gs/bin/open5gs-mmed","-c","/etc/o5/mme.yaml"]
+    networks: {s1mme: {ipv4_address: 10.99.1.10}, s11: {ipv4_address: 10.99.4.10}, s6a: {ipv4_address: 10.99.7.10}}
+  sgwc:
+    <<: *o5
+    container_name: l5gd-sgwc
+    command: ["/opt/open5gs/bin/open5gs-sgwcd","-c","/etc/o5/sgwc.yaml"]
+    networks: {s11: {ipv4_address: 10.99.4.11}, s5s8: {ipv4_address: 10.99.5.11}, pfcp: {ipv4_address: 10.99.6.11}}
+  sgwu:
+    <<: *o5
+    container_name: l5gd-sgwu
+    command: ["/opt/open5gs/bin/open5gs-sgwud","-c","/etc/o5/sgwu.yaml"]
+    networks: {pfcp: {ipv4_address: 10.99.6.12}, s1u: {ipv4_address: 10.99.2.12}, s5s8: {ipv4_address: 10.99.5.13}}
+  smf:
+    <<: *o5
+    container_name: l5gd-smf
+    command: ["/opt/open5gs/bin/open5gs-smfd","-c","/etc/o5/smf.yaml"]
+    networks: {s5s8: {ipv4_address: 10.99.5.12}, pfcp: {ipv4_address: 10.99.6.13}, gx: {ipv4_address: 10.99.8.12}}
+  upf:
+    <<: *o5
+    container_name: l5gd-upf
+    user: root
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    sysctls: {net.ipv4.ip_forward: "1"}
+    entrypoint: ["/bin/bash","-c","ip tuntap add name ogstun mode tun && ip addr add 10.45.0.1/16 dev ogstun && ip link set ogstun up && exec /opt/open5gs/bin/open5gs-upfd -c /etc/o5/upf.yaml"]
+    networks: {pfcp: {ipv4_address: 10.99.6.14}, s5s8: {ipv4_address: 10.99.5.14}, sgi: {ipv4_address: 10.99.9.10}}
+  server:
+    image: nicolaka/netshoot:latest
+    container_name: l5gd-server
+    cpus: 0.5
+    mem_limit: 256m
+    cap_add: [NET_ADMIN]
+    command: ["/bin/sh","-c","ip route add 10.45.0.0/16 via 10.99.9.10; exec iperf3 -s"]
+    networks: {sgi: {ipv4_address: 10.99.9.20}}

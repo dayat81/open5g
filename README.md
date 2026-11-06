@@ -42,7 +42,7 @@ eBPF, if it is later built, would be a proposed detection point. It would not be
 
 | Path | What it is |
 |---|---|
-| [`lab/`](lab/README.md) | Future lab5g-dev material. Run steps there are not authorized and were not executed. |
+| [`lab/`](lab/README.md) | Sanitized lab5g-dev WIP reference. Not deployed from this checkout. |
 | [`ebpf/`](ebpf/README.md) | Proposed detection. No program is checked in. |
 | [`dashboard/`](dashboard/README.md) | Multi-user dashboard scaffold. Policy rules and schema only, so far. |
 | [`docs/prd/`](docs/prd/README.md) | Placeholder. Canonical PRD v0.5 is still pending. The v0.4 Page snapshot under `docs/pages/` is superseded. |

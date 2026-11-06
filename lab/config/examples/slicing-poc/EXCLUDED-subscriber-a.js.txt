@@ -1,0 +1,1 @@
+# EXCLUDED: non-additive subscriber-a.js — do not reintroduce without review.

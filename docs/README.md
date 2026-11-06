@@ -9,6 +9,9 @@
 | [`design/`](design/memo-kelayakan-dashboard-lab-5g-parsial.md) | Feasibility memo and IA Markdown. |
 | [`pages/`](pages/prd-lab-5g-nsa-dashboard-v0.4.INTERIM-SNAPSHOT.md) | v0.4 snapshot, superseded / pending v0.5, plus memo and IA mirrors. |
 | [`SOURCE-OF-TRUTH.md`](SOURCE-OF-TRUTH.md) | Which path wins when copies disagree. |
-| [`evidence/`](evidence/README.md) | Gate summaries only after they are checked in. |
+| [`evidence/`](evidence/README.md) | NA-reported Gate A, Gate B, and PoC slicing summaries. |
+| [`capabilities.md`](capabilities.md) | NA capability extract. Not a live adapter result. |
+| [`plan-poc-slicing-core.md`](plan-poc-slicing-core.md) | Canonical sanitized PoC plan. |
+| [`research/sgnb/`](research/sgnb/README.md) | Separate-SgNB research, in progress. |
 
 Do not treat a hi-fi mock, a sample metric, or a rejected apply decision as lab evidence.

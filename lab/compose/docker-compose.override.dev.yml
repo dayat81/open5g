@@ -1,0 +1,11 @@
+# Sanitized compose reference
+
+services:
+  smf:
+    volumes:
+      - ./conf:/etc/o5:ro
+      - ./bin/open5gs-smfd:/opt/open5gs/bin/open5gs-smfd:ro
+  upf:
+    volumes:
+      - ./conf:/etc/o5:ro
+      - ./bin/open5gs-upfd:/opt/open5gs/bin/open5gs-upfd:ro

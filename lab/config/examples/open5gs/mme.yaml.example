@@ -1,0 +1,32 @@
+# WORK IN PROGRESS snapshot 2026-11-06 20:16:41 +07
+# Sanitized example — not a deployable mirror of the live lab.
+
+logger:
+  level: info
+mme:
+  freeDiameter: /etc/o5/fd/mme.conf
+  s1ap:
+    server:
+    - address: 10.99.1.10
+  gtpc:
+    server:
+    - address: 10.99.4.10
+    client:
+      sgwc:
+      - address: 10.99.4.11
+        tac: 1
+      smf:
+      - address: 10.99.5.12
+        tac: 1
+  gummei:
+  - plmn_id: {mcc: 001, mnc: 01}
+    mme_gid: 2
+    mme_code: 1
+  tai:
+  - plmn_id: {mcc: 001, mnc: 01}
+    tac: 1
+  security:
+    integrity_order: [EIA2, EIA1, EIA0]
+    ciphering_order: [EEA0, EEA1, EEA2]
+  network_name: {full: Lab5G-Dev, short: LabDev}
+  mme_name: lab5g-dev-mme0

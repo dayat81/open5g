@@ -1,0 +1,21 @@
+# STAGED, NOT DEPLOYED — WIP v1 2026-11-06 20:21:58 +07 (Asia/Bangkok)
+  upf-a:
+    <<: *o5
+    container_name: l5gd-upf-a
+    user: root
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    sysctls: {net.ipv4.ip_forward: "1"}
+    entrypoint: ["/bin/bash","-c","ip tuntap add name ogstuna mode tun && ip addr add 10.46.0.1/16 dev ogstuna && ip link set ogstuna up && exec /opt/open5gs/bin/open5gs-upfd -c /etc/o5/upf-a.yaml"]
+    command: []
+    networks: {pfcp: {ipv4_address: 10.99.6.15}, s5s8: {ipv4_address: 10.99.5.15}, sgi: {ipv4_address: 10.99.9.11}}
+  upf-b:
+    <<: *o5
+    container_name: l5gd-upf-b
+    user: root
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    sysctls: {net.ipv4.ip_forward: "1"}
+    entrypoint: ["/bin/bash","-c","ip tuntap add name ogstunb mode tun && ip addr add 10.47.0.1/16 dev ogstunb && ip link set ogstunb up && exec /opt/open5gs/bin/open5gs-upfd -c /etc/o5/upf-b.yaml"]
+    command: []
+    networks: {pfcp: {ipv4_address: 10.99.6.16}, s5s8: {ipv4_address: 10.99.5.16}, sgi: {ipv4_address: 10.99.9.12}}
