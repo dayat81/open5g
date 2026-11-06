@@ -24,4 +24,4 @@ The stock apply function rejects immediate QCI/ARP changes on an existing bearer
 - A production identity provider
 - Exporters, drill-down data from a core, or eBPF counters
 
-`docs/design/prototype/`, when a localStorage prototype is supplied later, is a no-auth simulation. It does not replace the Next.js app.
+The localStorage prototype is `docs/ux/prototype/`. It is a no-auth demo and does not replace the Next.js app.

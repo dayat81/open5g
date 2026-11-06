@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<title>Hi-fi — Editor profil PCRF / IMSI · mock spec only</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="components.css" />
+
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand">Dashboard lab 5G · Open5GS EPC CUPS</div>
+    <div class="meta">
+      <span class="role-badge">Role: Student</span>
+      <span class="pill solid">Lab status: Core reachable (contoh)</span>
+      <span class="pill">experiment: exp-lab-epc-03</span>
+    </div>
+  </header>
+
+  <nav class="nav" aria-label="Navigasi utama">
+    <div class="section-label">Utama</div>
+    <a href="01-overview-hifi.html">Eksperimen</a>
+    <a class="active" href="02-imsi-profile-editor-hifi.html">Profil PCRF</a>
+    <div class="hint">Editor intent + apply</div>
+    <a href="01-overview-hifi.html#observability">Observability</a>
+    <div class="section-label">Lainnya</div>
+    <a href="01-overview-hifi.html#instructor-scope">Kelas</a>
+    <div class="hint">Instructor: edit/apply IMSI in-group saja · audit actor+owner (K2)</div>
+    <span class="nav-disabled" aria-disabled="true">Admin</span>
+    <div class="hint">Global core controls bukan untuk student</div>
+  </nav>
+
+  <main class="main">
+
+    <h1>Editor profil PCRF · IMSI assigned</h1>
+    <p class="sub">
+      Form = Intent (draft). Panel kanan = Intent | Applied | Measured terpisah.
+      Field names = draft Soft Arch (bukan API final). Ki/OPc tidak ditampilkan. S-NSSAI = n/a (EPC).
+    </p>
+
+    <!-- K1 banner: Gx RAR primary -->
+    <div class="banner" id="banner-rar">
+      <span class="us-tag">K1</span><span class="us-tag">PRD v0.3</span><span class="us-tag">PRD v0.4</span><span class="us-tag">US-02</span>
+      <strong>Primary Apply = Gx RAR immediate</strong> (capability <em>per operasi</em>, bukan satu toggle).
+      Status apply/RAR per IMSI: <span class="mono">saved | pushed | active | partial | timeout | gagal/failed</span> + freshness.
+      <strong>RAA ACK ≠ Active</strong> — Active hanya via bukti session per operasi.
+      <strong>Apply tidak memicu auto restart core.</strong>
+      Jika operasi/adapter tidak didukung: UI <strong>reject-with-reason</strong> dan tawarkan
+      <strong>fallback re-attach</strong> (wajib konfirmasi) — bukan jalur utama.
+      Active tetap butuh bukti sesi, bukan sekadar sukses simpan DB.
+    </div>
+
+    <div class="asumsi">
+      <h3>Keputusan tertutup (Hidayat → PRD v0.3 / v0.4)</h3>
+      <div><strong>K1 · Apply:</strong> Gx RAR primary; re-attach = fallback bila RAR/operasi unsupported (reject + confirm). Apply <em>tidak</em> auto-restart core.</div>
+      <div><strong>K2 · Instructor:</strong> Boleh edit/apply IMSI student in-group saja; audit <span class="mono">actor</span> + <span class="mono">owner</span>. Out-of-group = <span class="mono">HTTP 403 cross_group_forbidden</span> + audit.
+      Wireframe primary role di sini = Student; instructor memakai form yang sama dengan scope group-bound.</div>
+      <div><strong>PRD v0.4 · per-operasi:</strong> RAR new PCC rule = supported (contoh); RAR modify QCI/ARP existing bearer = unsupported → reject; RAR APN-AMBR = unsupported stock Open5GS 2.8 → reject sampai patch. Mock spec only / bukan bukti adapter.</div>
+    </div>
+
+    <div class="asumsi" id="capability-matrix">
+      <h3>Capability chips (PRD v0.4 · data contoh)</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;font-size:11px;margin-top:4px;">
+        <span class="badge applied">RAR new PCC rule: supported (contoh)</span>
+        <span class="badge fail">RAR modify QCI existing bearer: unsupported → reject</span>
+        <span class="badge fail">RAR APN-AMBR: unsupported → reject</span>
+        <span class="badge">fallback re-attach: confirm</span>
+      </div>
+    </div>
+
+    <!-- Profile header -->
+    <div class="profile-header">
+      <div class="ph-block">
+        <div class="k">imsi (assigned-only, read-only)</div>
+        <div class="v mono">510…789</div>
+        <div class="hint">US-01 · server-side · bukan ketik bebas · jika &gt;1 → selector list assigned</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">group / ownership (K2)</div>
+        <div class="v mono" style="font-size:12px;">kelas-5g-a</div>
+        <div class="hint">owner=student · instructor edit in-group → audit actor+owner</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">profile_id</div>
+        <div class="v mono">prf-a1c2</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">desired_version</div>
+        <div class="v mono">v3</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">applied_version</div>
+        <div class="v mono">v2</div>
+      </div>
+      <div class="ph-block">
+        <div class="k">observed_version</div>
+        <div class="v mono">v2 <span class="badge stale">stale?</span></div>
+      </div>
+      <div class="ph-block" style="flex:1;">
+        <div class="k">Lifecycle · Soft Arch #3 (label UI + mono enum)</div>
+        <div class="v" style="margin-top:4px;">
+          <span class="badge intent">Draft</span><span class="mono" style="font-size:10px;">saved</span>
+          <span class="badge">Tervalidasi</span><span class="mono" style="font-size:10px;">validated</span>
+          <span class="badge unknown">Queued</span><span class="mono" style="font-size:10px;">queued</span>
+          <span class="badge unknown">Pushed</span><span class="mono" style="font-size:10px;">pushed</span>
+          <span class="badge lifecycle-active">Active*</span><span class="mono" style="font-size:10px;">active</span>
+          <span class="badge fail">Failed</span><span class="mono" style="font-size:10px;">failed</span>
+          <span class="badge stale">Drift</span><span class="mono" style="font-size:10px;">drift</span>
+        </div>
+        <div class="note">*Active = butuh bukti sesi, bukan sukses simpan DB · enum draft API (belum final)</div>
+      </div>
+    </div>
+
+    <div class="split">
+      <!-- LEFT: Intent form ~60% -->
+      <div class="panel">
+        <h2>
+          <span class="dot intent"></span> Form Intent (draft user)
+          <span class="tag">desired_version v3 · US-01</span>
+        </h2>
+
+        <div class="section">
+          <h3>Scope · experiment + APN / logical slice</h3>
+          <div class="fields">
+            <div class="field">
+              <label>experiment_id (selector)</label>
+              <div class="box">exp-lab-epc-03 · “Slice PCC demo”</div>
+            </div>
+            <div class="field">
+              <label>logical_slice / template</label>
+              <div class="box">slice-class-A <span class="tbd">limit = usulan</span></div>
+              <div class="hint">Admin template/kuota = usulan, bukan angka approved</div>
+            </div>
+            <div class="field">
+              <label>APN (EPC)</label>
+              <div class="box mono">internet</div>
+              <div class="hint">Lab = Open5GS EPC CUPS · bukan DNN/5GC</div>
+            </div>
+            <div class="field">
+              <label>S-NSSAI</label>
+              <div class="box ro">n/a — EPC · BUKAN sinonim APN · Option 7/4 stretch</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>QCI / ARP · Soft Arch #4 (field terpisah)</h3>
+          <div class="fields" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+            <div class="field">
+              <label>QCI</label>
+              <div class="box mono">6</div>
+            </div>
+            <div class="field">
+              <label>arp.priority</label>
+              <div class="box mono">5</div>
+            </div>
+            <div class="field">
+              <label>arp.preemption_capability</label>
+              <div class="box mono">not-preempt</div>
+            </div>
+            <div class="field">
+              <label>arp.preemption_vulnerability</label>
+              <div class="box mono">not-vulnerable</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>AMBR / MBR / GBR · Soft Arch #4 (per arah + unit; GBR≤MBR)</h3>
+          <div class="fields six">
+            <div class="field">
+              <label>ambr_ul</label>
+              <div class="box mono">50</div>
+            </div>
+            <div class="field">
+              <label>ambr_dl</label>
+              <div class="box mono">100</div>
+            </div>
+            <div class="field">
+              <label>unit (AMBR)</label>
+              <div class="box">Mbps</div>
+            </div>
+            <div class="field">
+              <label>mbr_ul</label>
+              <div class="box mono">20</div>
+            </div>
+            <div class="field">
+              <label>mbr_dl</label>
+              <div class="box mono">40</div>
+            </div>
+            <div class="field">
+              <label>unit (MBR)</label>
+              <div class="box">Mbps</div>
+            </div>
+            <div class="field">
+              <label>gbr_ul</label>
+              <div class="box mono">5</div>
+            </div>
+            <div class="field">
+              <label>gbr_dl</label>
+              <div class="box mono">10</div>
+            </div>
+            <div class="field">
+              <label>unit (GBR)</label>
+              <div class="box">Mbps</div>
+            </div>
+          </div>
+          <div class="box ro">
+            Validasi: <span class="mono">gbr_ul ≤ mbr_ul</span> (5 ≤ 20 ✓) · <span class="mono">gbr_dl ≤ mbr_dl</span> (10 ≤ 40 ✓) — per arah.
+            Angka = label contoh. Kuota agregat admin boleh pending (jujur).
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>app_rules[] · Soft Arch #2 · {match_type, pattern, app_id, priority, enabled, apply_targets}</h3>
+          <table class="wf">
+            <thead>
+              <tr>
+                <th>match_type</th>
+                <th>pattern</th>
+                <th>app_id</th>
+                <th>priority</th>
+                <th>enabled</th>
+                <th>apply_targets / badge</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono">SNI</td>
+                <td class="mono">meet.example</td>
+                <td class="mono">video-conf</td>
+                <td class="mono">10</td>
+                <td>true</td>
+                <td>
+                  classifier: eBPF · enforce: —<br/>
+                  <span class="badge warn-rule">intent klasifikasi; native PCC belum terverifikasi</span>
+                </td>
+              </tr>
+              <tr>
+                <td class="mono">IP</td>
+                <td class="mono">203.0.113.0/24</td>
+                <td class="mono">bulk-dl</td>
+                <td class="mono">20</td>
+                <td>true</td>
+                <td>
+                  apply_targets: subscriber DB / PCRF (contoh · adapter unverified)<br/>
+                  <span>stock IPFilterRule path</span>
+                </td>
+              </tr>
+              <tr>
+                <td class="mono">hostname</td>
+                <td class="mono">cdn.example.org</td>
+                <td class="mono">web-cdn</td>
+                <td class="mono">30</td>
+                <td>false</td>
+                <td>
+                  classifier: unknown/eBPF planned · enforce: n/a<br/>
+                  <span class="badge warn-rule">intent klasifikasi; native PCC belum terverifikasi</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="note">
+            Soft Arch #1+#2: SNI/hostname = classifier_source eBPF/unknown, TERPISAH dari enforcement Gx.
+            Badge PER-RULE (bukan hanya catatan global). Soft Arch #6: target DB/PCRF = data contoh / adapter unverified.
+          </p>
+        </div>
+
+        <div class="section">
+          <h3>usage threshold · Soft Arch #4 (scope app|session)</h3>
+          <div class="fields" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr;">
+            <div class="field">
+              <label>scope</label>
+              <div class="box mono">app</div>
+              <div class="hint">app | session</div>
+            </div>
+            <div class="field">
+              <label>app_id</label>
+              <div class="box mono">video-conf</div>
+              <div class="hint">wajib bila scope=app</div>
+            </div>
+            <div class="field">
+              <label>threshold</label>
+              <div class="box mono">500</div>
+            </div>
+            <div class="field">
+              <label>unit</label>
+              <div class="box">MB</div>
+            </div>
+            <div class="field">
+              <label>window_s</label>
+              <div class="box mono">300</div>
+            </div>
+          </div>
+          <p class="note">Jangan klaim Gx Usage-Monitoring stock Open5GS (US-06 / FR-08). Provenance wajib di KPI Overview.</p>
+        </div>
+
+        <div class="section">
+          <h3>Tidak ditampilkan</h3>
+          <div class="box ro">
+            Ki / OPc — hidden (bukan bagian editor mahasiswa / instructor)
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn secondary">Save draft</button>
+          <button type="button" class="btn ghost">Validate</button>
+          <button type="button" class="btn ghost">Review diff</button>
+          <button type="button" class="btn primary">Apply…</button>
+          <button type="button" class="btn ghost">Restore version</button>
+          <div class="apply-note">
+            US-01: Save draft ber-versi, belum aktif.
+            K1/US-02/v0.4: Apply via Gx RAR per-operasi → saved|pushed|active|…; RAA ACK≠Active; no auto-restart core.
+            QCI/ARP existing + APN-AMBR → reject-with-reason (Open5GS 2.8). Fallback re-attach = confirm. Soft Arch #7: &lt;button&gt;.
+            K2: actor=instructor → audit actor+owner; out-of-group → 403 cross_group_forbidden.
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: status ~40% -->
+      <div class="panel">
+        <h2>Status panel · Intent | Applied | Measured</h2>
+        <p class="note" style="margin-top:0;margin-bottom:8px;">Bukan satu status OK global.</p>
+
+        <div class="stack">
+          <div class="state-card intent">
+            <h4><span class="dot intent"></span> Intent · desired_version v3</h4>
+            <div class="row"><span>lifecycle</span><span><span class="badge intent">Draft</span> <span class="mono">saved</span></span></div>
+            <div class="row"><span>APN / slice</span><span class="mono">internet / class-A</span></div>
+            <div class="row"><span>QCI / ARP</span><span class="mono">6 / pri=5 / not-preempt / not-vuln</span></div>
+            <div class="row"><span>app_rules</span><span class="mono">3 rows</span></div>
+            <div class="row"><span>version_etag</span><span class="mono">etag-a1c2-v3 · contoh</span></div>
+          </div>
+
+          <div class="state-card applied">
+            <h4><span class="dot applied"></span> Applied · applied_version v2</h4>
+            <div class="row"><span>lifecycle</span><span><span class="badge lifecycle-active">Active*</span> <span class="mono">active</span></span></div>
+            <div class="row"><span>apply_job id</span><span class="mono">job-7f3a</span></div>
+            <div class="row">
+              <span>subscriber DB</span>
+              <span><span class="badge applied">ok*</span> <span>contoh · unverified</span></span>
+            </div>
+            <div class="row">
+              <span>PCRF / Gx RAR</span>
+              <span><span class="badge applied">pushed</span> <span>primary · capability-gated</span></span>
+            </div>
+            <div class="row"><span>eBPF</span><span class="badge unknown">unknown</span> <span style="font-size:10px;">classify ≠ enforce</span></div>
+            <div class="row"><span>apply/RAR per IMSI</span><span class="badge applied">pushed</span> → <span class="badge measured">active*</span> <span class="mono">freshness 8s</span></div>
+            <div class="row"><span>session</span><span class="badge measured">bukti sesi per operasi</span></div>
+            <div class="row"><span>last_error / reason / time</span><span class="mono">— / RAR ACK / 14:02:12</span></div>
+            <div class="note"><strong>RAA ACK ≠ Active</strong> — PCRF ACK → <span class="mono">pushed</span>; Active* hanya bukti session per operasi · Soft Arch #6: DB/PCRF = contoh/unverified · Apply tidak auto-restart core · re-attach hanya fallback (K1)</div>
+          </div>
+
+          <div class="state-card measured">
+            <h4><span class="dot measured"></span> Measured · observed_version v2</h4>
+            <div class="row"><span>UE IP</span><span class="mono">10.45.0.12</span></div>
+            <div class="row"><span>bearer / QCI</span><span class="mono">ebi=5 · QCI 6</span></div>
+            <div class="row"><span>TEID + endpoints</span><span class="mono">0x1a2b · S1-U</span></div>
+            <div class="row"><span>PGW-C / PGW-U</span><span class="mono">pgw-c-01 / pgw-u-01</span></div>
+            <div class="row"><span>exporter_instance</span><span class="mono">ebpf-exp-01</span></div>
+            <div class="row"><span>classifier_version</span><span class="mono">clf-v0.3</span></div>
+            <div class="row"><span>freshness / reset</span><span>12s <span class="badge stale">stale?</span> · on clf reload</span></div>
+          </div>
+        </div>
+
+        <h2 style="margin-top:12px;">Lifecycle timeline · Soft Arch #3</h2>
+        <div class="timeline">
+          <span class="tl-step done">Draft<span class="tl-enum">saved</span></span><span class="tl-arrow">→</span>
+          <span class="tl-step now">Tervalidasi<span class="tl-enum">validated</span></span><span class="tl-arrow">→</span>
+          <span class="tl-step">Queued<span class="tl-enum">queued</span></span><span class="tl-arrow">→</span>
+          <span class="tl-step">Pushed<span class="tl-enum">pushed</span></span><span class="tl-arrow">→</span>
+          <span class="tl-step">Active<span class="tl-enum">active</span></span>
+          <span class="tl-arrow">|</span>
+          <span class="tl-step">Failed<span class="tl-enum">failed</span></span>
+          <span class="tl-arrow">|</span>
+          <span class="tl-step">Drift<span class="tl-enum">drift</span></span>
+        </div>
+        <p class="note">Enum draft API konsisten dengan label UI. Belum kontrak final.</p>
+
+        <h2 style="margin-top:10px;">Evidence placeholders (empat lapisan · US-03)</h2>
+        <div class="evidence">
+          <div class="k">Detected</div>
+          evidence + time + source · contoh: SNI meet.example · classifier_source=eBPF · t−8s · confidence 0.82
+          · <em>bukan bukti enforcement</em>
+        </div>
+        <div class="evidence">
+          <div class="k">Decided</div>
+          PCRF rule name / SDF / QCI / gate · belum berarti terpasang · policy evidence terpisah dari classifier
+        </div>
+        <div class="evidence">
+          <div class="k">Installed</div>
+          binding SMF · bearer ID · TEID · endpoints (S1-U / S5-U / SGi) · enforcement_path / apply_targets
+        </div>
+        <div class="evidence">
+          <div class="k">Observed</div>
+          bytes/packets/rate · capture point · freshness · exporter_instance · classifier_version ·
+          bedakan missing/stale/unsupported/ambiguous dari zero/failed
+        </div>
+
+        <h2 style="margin-top:10px;">States lain (wireframe)</h2>
+        <div>
+          <span class="badge unknown">loading</span>
+          <span class="badge unknown">empty</span>
+          <span class="badge unknown">no-access</span>
+          <span class="badge">ownership conflict</span>
+          <span class="badge">concurrent update</span>
+          <span class="badge">RAR partial</span>
+          <span class="badge">RAR timeout</span>
+          <span class="badge fail">RAR gagal</span>
+          <span class="badge">fallback re-attach (confirm)</span>
+          <span class="badge">audit actor+owner</span>
+          <span class="badge fail">HTTP 403 cross_group_forbidden</span>
+          <span class="badge">out-of-group no-access + audit</span>
+          <span class="badge fail">reject: QCI/ARP existing bearer</span>
+          <span class="badge fail">reject: APN-AMBR</span>
+          <span class="badge">RAA ACK ≠ Active</span>
+          <span class="badge">no auto-restart core</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirm Apply modal — Soft Arch #7: role=dialog aria-modal · K1 dual state -->
+    <div class="modal-area" role="dialog" aria-modal="true" aria-labelledby="apply-dialog-title">
+      <span class="modal-label">Modal state A · Primary · Apply via Gx RAR</span>
+      <h3 id="apply-dialog-title">Confirm Apply via Gx RAR · desired_version v3</h3>
+      <div class="warn-box">
+        <strong>Primary path (K1):</strong> Apply akan mengirim <strong>Gx RAR immediate</strong> ke PCRF/PCEF untuk IMSI ini
+        — <strong>tidak memicu auto restart core</strong>.
+        Status per IMSI: <span class="mono">saved → pushed → active</span> (atau <span class="mono">partial | timeout | gagal</span>) + freshness.
+        <strong>RAA ACK ≠ Active</strong>: ACK cukup untuk <span class="mono">pushed</span>; Active hanya setelah bukti sesi <em>per operasi</em> — bukan sekadar sukses simpan DB.
+        Lifecycle Soft Arch tetap: saved→validated→queued→pushed→active|failed|drift.
+        Capability dicek <em>per operasi</em> (PRD v0.4), bukan satu toggle RAR.
+      </div>
+      <ul>
+        <li>Review diff: APN internet · QCI 6 · ambr 50/100 · mbr 20/40 · gbr 5/10 · 3 app_rules</li>
+        <li>Targets: subscriber DB · PCRF/Gx RAR (primary) · eBPF · session — data contoh / adapter unverified</li>
+        <li>SNI/hostname: intent klasifikasi; native PCC belum terverifikasi (Soft Arch #1–2)</li>
+        <li>Jika actor=instructor: audit <span class="mono">actor</span> + <span class="mono">owner</span> (K2); out-of-group → HTTP 403 <span class="mono">cross_group_forbidden</span></li>
+        <li>PRD v0.4: jika diff berisi modify QCI/ARP on existing bearer atau APN-AMBR → <strong>reject-with-reason</strong> (unsupported stock Open5GS 2.8) sampai patch</li>
+        <li>Gx Usage-Monitoring stock: jangan diklaim</li>
+      </ul>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary">Batal</button>
+        <button type="button" class="btn primary">Apply via Gx RAR</button>
+      </div>
+    </div>
+
+    <div class="modal-area" role="dialog" aria-modal="true" aria-labelledby="apply-fallback-title" style="margin-top:10px;">
+      <span class="modal-label">Modal state B · Alternate · RAR unsupported → Reject + Confirm re-attach fallback</span>
+      <h3 id="apply-fallback-title">Apply ditolak · adapter Gx RAR tidak didukung</h3>
+      <div class="warn-box">
+        <strong>Reject-with-reason (bukan silent success):</strong> Capability <em>per operasi</em> = unsupported / unavailable
+        (bukan satu toggle RAR global — PRD v0.4).
+        Immediate Apply untuk operasi ini <em>tidak dijalankan</em>. Apply juga <strong>tidak</strong> auto-restart core.
+        Fallback opsional: <strong>UE re-attach</strong> — wajib konfirmasi eksplisit user.
+        Re-attach <em>bukan</em> jalur utama (K1). Mock spec only / bukan bukti adapter.
+      </div>
+      <ul>
+        <li>Contoh alasan: <span class="mono">op=modify_qci_existing_bearer · capability=unsupported · stock Open5GS 2.8</span></li>
+        <li>Contoh alasan: <span class="mono">op=apn_ambr · capability=unsupported</span> (sampai patch)</li>
+        <li>Contoh alasan global: <span class="mono">rar_adapter.capability = unsupported</span> (contoh / unverified lab)</li>
+        <li>Status IMSI tetap <span class="mono">saved</span> (draft tervalidasi) sampai fallback dikonfirmasi atau operasi tersedia</li>
+        <li>Konfirmasi fallback akan menandai apply_job path = <span class="mono">reattach_fallback</span> + audit actor/owner</li>
+      </ul>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary">Tutup</button>
+        <button type="button" class="btn ghost">Confirm re-attach fallback…</button>
+      </div>
+    </div>
+
+    <div class="us-map">
+      <h2>Mapping user stories di layar ini</h2>
+      <div>US-01 → Save draft ber-versi; IMSI assigned-only; desired belum aktif</div>
+      <div>US-02 / K1 / v0.4 → modal A: Apply via Gx RAR (no auto-restart core; RAA ACK≠Active); modal B: per-operasi reject (QCI/ARP existing, APN-AMBR) + confirm re-attach</div>
+      <div>US-03 → evidence Detected/Decided/Installed/Observed di panel kanan</div>
+      <div>US-04 / K2 → Instructor edit/apply in-group; audit actor+owner; out-of-group HTTP 403 cross_group_forbidden</div>
+      <div>US-06 → note usage threshold + tautan provenance Overview</div>
+      <div>US-07 (diselaraskan K1) → banner RAR primary; fallback re-attach hanya bila unsupported</div>
+    </div>
+
+    <footer class="wf-foot">Hi-fi FINAL · Soft Arch handoff · mock spec only / bukan bukti adapter · data contoh · field names = draft Soft Arch, bukan API final · Ki/OPc hidden · S-NSSAI n/a (EPC) · label EPC S1-U/S5-U/SGi/Gx/Sx</footer>
+  </main>
+</div>
+</body>
+</html>
