@@ -4,10 +4,10 @@
 |---|---|
 | [`DELIVERABLES.md`](DELIVERABLES.md) | Included work and pending packs. Gates A–F are tracked there. |
 | [`BOOTSTRAP.md`](BOOTSTRAP.md) | Why `master` exists and what this effort does not do. |
-| [`prd/`](prd/README.md) | Placeholder until canonical PRD v0.5. |
+| [`prd/`](prd/PRD-v0.6.md) | Canonical PRD v0.6, roadmap, decisions, and risks. |
 | [`ux/`](ux/README.md) | Sanitized UX pack, included. Prototype is demo-only. |
 | [`design/`](design/memo-kelayakan-dashboard-lab-5g-parsial.md) | Feasibility memo and IA Markdown. |
-| [`pages/`](pages/prd-lab-5g-nsa-dashboard-v0.4.INTERIM-SNAPSHOT.md) | v0.4 snapshot, superseded / pending v0.5, plus memo and IA mirrors. |
+| [`pages/`](pages/historical/prd-lab-5g-nsa-dashboard-v0.4.INTERIM-SNAPSHOT.md) | Historical v0.4 snapshot only. Current PRD is v0.6. |
 | [`SOURCE-OF-TRUTH.md`](SOURCE-OF-TRUTH.md) | Which path wins when copies disagree. |
 | [`evidence/`](evidence/README.md) | NA-reported Gate A, Gate B, and PoC slicing summaries. |
 | [`capabilities.md`](capabilities.md) | NA capability extract. Not a live adapter result. |

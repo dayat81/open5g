@@ -45,7 +45,7 @@ eBPF, if it is later built, would be a proposed detection point. It would not be
 | [`lab/`](lab/README.md) | Sanitized lab5g-dev WIP reference. Not deployed from this checkout. |
 | [`ebpf/`](ebpf/README.md) | Proposed detection. No program is checked in. |
 | [`dashboard/`](dashboard/README.md) | Multi-user dashboard scaffold. Policy rules and schema only, so far. |
-| [`docs/prd/`](docs/prd/README.md) | Placeholder. Canonical PRD v0.5 is still pending. The v0.4 Page snapshot under `docs/pages/` is superseded. |
+| [`docs/prd/`](docs/prd/PRD-v0.6.md) | Canonical Product Manager pack v0.6 (PRD, roadmap, decisions, risks). |
 | [`docs/ux/`](docs/ux/README.md) | Sanitized UX pack: hi-fi, localStorage prototype, lo-fi. The prototype is not the app. |
 | [`docs/evidence/`](docs/evidence/README.md) | Gate evidence only when a summary is actually in the tree. |
 | [`docs/DELIVERABLES.md`](docs/DELIVERABLES.md) | Included and pending deliverables, Gates A–F. |
