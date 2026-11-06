@@ -30,6 +30,7 @@ node_modules/
 out/
 dist/
 coverage/
+*.tsbuildinfo
 
 # eBPF build products and generated kernel headers
 *.o
