@@ -1,0 +1,46 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Subscriber dumps and captures
+*.pcap
+*.pcapng
+*.cap
+subscriber-dump/
+subscriber-dumps/
+captures/
+pcaps/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# eBPF build products and generated kernel headers
+*.o
+*.bpf.o
+vmlinux.h
+
+# Lab runtime overrides
+lab/**/*.local.yaml
+lab/**/override.env
+
+# Editor and OS
+.DS_Store
+*.swp

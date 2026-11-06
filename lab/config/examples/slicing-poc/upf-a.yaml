@@ -1,0 +1,14 @@
+# STAGED, NOT DEPLOYED — WIP v1 2026-11-06 20:21:58 +07 (Asia/Bangkok)
+logger: {level: info}
+upf:
+  pfcp:
+    server:
+    - address: 10.99.6.15
+  gtpu:
+    server:
+    - address: 10.99.5.15
+  session:
+    - subnet: 10.46.0.0/16
+      gateway: 10.46.0.1
+      dnn: slice-a
+      dev: ogstuna

@@ -1,0 +1,17 @@
+[project]
+name = "open5g-dashboard"
+version = "0.1.0"
+description = "Scaffold API for IMSI profile intent, authorization, and rejecting adapters."
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2",
+  "fastapi",
+  "uvicorn",
+  "psycopg[binary]",
+  "argon2-cffi",
+  "httpx",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,8 @@
+uint8_t *pcrf_ip_hash_find(uint32_t addr)
+{
+    uint8_t *sid = NULL;
+    ogs_thread_mutex_lock(&pcrf_self()->hash_lock);
+    sid = ogs_hash_get(pcrf_self()->ip_hash, &addr, OGS_IPV4_LEN);
+    ogs_thread_mutex_unlock(&pcrf_self()->hash_lock);
+    return sid;
+}

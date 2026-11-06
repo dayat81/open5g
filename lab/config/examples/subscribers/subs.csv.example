@@ -1,0 +1,5 @@
+# Example subscriber seed — placeholders only. Do not use real Ki/OPc in git.
+# format: imsi,ki,opc
+001010000000001,<REDACTED_KI>,<REDACTED_OPC>
+001010000000002,<REDACTED_KI>,<REDACTED_OPC>
+001010000000003,<REDACTED_KI>,<REDACTED_OPC>

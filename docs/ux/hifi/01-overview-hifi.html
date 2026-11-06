@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<title>Hi-fi — Overview lab + slice/APN · mock spec only</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="components.css" />
+
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand">Dashboard lab 5G · Open5GS EPC CUPS</div>
+    <div class="meta">
+      <span class="role-badge">Role: Student</span>
+      <span class="pill solid ok">Lab status: Core reachable (contoh)</span>
+      <span class="pill warn">Adapters: 1 unverified</span>
+      <span class="pill">Freshness: 12s ago</span>
+    </div>
+  </header>
+
+  <nav class="nav" aria-label="Navigasi utama">
+    <div class="section-label">Utama</div>
+    <a class="active" href="01-overview-hifi.html">Eksperimen</a>
+    <div class="hint">Overview / intended vs observed</div>
+    <a href="02-imsi-profile-editor-hifi.html">Profil PCRF</a>
+    <div class="hint">Editor intent + apply</div>
+    <a href="01-overview-hifi.html#observability">Observability</a>
+    <div class="hint">PCC · sesi · usage · topology</div>
+    <div class="section-label">Lainnya</div>
+    <a href="01-overview-hifi.html#instructor-scope">Kelas</a>
+    <div class="hint">Instructor: assign + edit/apply IMSI <strong>in-group</strong> saja (keputusan Hidayat → PRD v0.3)</div>
+    <span class="nav-disabled" aria-disabled="true">Admin</span>
+    <div class="hint">Greyed pada wireframe Student; core controls global tidak tersedia bagi student</div>
+  </nav>
+
+  <main class="main">
+
+    <h1>Overview lab + slice / APN status</h1>
+    <p class="sub">
+      Scope: instance/experiment yang di-assign + IMSI dari server (assigned-only).
+      Intent ≠ Applied ≠ Measured. Field names = draft Soft Arch (bukan API final).
+      Core label: <strong>Open5GS EPC CUPS</strong> — jangan menyiratkan NSA E2E / Option 7/4 tersedia.
+    </p>
+
+    <!-- Keputusan Hidayat → PRD v0.3: Apply via Gx RAR primary -->
+    <div class="banner" id="banner-rar">
+      <span class="us-tag">Keputusan</span><span class="us-tag">PRD v0.3</span><span class="us-tag">US-02</span>
+      <strong>Primary Apply path = Gx RAR immediate</strong> (bukan re-attach).
+      Status apply/RAR per IMSI: <span class="mono">saved | pushed | active | partial | timeout | gagal/failed</span> + <span class="mono">freshness</span>.
+      Jika adapter RAR <strong>tidak didukung</strong>: UI <strong>menolak</strong> immediate apply (alasan jelas) dan menawarkan
+      <strong>fallback re-attach</strong> yang wajib dikonfirmasi — re-attach bukan jalur utama.
+      Jangan klaim Gx Usage-Monitoring stock Open5GS.
+    </div>
+
+    <div class="asumsi">
+      <h3>Keputusan tertutup (Hidayat → PRD v0.3) — bukan asumsi terbuka</h3>
+      <div><strong>K1 · Apply:</strong> Primary = Gx RAR immediate. Fallback re-attach hanya jika RAR unsupported (reject + confirm).</div>
+      <div><strong>K2 · Instructor:</strong> Boleh edit/apply profil IMSI student <strong>hanya di grupnya sendiri</strong>; audit wajib <span class="mono">actor</span> + <span class="mono">owner</span>. Out-of-group = no-access.</div>
+    </div>
+
+
+    <!-- PRD v0.4 · capability per operasi (bukan satu toggle RAR) -->
+    <div class="asumsi" id="capability-matrix">
+      <h3>PRD v0.4 · Apply capability <em>per operasi</em> (Open5GS 2.8 stock · data contoh)</h3>
+      Bukan satu toggle RAR global. Immediate apply yang unsupported → UI <strong>reject-with-reason</strong> sampai patch tersedia.
+      Mock spec only — <em>bukan bukti adapter</em> tersedia.
+      <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;font-size:11px;">
+        <span class="badge applied">RAR new PCC rule: supported (contoh)</span>
+        <span class="badge fail">RAR modify QCI existing bearer: unsupported → reject</span>
+        <span class="badge fail">RAR APN-AMBR: unsupported → reject</span>
+        <span class="badge">fallback re-attach: confirm</span>
+      </div>
+      <p>
+        Alasan contoh: <span class="mono">op=modify_qci_existing_bearer · capability=unsupported · stock Open5GS 2.8</span>
+        · <span class="mono">op=apn_ambr · capability=unsupported</span>.
+        ARP change pada bearer existing = sama unsupported immediate sampai patch.
+      </p>
+    </div>
+
+    <!-- EN-DC strip FR-15 -->
+    <div class="banner">
+      <span class="us-tag">FR-15</span>
+      EN-DC NSA option 3x (eNB+gNB X2, core tetap EPC): <span class="badge unknown">PLANNED / unverified</span>
+      — NA implementing di lab5g-dev; belum diverifikasi. Boleh strip status S1/X2 bila adapter tersedia.
+      Option 7/4 via 5GC = stretch (tidak diklaim di UI).
+    </div>
+
+    <!-- Scope selectors -->
+    <div class="scope">
+      <div class="field">
+        <label>experiment_id (selector)</label>
+        <div class="box">exp-lab-epc-03 · “Slice PCC demo”</div>
+      </div>
+      <div class="field">
+        <label>imsi (assigned-only; jika &gt;1 → selector RO list)</label>
+        <div class="box mono ro">510…789 <span class="badge">assigned</span></div>
+      </div>
+      <div class="field">
+        <label>profile_id / desired_version</label>
+        <div class="box mono">prf-a1c2 · desired v3 · <span class="badge intent">Draft</span> <span class="mono" style="font-size:10px;">saved</span></div>
+      </div>
+      <div class="field">
+        <label>applied_version / observed_version</label>
+        <div class="box mono">applied v2 · observed v2 <span class="badge stale">stale?</span></div>
+      </div>
+    </div>
+
+    <!-- US-04 + K2 instructor in-group -->
+    <div class="asumsi" id="instructor-scope">
+      <h3>US-04 + K2 · Instructor scope = group-bound</h3>
+      Assignment IMSI ke student = server-side. Student tidak mengetik IMSI bebas.
+      <strong>Instructor boleh edit &amp; apply</strong> profil IMSI student <em>hanya di grupnya sendiri</em>;
+      grup lain = <span class="badge unknown">no-access</span>
+      · contoh API: <span class="mono">HTTP 403 cross_group_forbidden</span>
+      + jejak audit <span class="mono">actor</span>/<span class="mono">owner</span>/<span class="mono">reason=cross_group_forbidden</span>.
+      Setiap perubahan instructor (in-group): audit immutable dengan <span class="mono">actor</span> (instructor) + <span class="mono">owner</span> (student pemilik).
+      Contoh wireframe: group <span class="mono">kelas-5g-a</span> in-scope · group <span class="mono">kelas-5g-b</span> out-of-group → 403 <span class="mono">cross_group_forbidden</span>.
+      (Role primary mock di layar ini tetap Student; strip di atas = catatan role.)
+    </div>
+
+    <!-- Summary cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="k">Active sessions</div>
+        <div class="v">2</div>
+        <div class="s">bearer count · contoh · bukti sesi</div>
+      </div>
+      <div class="card">
+        <div class="k">IMSI saya (assigned)</div>
+        <div class="v" style="font-size:14px">510…789</div>
+        <div class="s">US-01 · server-side assignment saja</div>
+      </div>
+      <div class="card mismatch">
+        <div class="k">Draft vs Active mismatch</div>
+        <div class="v">1</div>
+        <div class="s">desired_version ≠ applied_version</div>
+      </div>
+      <div class="card unknown">
+        <div class="k">Unverified adapters</div>
+        <div class="v">1</div>
+        <div class="s">capability = unverified (jujur)</div>
+      </div>
+    </div>
+
+    <!-- Intended vs Observed -->
+    <div class="grid2" id="observability">
+      <div class="panel">
+        <h2>
+          Intended vs Observed mapping
+          <span class="tag">Intent · Measured · US-03</span>
+        </h2>
+        <div class="map-cols">
+          <div class="map-col intent-border">
+            <h3><span class="dot intent"></span>Intent (desired / Dec)</h3>
+            <div class="row"><span>experiment → app_id</span><span class="mono">video-conf</span></div>
+            <div class="row"><span>APN (EPC)</span><span class="mono">internet</span></div>
+            <div class="row"><span>logical_slice / template</span><span class="mono">slice-class-A</span></div>
+            <div class="row"><span>QCI / ARP</span><span class="mono">QCI 6 · ARP pri 5</span></div>
+            <div class="row"><span>S-NSSAI</span><span class="badge unsupported">n/a · EPC (bukan 5GC)</span></div>
+          </div>
+          <div class="map-col measured-border">
+            <h3><span class="dot measured"></span>Observed (session)</h3>
+            <div class="row"><span>UE IP</span><span class="mono">10.45.0.12</span></div>
+            <div class="row"><span>APN terpakai</span><span class="mono">internet</span></div>
+            <div class="row"><span>bearer / session IDs</span><span class="mono">ebi=5 · …</span></div>
+            <div class="row"><span>QCI terpasang</span><span class="mono">QCI 6</span></div>
+            <div class="row"><span>PGW-U / SGW-U</span><span class="mono">pgw-u-01</span></div>
+          </div>
+        </div>
+        <div class="mismatch-strip">
+          ⚠ Mismatch strip (contoh): logical_slice Intent = slice-class-A · Observed bearer tidak membedakan “slice” di EPC —
+          policy intent ≠ enforcement ≠ measured. Jangan silent.
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>
+          PCC · Detected / Decided / Installed / Observed
+          <span class="tag">US-03 · Soft Arch #1 blocker</span>
+        </h2>
+        <table class="wf">
+          <thead>
+            <tr>
+              <th>app_id / match</th>
+              <th>classifier_source</th>
+              <th>Decided</th>
+              <th>Installed / enforcement</th>
+              <th>Observed</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">
+                video-conf<br/>
+                <span>match_type=SNI · meet.example</span><br/>
+                <span class="badge warn-rule">intent klasifikasi; native PCC belum terverifikasi</span>
+              </td>
+              <td>
+                <span class="prov">eBPF</span><br/>
+                <span>bukan bukti enforcement</span>
+              </td>
+              <td>
+                <span class="badge intent">Decided</span><br/>
+                QCI 6 · gate open<br/>
+                <span style="font-size:10px;">evidence: intent rule · t−8s</span>
+              </td>
+              <td>
+                <span class="badge unknown">unverified</span><br/>
+                enforcement_path: eBPF classify only<br/>
+                apply_targets: — (bukan Gx native)<br/>
+                <span>eBPF classify ≠ enforcement Gx</span>
+              </td>
+              <td>
+                <span class="badge measured">Observed</span><br/>
+                bytes via eBPF · conf 0.82<br/>
+                <span style="font-size:10px;">t−8s</span>
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">
+                bulk-dl<br/>
+                <span>match_type=IP · 203.0.113.0/24</span>
+              </td>
+              <td>
+                <span class="prov">IPFilterRule</span><br/>
+                <span style="font-size:10px;">stock Gx path (contoh)</span>
+              </td>
+              <td>
+                <span class="badge intent">Decided</span><br/>
+                QCI 9 · source intent
+              </td>
+              <td>
+                <span class="badge missing">missing</span><br/>
+                apply_targets: subscriber DB / PCRF (contoh)<br/>
+                pending RAR / session confirm?
+              </td>
+              <td>
+                <span class="badge missing">missing</span><br/>
+                0 traffic ≠ failed
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">
+                web-cdn<br/>
+                <span>match_type=hostname · cdn.example.org</span><br/>
+                <span class="badge warn-rule">intent klasifikasi; native PCC belum terverifikasi</span>
+              </td>
+              <td>
+                <span class="prov unsup">unknown</span> / eBPF planned
+              </td>
+              <td>
+                <span class="badge unsupported">unsupported</span>
+              </td>
+              <td>
+                <span class="badge unsupported">unsupported</span><br/>
+                enforcement_path: n/a native hostname PCC
+              </td>
+              <td>
+                <span class="badge unsupported">unsupported</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="note">
+          Soft Arch #1: <strong>classifier_source</strong> (eBPF/unknown untuk SNI/hostname) TERPISAH dari
+          <strong>policy/enforcement evidence</strong> (Gx). eBPF classify ≠ enforcement.
+          Tampilkan <code>enforcement_path</code> / <code>apply_targets</code> terpisah.
+          Soft Arch #6: counter Gx/PFCP ≠ bukti eBPF enforcement otomatis.
+        </p>
+      </div>
+    </div>
+
+    <!-- Version / apply status -->
+    <div class="grid2">
+      <div class="panel">
+        <h2>Versi &amp; apply_job · lifecycle enum <span class="tag">US-02 · FR-05 · Soft Arch #3</span></h2>
+        <p>
+          Enum draft API: <span class="mono">saved | validated | queued | pushed | active | failed | drift</span>
+          · Label UI: Draft / Tervalidasi / Queued / Pushed / Active / Failed / Drift
+        </p>
+        <table class="wf">
+          <thead>
+            <tr>
+              <th>Lapisan</th>
+              <th>Version / status</th>
+              <th>Catatan</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="dot intent"></span>desired_version</td>
+              <td class="mono">v3 · <span class="badge intent">Draft</span> <span class="mono">saved</span></td>
+              <td>US-01 · belum Apply · belum aktif di jaringan</td>
+            </tr>
+            <tr>
+              <td><span class="dot applied"></span>applied_version</td>
+              <td class="mono">v2 · <span class="badge lifecycle-active">Active*</span> <span class="mono">active</span></td>
+              <td>*Active hanya setelah bukti sesi (bukan sukses simpan DB)</td>
+            </tr>
+            <tr>
+              <td><span class="dot measured"></span>observed_version</td>
+              <td class="mono">v2 <span class="badge stale">stale</span> · <span class="mono">drift?</span></td>
+              <td>classifier_version / rule version contoh</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Status apply/RAR <strong>per IMSI</strong> (K1): <span class="mono">saved | pushed | active | partial | timeout | gagal/failed</span> + freshness.
+          Lifecycle Soft Arch tetap: saved→validated→queued→pushed→active|failed|drift.
+          <strong>RAA ACK ≠ Active</strong> — status PCRF dari ACK cukup <span class="mono">pushed</span>; <span class="mono">active</span> hanya setelah bukti session per operasi.
+        </p>
+        <table class="wf">
+          <thead>
+            <tr><th>IMSI / layer</th><th>apply/RAR status</th><th>freshness</th><th>Catatan</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">510…789</td>
+              <td><span class="badge lifecycle-active">active</span></td>
+              <td class="mono">8s</td>
+              <td>Gx RAR pushed (ACK) + <em>bukti sesi</em> → active · RAA ACK saja ≠ active</td>
+            </tr>
+            <tr>
+              <td class="mono">510…790 (contoh)</td>
+              <td><span class="badge stale">partial</span></td>
+              <td class="mono">22s</td>
+              <td>RAR pushed; sebagian target belum confirm</td>
+            </tr>
+            <tr>
+              <td class="mono">510…791 (contoh)</td>
+              <td><span class="badge fail">timeout</span></td>
+              <td class="mono">—</td>
+              <td>RAR no ACK · bukan silent success</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>apply_job per-target (Soft Arch #6 — data contoh / adapter unverified):</p>
+        <table class="wf">
+          <thead>
+            <tr><th>Target</th><th>Status</th><th>last_error / reason / time</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>subscriber DB<br/><span>data contoh · adapter unverified</span></td>
+              <td><span class="badge applied">ok*</span></td>
+              <td class="mono">— · 14:02:11 · *bukan bukti adapter production</td>
+            </tr>
+            <tr>
+              <td>PCRF / Gx RAR<br/><span>primary path · adapter capability-gated · data contoh / unverified</span></td>
+              <td><span class="badge applied">pushed</span></td>
+              <td class="mono">RAR/RAA ACK · 14:02:12<br/><strong>RAA ACK ≠ Active</strong> — Active hanya via bukti session <em>per operasi</em> (bukan dari ACK saja)</td>
+            </tr>
+            <tr>
+              <td>eBPF</td>
+              <td><span class="badge unknown">unknown</span></td>
+              <td>capability unknown · classify ≠ enforcement</td>
+            </tr>
+            <tr>
+              <td>session</td>
+              <td><span class="badge measured">active</span></td>
+              <td>bukti sesi · freshness 8s · (fallback re-attach hanya jika RAR unsupported)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>Sessions / bearers (contoh) <span class="tag">Open5GS EPC</span></h2>
+        <table class="wf">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Nilai contoh</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>UE IP</td><td class="mono">10.45.0.12</td></tr>
+            <tr><td>APN (EPC)</td><td class="mono">internet · bukan DNN/5GC</td></tr>
+            <tr><td>bearer / session IDs</td><td class="mono">ebi=5 · imsi-sess-…</td></tr>
+            <tr><td>QCI</td><td class="mono">6</td></tr>
+            <tr><td>TEID + endpoints</td><td class="mono">teid=0x1a2b · S1-U eNB↔SGW-U</td></tr>
+            <tr><td>PGW-C instance</td><td class="mono">pgw-c-01</td></tr>
+            <tr><td>PGW-U instance</td><td class="mono">pgw-u-01</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Label antarmuka EPC: S1-U, S5-U, SGi, Gx, Sx — jangan klaim N3/N4/N6. Jangan menyiratkan NSA Option 7/4 E2E.</p>
+      </div>
+    </div>
+
+    <!-- KPI strip US-06 Soft Arch #5 -->
+    <div class="panel full">
+      <h2>KPI usage ringkas (provenance wajib) <span class="tag">US-06 · Soft Arch #5 · FR-08</span></h2>
+      <table class="wf">
+        <thead>
+          <tr>
+            <th>app_id</th>
+            <th>bytes / packets / rate</th>
+            <th>window</th>
+            <th>source</th>
+            <th>exporter_instance</th>
+            <th>classifier / rule ver</th>
+            <th>capture point</th>
+            <th>freshness / reset</th>
+            <th>confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">video-conf</td>
+            <td class="mono">12.4 MB · 9.1k pkts · 1.2 Mbps</td>
+            <td class="mono">60s</td>
+            <td><span class="prov">eBPF</span></td>
+            <td class="mono">ebpf-exp-01</td>
+            <td class="mono">clf-v0.3 / rule-v2</td>
+            <td class="mono">SGi · pgw-u-01</td>
+            <td>8s <span class="badge measured">fresh</span><br/><span style="font-size:10px;">reset: on classifier reload</span></td>
+            <td>0.82</td>
+          </tr>
+          <tr>
+            <td class="mono">bulk-dl</td>
+            <td class="mono">0 · 0 · 0</td>
+            <td class="mono">60s</td>
+            <td><span class="prov">PFCP</span></td>
+            <td class="mono">pfcp-sx-01</td>
+            <td class="mono">— / rule-v2</td>
+            <td class="mono">S5-U</td>
+            <td><span class="badge missing">missing</span><br/><span style="font-size:10px;">0 ≠ failed; Gx UM stock unsupported</span></td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td class="mono">(unknown traffic)</td>
+            <td class="mono">3.1 MB · …</td>
+            <td class="mono">60s</td>
+            <td><span class="prov">PFCP</span></td>
+            <td class="mono">pfcp-sx-01</td>
+            <td class="mono">—</td>
+            <td class="mono">S1-U</td>
+            <td>12s · reset semantics: URR session</td>
+            <td><span class="badge ambiguous">ambiguous</span></td>
+          </tr>
+          <tr>
+            <td class="mono">hostname-demo</td>
+            <td class="mono">—</td>
+            <td>—</td>
+            <td><span class="prov unsup">unsupported</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>
+              Jangan klaim <strong>Gx Usage-Monitoring</strong> stock Open5GS.
+              Native hostname/SNI PCC belum terverifikasi NA. Gx RAR = primary Apply path (capability-gated); Usage-Monitoring stock jangan diklaim.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">
+        Soft Arch #5: setiap KPI punya exporter_instance, classifier_version/rule version, counter reset semantics, freshness.
+        Soft Arch #6: counter Gx/PFCP bukan bukti eBPF enforcement otomatis.
+      </p>
+    </div>
+
+    <!-- Provenance legend -->
+    <div class="legend">
+      <h2>Provenance legend &amp; empat lapisan (US-03)</h2>
+      <div class="legend-row" style="margin-bottom:8px;">
+        <span class="legend-item"><span class="dot intent"></span> Intent (draft / desired)</span>
+        <span class="legend-item"><span class="dot applied"></span> Applied (pushed / installed)</span>
+        <span class="legend-item"><span class="dot measured"></span> Measured (observed)</span>
+        <span class="legend-item"><span class="dot unknown"></span> Unknown / unsupported / unverified</span>
+      </div>
+      <div class="legend-row" style="margin-bottom:8px;">
+        <span class="legend-item"><span class="badge">Detected</span> evidence + time + source</span>
+        <span class="legend-item"><span class="badge intent">Decided</span></span>
+        <span class="legend-item"><span class="badge applied">Installed</span></span>
+        <span class="legend-item"><span class="badge measured">Observed</span></span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-item"><span class="prov">Gx</span> PCRF↔PCEF (bukan Usage-Monitoring stock)</span>
+        <span class="legend-item"><span class="prov">PFCP</span> Sx control</span>
+        <span class="legend-item"><span class="prov">eBPF</span> classify (≠ enforcement)</span>
+        <span class="legend-item"><span class="prov unsup">unsupported</span></span>
+        <span class="legend-item">States UI: loading · empty · no-access (HTTP 403 cross_group_forbidden) · concurrent update · ownership conflict · RAR timeout/partial/gagal · RAA ACK≠Active · fallback re-attach (confirm) · reject-with-reason (QCI/ARP existing · APN-AMBR)</span>
+      </div>
+      <p class="note" style="margin-top:8px;">
+        Admin limit/template = usulan saja — jangan tampilkan angka seolah approved.
+        Semua angka di wireframe ini = label contoh. <strong>Mock spec only / bukan bukti adapter</strong>. Bukan API final; lab PoC belum dimulai dari wireframe ini.
+      </p>
+    </div>
+
+    <div class="us-map">
+      <h2>Mapping user stories di layar ini</h2>
+      <div>US-01 → scope IMSI assigned-only + desired_version Draft/saved belum aktif</div>
+      <div>US-02 / K1 / v0.4 → Apply primary via Gx RAR per-operasi; RAA ACK≠Active; QCI/ARP existing + APN-AMBR = reject-with-reason (Open5GS 2.8); fallback re-attach confirm</div>
+      <div>US-03 → panel Detected/Decided/Installed/Observed terpisah + evidence/time/source</div>
+      <div>US-04 / K2 → Instructor edit/apply in-group; out-of-group HTTP 403 cross_group_forbidden + audit actor/owner</div>
+      <div>US-06 → tabel KPI + provenance; no Gx Usage-Monitoring stock claim</div>
+      <div>US-07 (diselaraskan K1) → banner: RAR primary; reject+confirm re-attach fallback bila unsupported</div>
+    </div>
+
+    <footer class="wf-foot">Hi-fi FINAL · Soft Arch handoff · mock spec only / bukan bukti adapter · data contoh · field names = draft Soft Arch, bukan API final · Ki/OPc hidden · S-NSSAI n/a (EPC) · label EPC S1-U/S5-U/SGi/Gx/Sx</footer>
+  </main>
+</div>
+</body>
+</html>

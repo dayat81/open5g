@@ -1,0 +1,47 @@
+# NOTICE
+
+This file records licensing facts. It is not a license grant for new code
+in this repository.
+
+## Upstream programs referenced, not vendored
+
+* Open5GS tag `v2.8.0` (annotated tag `f2808a2fe0accd438008ff0564fe9ff4bba3d6ae`,
+  commit `157f611a530e292e40ec50f9d23f0ef5d4fcd6a6`) is licensed under the
+  GNU Affero General Public License version 3 only.
+  https://github.com/open5gs/open5gs/blob/v2.8.0/LICENSE
+  The annotated tag was unsigned when read from the GitHub API on 2026-11-06.
+
+* srsRAN 4G tag `release_25_10` (commit `6bcbd9e5bf8686aa7085202cd847c5ddd64a9c16`)
+  is licensed under the GNU Affero General Public License version 3 only.
+  https://github.com/srsran/srsRAN_4G/blob/release_25_10/LICENSE
+
+Those trees are not copied into this repository. Deploying or modifying
+those programs can trigger Affero GPL obligations, including source
+availability to network users of a modified version. This scaffold does
+not deploy them.
+
+## Container image labels are a separate fact
+
+Gradiant Dockerfiles for `gradiant/open5gs` and `gradiant/srsran-4g` set
+`org.opencontainers.image.licenses` to `Apache-2.0` on the image packaging.
+That label does not change the Affero GPL terms of the Open5GS and srsRAN 4G
+sources named above. This repository does not choose between those statements.
+
+The srsRAN 4G Dockerfile also assigns default subscriber `KEY` and `OPC`
+environment values. Those values are intentionally absent from this
+repository.
+
+## New code in this repository
+
+No license has been selected for code added here. Do not treat the absence
+of a root `LICENSE` file as a public grant, and do not treat the upstream
+Affero GPL terms as automatically re-licensing this scaffold. Dependency
+licenses stay with those projects and are installed from lockfiles; they
+are not vendored here.
+
+## Design reference
+
+The dashboard CSS tokens, component stylesheet, and node icons are the
+supplied hi-fi handoff used for component mapping. That handoff is a mock
+specification. It is not adapter evidence and it is not recorded here as a
+visual sign-off of the React screens.
