@@ -1,0 +1,28 @@
+---
+- name: Provision optional KVM resources on the hypervisor
+  hosts: kvm_hosts
+  become: true
+  roles:
+    - role: host_prep
+      tags: [host, vm]
+      when: lab_vm_create | bool
+
+- name: Configure an isolated development VM
+  hosts: lab5g_dev
+  become: true
+  pre_tasks:
+    - name: Refuse to target the protected live lab
+      ansible.builtin.assert:
+        that:
+          - lab_environment == 'lab5g-dev'
+          - lab_vm_name == 'lab5g-dev'
+          - ansible_host is not defined or ansible_host != '172.22.10.32'
+        fail_msg: 'Only the explicitly isolated development VM may be configured.'
+  roles:
+    - {role: vm_base, tags: [base, docker, up]}
+    - {role: open5gs_epc_cups, tags: [core, up]}
+    - {role: subscribers, tags: [subscribers, up]}
+    - {role: ran_srsran, tags: [ran, up]}
+    - {role: ran_oai, tags: [oai], when: oai_profile_enabled | bool}
+    - {role: internet_egress, tags: [internet], when: internet_egress_enabled | bool}
+    - {role: verify, tags: [verify]}

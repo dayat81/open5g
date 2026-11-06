@@ -1,0 +1,8 @@
+---
+profile: production
+skip_list:
+  - package-latest
+  - no-changed-when
+  - ignore-errors
+  - risky-shell-pipe
+exclude_paths: [rendered/, tests/]

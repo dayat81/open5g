@@ -1,0 +1,72 @@
+---
+- name: Render EPC configuration files
+  ansible.builtin.template:
+    src: '{{ item }}.yaml.j2'
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root + "/conf" }}/{{ item }}.yaml'
+    mode: '0640'
+  loop: [hss, pcrf, mme, sgwc, sgwu, smf, upf]
+
+- name: Render freeDiameter examples
+  ansible.builtin.template:
+    src: fd.conf.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root + "/conf/fd" }}/{{ item.identity }}.conf'
+    mode: '0640'
+  loop:
+    - {identity: hss, peer: mme, peer_address: '{{ core.mme_s6a }}'}
+    - {identity: mme, peer: hss, peer_address: '{{ core.hss_s6a }}'}
+    - {identity: pcrf, peer: smf, peer_address: '{{ core.smf_gx }}'}
+    - {identity: smf, peer: pcrf, peer_address: '{{ core.pcrf_gx }}'}
+
+- name: Render per-slice UPF configurations
+  ansible.builtin.template:
+    src: slice-upf.yaml.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root + "/conf" }}/upf-{{ item.name }}.yaml'
+    mode: '0640'
+  loop: '{{ slice_upfs }}'
+
+- name: Render the EPC Compose definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root }}/docker-compose.yml'
+    mode: '0640'
+  register: open5gs_epc_cups_compose_rendered
+
+- name: Render EPC route setup
+  ansible.builtin.template:
+    src: lab-routes.sh.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root }}/lab-routes.sh'
+    mode: '0750'
+
+- name: Validate the final Compose model
+  ansible.builtin.command: docker compose -f '{{ lab_root }}/docker-compose.yml' config --quiet
+  when: not iac_dry_run
+  changed_when: false
+
+- name: Start the EPC data store
+  community.docker.docker_compose_v2:
+    project_src: '{{ lab_root }}'
+    files: [docker-compose.yml]
+    services: [mongo]
+    state: present
+  when: not iac_dry_run
+
+- name: Wait for MongoDB
+  ansible.builtin.command: docker exec l5gd-mongo mongosh --quiet --eval 'db.runCommand({ping:1}).ok'
+  register: open5gs_epc_cups_mongo_ping
+  until: open5gs_epc_cups_mongo_ping.stdout is search('1')
+  retries: 20
+  delay: 3
+  when: not iac_dry_run
+  changed_when: false
+
+- name: Start EPC CUPS services
+  community.docker.docker_compose_v2:
+    project_src: '{{ lab_root }}'
+    files: [docker-compose.yml]
+    state: present
+  when: not iac_dry_run
+
+- name: Install idempotent container routes
+  ansible.builtin.command: '{{ lab_root }}/lab-routes.sh'
+  when: not iac_dry_run
+  changed_when: true

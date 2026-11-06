@@ -1,0 +1,12 @@
+---
+# WIP ONLY. The existing integrated srsRAN profile is the stable baseline.
+# No OAI SgNB run is accepted until X2 SgNB Addition, E-RAB Modification and
+# S1-U handover evidence has been captured on a NEW development deployment.
+- name: Explain that the OAI SgNB profile is experimental
+  ansible.builtin.debug:
+    msg: 'WIP: no tested OAI X2 configuration is deployed. Consult docs/iac.md.'
+- name: Render an explicitly disabled OAI scaffold
+  ansible.builtin.template:
+    src: docker-compose-oai.yml.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root }}/docker-compose-oai.yml'
+    mode: '0640'

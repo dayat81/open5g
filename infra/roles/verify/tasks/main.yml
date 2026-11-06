@@ -1,0 +1,28 @@
+---
+- name: Wait for UE network attach
+  ansible.builtin.command: docker logs l5gd-ue
+  register: verify_ue_log
+  when: not (iac_dry_run | bool)
+  until: verify_ue_log.stdout is search('Network attach successful')
+  retries: 12
+  delay: 5
+  changed_when: false
+  failed_when: (iac_dry_run | bool) or ('Network attach successful' not in verify_ue_log.stdout)
+- name: Verify SGi connectivity from the UE data interface
+  ansible.builtin.command: docker exec l5gd-ue ping -c 3 -W 3 {{ core.server }}
+  changed_when: false
+  when: not iac_dry_run
+- name: Check S5/S8 PFCP association in the SMF log
+  ansible.builtin.command: docker logs l5gd-smf
+  register: verify_smf_log
+  when: not (iac_dry_run | bool)
+  until: verify_smf_log.stdout is search('etablishment|ssociation')
+  retries: 6
+  delay: 3
+  changed_when: false
+  failed_when: false
+- name: Report verification limitation if no positive association message is found
+  ansible.builtin.assert:
+    that: verify_smf_log.stdout is search('PFCP.*associated|f_establishment_response|PFCP association')
+    fail_msg: 'Attach and ping passed but positive PFCP association log evidence is missing.'
+  when: not iac_dry_run

@@ -1,0 +1,15 @@
+// APN profile example. Replace per user; never commit Ki or OPc.
+db = db.getSiblingDB('open5gs');
+db.subscribers.replaceOne(
+  {imsi: '{{ subscribers_imsi }}'},
+  {
+    imsi: '{{ subscribers_imsi }}',
+    security: {k: '{{ vault_ue_ki | mandatory }}', opc: '{{ vault_ue_opc | mandatory }}', amf: '8000', sqn: NumberLong(0)},
+    ambr: {downlink: {value: 1, unit: 3}, uplink: {value: 1, unit: 3}},
+    slice: [{sst: 1, default_indicator: true, session: [{name: '{{ subscribers_apn }}', type: 3,
+      qos: {index: 9, arp: {priority_level: 8, pre_emption_capability: 1, pre_emption_vulnerability: 1}},
+      ambr: {downlink: {value: 1, unit: 3}, uplink: {value: 1, unit: 3}}}]}],
+    access_restriction_data: 32, network_access_mode: 0, subscriber_status: 0,
+    operator_determined_barring: 0, subscribed_rau_tau_timer: 12, schema_version: 1
+  }, {upsert: true});
+print('subscriber upserted: {{ subscribers_imsi }}');

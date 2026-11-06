@@ -1,0 +1,78 @@
+name: '{{ lab_environment }}'
+x-o5: &o5
+  image: '{{ open5gs_image }}'
+  restart: 'no'
+  cpus: 1.0
+  mem_limit: 512m
+  volumes: ['./conf:/etc/o5:ro']
+networks:
+{% for name, net in docker_networks.items() if name != 'uu' %}
+  {{ name }}:
+    internal: true
+    ipam: {config: [{subnet: {{ net.subnet }}, gateway: {{ net.gateway }}}]}
+{% endfor %}
+services:
+  mongo:
+    image: '{{ mongo_image }}'
+    container_name: l5gd-mongo
+    command: ['mongod', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+    networks: {mgmt: {ipv4_address: {{ core.mongo }}}}
+    volumes: ['./mongo-data:/data/db']
+  hss:
+    <<: *o5
+    container_name: l5gd-hss
+    command: ['/opt/open5gs/bin/open5gs-hssd', '-c', '/etc/o5/hss.yaml']
+    networks: {s6a: {ipv4_address: {{ core.hss_s6a }}}, mgmt: {ipv4_address: {{ core.hss_mgmt }}}}
+    depends_on: [mongo]
+  pcrf:
+    <<: *o5
+    container_name: l5gd-pcrf
+    command: ['/opt/open5gs/bin/open5gs-pcrfd', '-c', '/etc/o5/pcrf.yaml']
+    networks: {gx: {ipv4_address: {{ core.pcrf_gx }}}, mgmt: {ipv4_address: {{ core.pcrf_mgmt }}}}
+    depends_on: [mongo]
+  mme:
+    <<: *o5
+    container_name: l5gd-mme
+    command: ['/opt/open5gs/bin/open5gs-mmed', '-c', '/etc/o5/mme.yaml']
+    networks: {s1mme: {ipv4_address: {{ core.mme_s1 }}}, s11: {ipv4_address: {{ core.mme_s11 }}}, s6a: {ipv4_address: {{ core.mme_s6a }}}}
+  sgwc:
+    <<: *o5
+    container_name: l5gd-sgwc
+    command: ['/opt/open5gs/bin/open5gs-sgwcd', '-c', '/etc/o5/sgwc.yaml']
+    networks: {s11: {ipv4_address: {{ core.sgwc_s11 }}}, s5s8: {ipv4_address: {{ core.sgwc_s5 }}}, pfcp: {ipv4_address: {{ core.sgwc_pfcp }}}}
+  sgwu:
+    <<: *o5
+    container_name: l5gd-sgwu
+    command: ['/opt/open5gs/bin/open5gs-sgwud', '-c', '/etc/o5/sgwu.yaml']
+    networks: {pfcp: {ipv4_address: {{ core.sgwu_pfcp }}}, s1u: {ipv4_address: {{ core.sgwu_s1u }}}, s5s8: {ipv4_address: {{ core.sgwu_s5 }}}}
+  smf:
+    <<: *o5
+    container_name: l5gd-smf
+    command: ['/opt/open5gs/bin/open5gs-smfd', '-c', '/etc/o5/smf.yaml']
+    networks: {s5s8: {ipv4_address: {{ core.smf_s5 }}}, pfcp: {ipv4_address: {{ core.smf_pfcp }}}, gx: {ipv4_address: {{ core.smf_gx }}}}
+  upf:
+    <<: *o5
+    container_name: l5gd-upf
+    user: root
+    cap_add: [NET_ADMIN]
+    devices: ['/dev/net/tun:/dev/net/tun']
+    sysctls: {net.ipv4.ip_forward: '1'}
+    entrypoint: ['/bin/bash', '-c', 'ip tuntap add name ogstun mode tun && ip addr add {{ ue_sessions[0].gateway }}/16 dev ogstun && ip link set ogstun up && exec /opt/open5gs/bin/open5gs-upfd -c /etc/o5/upf.yaml']
+    networks: {pfcp: {ipv4_address: {{ core.upf_pfcp }}}, s5s8: {ipv4_address: {{ core.upf_s5 }}}, sgi: {ipv4_address: {{ core.upf_sgi }}}}
+{% for slice in slice_upfs %}
+  upf-{{ slice.name }}:
+    <<: *o5
+    container_name: l5gd-upf-{{ slice.name }}
+    user: root
+    cap_add: [NET_ADMIN]
+    devices: ['/dev/net/tun:/dev/net/tun']
+    sysctls: {net.ipv4.ip_forward: '1'}
+    entrypoint: ['/bin/bash', '-c', 'ip tuntap add name ogstun mode tun && ip addr add {{ slice.gateway }}/16 dev ogstun && ip link set ogstun up && exec /opt/open5gs/bin/open5gs-upfd -c /etc/o5/upf-{{ slice.name }}.yaml']
+    networks: {pfcp: {ipv4_address: {{ slice.pfcp }}}, s5s8: {ipv4_address: {{ slice.s5 }}}, sgi: {ipv4_address: {{ slice.sgi }}}}
+{% endfor %}
+  server:
+    image: '{{ netshoot_image }}'
+    container_name: l5gd-server
+    cap_add: [NET_ADMIN]
+    command: ['/bin/sh', '-c', '{% for s in ue_sessions + slice_upfs %}ip route replace {{ s.subnet }} via {{ s.sgi | default(core.upf_sgi) }}; {% endfor %}exec iperf3 -s']
+    networks: {sgi: {ipv4_address: {{ core.server }}}}

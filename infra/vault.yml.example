@@ -1,0 +1,4 @@
+---
+# Encrypt the real vault.yml with: ansible-vault encrypt vault.yml
+vault_ue_ki: REPLACE_WITH_32_HEX_CHARACTERS
+vault_ue_opc: REPLACE_WITH_32_HEX_CHARACTERS

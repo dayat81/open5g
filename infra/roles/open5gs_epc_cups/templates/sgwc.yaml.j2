@@ -1,0 +1,6 @@
+logger: {level: info}
+sgwc:
+  gtpc: {server: [{address: {{ core.sgwc_s11 }}}, {address: {{ core.sgwc_s5 }}}]}
+  pfcp:
+    server: [{address: {{ core.sgwc_pfcp }}}]
+    client: {sgwu: [{address: {{ core.sgwu_pfcp }}, tac: 1}]}

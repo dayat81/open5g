@@ -1,0 +1,8 @@
+<network>
+  <name>{{ lab_libvirt_network }}</name>
+  <bridge name='{{ lab_libvirt_bridge }}' stp='on' delay='0'/>
+  <forward mode='nat'><nat><port start='1024' end='65535'/></nat></forward>
+  <ip address='{{ lab_iso_gateway }}' netmask='255.255.255.0'>
+    <dhcp><range start='{{ lab_iso_dhcp_start }}' end='{{ lab_iso_dhcp_end }}'/></dhcp>
+  </ip>
+</network>

@@ -43,6 +43,7 @@ eBPF, if it is later built, would be a proposed detection point. It would not be
 | Path | What it is |
 |---|---|
 | [`lab/`](lab/README.md) | Sanitized lab5g-dev WIP reference. Not deployed from this checkout. |
+| [`infra/`](infra/README.md) | Offline IaC model for a new isolated lab5g-dev. Not deployed from this checkout. OAI X2 SgNB and cgnat/tun2socks stay WIP and disabled. Gate B is not accepted. |
 | [`ebpf/`](ebpf/README.md) | Proposed detection. No program is checked in. |
 | [`dashboard/`](dashboard/README.md) | Multi-user dashboard scaffold. Policy rules and schema only, so far. |
 | [`docs/prd/`](docs/prd/PRD-v0.6.md) | Canonical Product Manager pack v0.6 (PRD, roadmap, decisions, risks). |

@@ -1,0 +1,21 @@
+logger: {level: info}
+mme:
+  freeDiameter: /etc/o5/fd/mme.conf
+  s1ap: {server: [{address: {{ core.mme_s1 }}}]}
+  gtpc:
+    server: [{address: {{ core.mme_s11 }}}]
+    client:
+      sgwc: [{address: {{ core.sgwc_s11 }}, tac: 1}]
+      smf: [{address: {{ core.smf_s5 }}, tac: 1}]
+  gummei:
+    - plmn_id: {mcc: '{{ plmn.mcc }}', mnc: '{{ plmn.mnc }}'}
+      mme_gid: 2
+      mme_code: 1
+  tai:
+    - plmn_id: {mcc: '{{ plmn.mcc }}', mnc: '{{ plmn.mnc }}'}
+      tac: 1
+  security:
+    integrity_order: [EIA2, EIA1, EIA0]
+    ciphering_order: [EEA0, EEA1, EEA2]
+  network_name: {full: Lab5G-Dev, short: LabDev}
+  mme_name: lab5g-dev-mme0

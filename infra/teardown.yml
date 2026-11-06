@@ -1,0 +1,15 @@
+---
+- name: Remove only the isolated lab5g-dev Compose workloads
+  hosts: lab5g_dev
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Guard against destructive use outside development
+      ansible.builtin.assert:
+        that: [lab_environment == 'lab5g-dev', lab_vm_name == 'lab5g-dev']
+    - name: Stop the development stacks
+      ansible.builtin.command: docker compose -f {{ item }} down
+      args: {chdir: '{{ lab_root }}'}
+      loop: [docker-compose-ran.yml, docker-compose.yml]
+      changed_when: true
+      failed_when: false

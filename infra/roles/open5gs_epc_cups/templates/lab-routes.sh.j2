@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+# Replace is idempotent. Container interface names must be checked on a new compose release.
+route_replace() {
+  container="$1"; shift
+  pid="$(docker inspect -f '{{ '{{' }}.State.Pid{{ '}}' }}' "$container")"
+  nsenter -t "$pid" -n ip route replace "$@"
+}
+route_replace l5gd-smf 10.99.4.0/24 dev eth2
+route_replace l5gd-upf {{ core.sgwu_s1u }}/32 dev eth1
+docker exec l5gd-enb ip route replace {{ core.sgwu_s5 }}/32 dev eth2 2>/dev/null || true
+docker exec l5gd-ue ip route replace {{ docker_networks.sgi.subnet }} dev tun_srsue 2>/dev/null || true

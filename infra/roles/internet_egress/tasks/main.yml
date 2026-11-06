@@ -1,0 +1,12 @@
+---
+# WIP and disabled by default. cgnat 10.99.9.30 is the intended SOCKS hop,
+# but the complete HA-side NAT/tun2socks lifecycle has not been validated.
+- name: Make the experimental status explicit
+  ansible.builtin.debug:
+    msg: 'WIP cgnat Internet egress; requires independent deployment validation.'
+- name: Render the optional egress script only
+  ansible.builtin.template:
+    src: internet-up.sh.j2
+    dest: '{{ iac_render_dir if iac_dry_run else lab_root }}/internet-up.sh'
+    mode: '0750'
+  when: not iac_dry_run

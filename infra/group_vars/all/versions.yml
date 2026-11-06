@@ -1,0 +1,6 @@
+---
+open5gs_image: gradiant/open5gs:2.8.0
+srsran_image: gradiant/srsran-4g:25_10
+mongo_image: mongo:7.0
+netshoot_image: nicolaka/netshoot:latest
+tun2socks_version: v2.5.2

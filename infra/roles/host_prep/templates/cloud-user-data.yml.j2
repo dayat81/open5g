@@ -1,0 +1,14 @@
+#cloud-config
+hostname: {{ lab_vm_name }}
+manage_etc_hosts: true
+ssh_pwauth: false
+disable_root: true
+users:
+  - name: lab
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - {{ host_prep_lab_ssh_public_key }}
+runcmd:
+  - [sh, -c, 'modprobe sctp && echo sctp > /etc/modules-load.d/sctp.conf']

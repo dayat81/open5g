@@ -1,0 +1,5 @@
+logger: {level: info}
+upf:
+  pfcp: {server: [{address: {{ item.pfcp }}}]}
+  gtpu: {server: [{address: {{ item.s5 }}}]}
+  session: [{subnet: {{ item.subnet }}, gateway: {{ item.gateway }}, dnn: {{ item.dnn }}}]
