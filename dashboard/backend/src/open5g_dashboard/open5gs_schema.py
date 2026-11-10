@@ -144,35 +144,36 @@ def _bps_of(node: dict[str, Any] | None) -> int:
 
 
 def enforce_role_qos(role: str, content: dict[str, Any]) -> None:
+    """Session QoS is the default bearer. Open5GS default bearer QCI must be non-GBR."""
     qci = int(content["qci"])
     priority = int(content["arp"]["priority"])
-    if role == "student" and (qci not in STUDENT_QCI or priority < STUDENT_MIN_ARP):
+    if qci not in STUDENT_QCI:
+        raise ProfileError(
+            "default_bearer_qci_forbidden",
+            "Default bearer QCI must be non-GBR (5-9) for every role",
+        )
+    if role == "student" and priority < STUDENT_MIN_ARP:
         raise ProfileError(
             "role_qos_forbidden",
-            "Students may store non-GBR QCI 5-9 and ARP priority 5 or lower privilege",
+            "Students may store ARP priority 5 through 15",
         )
-    if role == "instructor" and not 1 <= qci <= 9:
-        raise ProfileError("role_qos_forbidden", "Instructor QCI is outside 1-9")
     if _bps_of(content.get("gbr_ul")) > 0 or _bps_of(content.get("gbr_dl")) > 0:
-        if qci not in GBR_QCI:
-            raise ProfileError(
-                "gbr_on_non_gbr_qci",
-                "PCRF emits a GBR AVP whenever the stored GBR is non-zero. Non-GBR QCI cannot carry GBR.",
-            )
+        raise ProfileError(
+            "gbr_on_non_gbr_qci",
+            "PCRF emits a GBR AVP whenever the stored GBR is non-zero. A non-GBR default bearer cannot carry GBR.",
+        )
 
 
 def _normalize_cidr(pattern: str) -> str:
     return str(ipaddress.ip_network(pattern, strict=False))
 
 
+OWNER_FIELD = "open5g_owner"
+OWNER_VALUE = "dashboard"
+
+
 def _dashboard_rule(rule: dict[str, Any]) -> bool:
-    flows = rule.get("flow") if isinstance(rule.get("flow"), list) else []
-    if not flows:
-        return False
-    return all(
-        isinstance(flow, dict) and isinstance(flow.get("description"), str) and _DASHBOARD_FLOW.match(flow["description"])
-        for flow in flows
-    )
+    return rule.get(OWNER_FIELD) == OWNER_VALUE
 
 
 def _flows_for(content: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -261,32 +262,24 @@ def _merge_pcc(existing_rules: list[Any], content: dict[str, Any]) -> tuple[list
     flows, flow_notes = _flows_for(content)
     notes.extend(flow_notes)
     kept: list[dict[str, Any]] = []
-    dashboard_rules: list[dict[str, Any]] = []
+    owned_before = 0
     for rule in existing_rules:
         if not isinstance(rule, dict):
             continue
         if _dashboard_rule(rule):
-            dashboard_rules.append(rule)
+            owned_before += 1
         else:
             kept.append(rule)
     qos = _qos_block(content) if flows else None
     merged = list(kept)
     if flows and qos is not None:
-        owned = {"flow": flows, "qos": qos}
-        if dashboard_rules:
-            merged.append(owned)
-            if len(dashboard_rules) > 1:
-                merged.extend(dashboard_rules[1:])
-                notes.append("extra_dashboard_rules_kept")
-            notes.append("dashboard_pcc_rule_updated")
-        else:
-            merged.append(owned)
-            notes.append("dashboard_pcc_rule_added")
+        merged.append({OWNER_FIELD: OWNER_VALUE, "flow": flows, "qos": qos})
+        notes.append("dashboard_pcc_rule_replaced" if owned_before else "dashboard_pcc_rule_added")
         notes.append("flows_merged_into_one_pcc_rule")
-    else:
-        merged.extend(dashboard_rules)
-        if not flows:
-            notes.append("no_ip_pcc_rule")
+    elif owned_before:
+        notes.append("dashboard_pcc_rules_removed")
+    elif not flows:
+        notes.append("no_ip_pcc_rule")
     dedicated = sum(1 for rule in merged if isinstance(rule.get("flow"), list) and rule["flow"])
     if len(merged) > MAX_PCC_RULES:
         raise ProfileError(
@@ -300,9 +293,7 @@ def _merge_pcc(existing_rules: list[Any], content: dict[str, Any]) -> tuple[list
             "Open5GS 2.8.0 allows 4 bearers per session, including the default bearer",
             {"limit": MAX_DEDICATED_BEARERS, "dedicated": dedicated},
         )
-    if existing_rules and len(merged) < len([rule for rule in existing_rules if isinstance(rule, dict)]):
-        raise ProfileError("pcc_rule_drop_rejected", "Existing PCC rules cannot be removed by this writer")
-    notes.append("existing_pcc_rules_kept")
+    notes.append("foreign_pcc_rules_kept")
     return merged, notes
 
 
@@ -405,6 +396,19 @@ def drift_fields(content: dict[str, Any], sessions: list[dict[str, Any]]) -> lis
         desired = content.get(key) if isinstance(content.get(key), dict) else {}
         if observed.get("bps") != desired.get("bps"):
             drifted.append(key)
+    observed_flows = []
+    for rule in match.get("pcc_rules") or []:
+        if not rule.get("owned"):
+            continue
+        for flow in rule.get("flows") or []:
+            if isinstance(flow, dict) and flow.get("description"):
+                observed_flows.append(flow["description"])
+    desired_flows = []
+    for rule in content.get("app_rules") or []:
+        if isinstance(rule, dict) and rule.get("enabled") is True and rule.get("match_type") == "ip":
+            desired_flows.append(f"permit out ip from {_normalize_cidr(str(rule['pattern']))} to assigned")
+    if sorted(observed_flows) != sorted(desired_flows):
+        drifted.append("pcc_rule")
     return drifted
 
 
@@ -437,7 +441,13 @@ def _session_view(session: dict[str, Any]) -> dict[str, Any]:
         for flow in rule.get("flow") or []:
             if isinstance(flow, dict):
                 flows.append({"direction": _plain_int(flow.get("direction")), "description": flow.get("description")})
-        rules.append({"qci": _plain_int(rule_qos.get("index")), "flows": flows})
+        rules.append(
+            {
+                "qci": _plain_int(rule_qos.get("index")),
+                "flows": flows,
+                "owned": rule.get(OWNER_FIELD) == OWNER_VALUE,
+            }
+        )
     return {
         "name": session.get("name"),
         "type": _plain_int(session.get("type")),

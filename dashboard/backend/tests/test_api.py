@@ -695,3 +695,96 @@ def test_rollback_while_subscriber_store_is_down_does_not_change_postgres(env):
     current = student.client.get(f"/api/profiles/{created.json()['id']}")
     assert current.json()["desired_version"] == 1
     assert current.json()["lifecycle"] == "validated"
+
+
+def test_pending_sync_is_committed_before_mongo_write(env):
+    seen = {}
+
+    class OrderingPort:
+        configured = True
+
+        def describe(self):
+            return {"configured": True, "auth": "absent", "tls": "not_requested"}
+
+        def probe(self):
+            return {"name": "mongo-subscriber", "status": "reachable", "error": None, "http_status": None, "warning": None}
+
+        def provision(self, imsi, content, *, role="student", apn_allowlist=()):
+            with psycopg.connect(DATABASE_URL, row_factory=dict_row) as other:
+                row = other.execute(
+                    "SELECT state, desired_version FROM subscriber_sync ORDER BY created_at DESC LIMIT 1"
+                ).fetchone()
+            seen["state"] = row["state"]
+            seen["desired_version"] = row["desired_version"]
+            return {
+                "status": "written",
+                "created": False,
+                "live_gx_rar": False,
+                "generation": 1,
+                "notes": [],
+                "previous_session": None,
+                "subscriber": {"sessions": [], "credentials_present": False, "security_returned": False},
+            }
+
+    student = _login(
+        TestClient(create_app(env["settings"], subscriber_port=OrderingPort())),
+        "student-a@example.test",
+        env["student_password"],
+    )
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
+    validated = student.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=student.headers(created.json()["version_etag"]),
+    )
+    written = student.post(
+        f"/api/profiles/{created.json()['id']}/provision",
+        {},
+        etag=validated.json()["version_etag"],
+    )
+    assert written.status_code == 200, written.text
+    assert seen == {"state": "pending", "desired_version": 1}
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        row = conn.execute("SELECT state, desired_version FROM subscriber_sync ORDER BY created_at DESC LIMIT 1").fetchone()
+    assert row["state"] == "written"
+    assert row["desired_version"] == 1
+
+
+def test_rollback_restores_mongo_when_postgres_update_loses(env, monkeypatch):
+    mongomock = __import__("mongomock")
+    mongo = mongomock.MongoClient()
+    mongo["open5gs"]["subscribers"].insert_one(
+        {
+            "imsi": "001010000000001",
+            "security": {"k": "PLANTED-KI-VALUE-not-a-real-key", "opc": "PLANTED-OPC-VALUE-not-a-real-opc", "amf": "8000"},
+            "slice": [{"sst": 1, "default_indicator": True, "session": [{"name": "internet", "type": 3, "qos": {"index": 9}, "ambr": {}, "pcc_rule": []}]}],
+        }
+    )
+    from open5g_dashboard import db as dashboard_db
+    from open5g_dashboard.subscriber_port import MongoSubscriberPort
+
+    port = MongoSubscriberPort("mongodb://mongo.invalid/open5gs", "open5gs", "subscribers", 2000, client=mongo)
+    monkeypatch.setattr(dashboard_db, "update_profile_content", lambda *args, **kwargs: None)
+    student = _login(TestClient(create_app(env["settings"], subscriber_port=port)), "student-a@example.test", env["student_password"])
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
+    validated = student.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=student.headers(created.json()["version_etag"]),
+    )
+    failed = student.post(
+        f"/api/profiles/{created.json()['id']}/rollback",
+        {"to_version": 1},
+        etag=validated.json()["version_etag"],
+        key="rollback-compensate",
+    )
+    assert failed.status_code == 409, failed.text
+    assert failed.json()["error"]["code"] == "version_conflict"
+    stored = mongo["open5gs"]["subscribers"].find_one({"imsi": "001010000000001"})
+    assert stored["slice"][0]["session"][0]["qos"]["index"] == 9
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        row = conn.execute(
+            "SELECT state, desired_version FROM subscriber_sync ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        profile = conn.execute("SELECT desired_version FROM profiles WHERE id = %s", (created.json()["id"],)).fetchone()
+    assert row["state"] == "compensated"
+    assert row["desired_version"] == 2
+    assert profile["desired_version"] == 1

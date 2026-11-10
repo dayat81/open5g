@@ -40,6 +40,8 @@ vmlinux.h
 # Lab runtime overrides
 lab/**/*.local.yaml
 lab/**/override.env
+lab/compose/dashboard.env
+lab/compose/.env
 
 # Editor and OS
 .DS_Store

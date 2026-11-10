@@ -147,16 +147,23 @@ def test_open5gs_limits_count_existing_sessions_and_rules():
         raise AssertionError("a ninth PCC rule was accepted")
 
 
-def test_student_cannot_store_gbr_qci_and_non_gbr_qci_rejects_gbr():
+def test_student_and_instructor_default_bearer_stay_non_gbr():
+    seeded = _seeded(rows=[{"name": "internet", "pcc_rule": []}])
     try:
-        plan_session_update(_seeded(rows=[{"name": "internet", "pcc_rule": []}]), _content(qci=1), role="student")
+        plan_session_update(seeded, _content(qci=1), role="student")
     except ProfileError as exc:
-        assert exc.code == "role_qos_forbidden"
+        assert exc.code == "default_bearer_qci_forbidden"
     else:
         raise AssertionError("student GBR QCI was accepted")
     try:
+        plan_session_update(seeded, _content(qci=1), role="instructor")
+    except ProfileError as exc:
+        assert exc.code == "default_bearer_qci_forbidden"
+    else:
+        raise AssertionError("instructor default-bearer QCI 1 was accepted")
+    try:
         plan_session_update(
-            _seeded(rows=[{"name": "internet", "pcc_rule": []}]),
+            seeded,
             _content(gbr_ul={"value": 1, "unit": "mbps"}, gbr_dl={"value": 1, "unit": "mbps"}),
             role="instructor",
         )
@@ -164,6 +171,37 @@ def test_student_cannot_store_gbr_qci_and_non_gbr_qci_rejects_gbr():
         assert exc.code == "gbr_on_non_gbr_qci"
     else:
         raise AssertionError("GBR on QCI 6 was accepted")
+
+
+def test_owned_marker_rules_can_be_removed_and_foreign_rules_stay():
+    existing = _seeded(
+        rows=[
+            {
+                "name": "internet",
+                "pcc_rule": [
+                    {
+                        "flow": [{"direction": 1, "description": "permit out udp from 192.0.2.10/32 53 to assigned"}],
+                        "qos": {"index": 5},
+                    },
+                    {
+                        "open5g_owner": "dashboard",
+                        "flow": [{"direction": 3, "description": "permit out ip from 198.51.100.0/24 to assigned"}],
+                        "qos": {"index": 6},
+                    },
+                ],
+            }
+        ]
+    )
+    cleared = plan_session_update(existing, _content(app_rules=[]), role="instructor")
+    assert len(cleared.pcc_rule) == 1
+    assert cleared.pcc_rule[0].get("open5g_owner") != "dashboard"
+    assert "dashboard_pcc_rules_removed" in cleared.notes
+    replaced = plan_session_update(existing, _content(), role="instructor")
+    owned = [rule for rule in replaced.pcc_rule if rule.get("open5g_owner") == "dashboard"]
+    foreign = [rule for rule in replaced.pcc_rule if rule.get("open5g_owner") != "dashboard"]
+    assert len(owned) == 1
+    assert len(foreign) == 1
+    assert owned[0]["flow"][0]["description"] == "permit out ip from 203.0.113.0/24 to assigned"
 
 
 def test_rejected_profile_still_rejects_a_secret_key():

@@ -100,7 +100,6 @@ class MongoSubscriberPort:
         self._collection = collection
         self._timeout_ms = timeout_ms
         self._client = client
-        self._indexed = False
 
     def describe(self) -> dict[str, str | bool]:
         return describe_mongo_target(self._uri)
@@ -119,18 +118,43 @@ class MongoSubscriberPort:
         return self._client
 
     def _coll(self):
-        collection = self._client_handle()[self._database][self._collection]
-        if not self._indexed:
-            collection.create_index("imsi", unique=True, name="open5g_imsi_unique")
-            self._indexed = True
-        return collection
+        return self._client_handle()[self._database][self._collection]
+
+    def _unique_imsi_index(self, collection) -> bool | None:
+        """Read-only. Never creates or alters an index."""
+        try:
+            indexes = collection.list_indexes()
+        except Exception:
+            return None
+        for info in indexes:
+            key = info.get("key") or {}
+            if list(key.keys()) == ["imsi"] and bool(info.get("unique")):
+                return True
+        return False
 
     def probe(self) -> dict[str, Any]:
         try:
-            self._coll().find_one({"imsi": "__open5g_ping__"}, {"_id": 1})
+            collection = self._coll()
+            collection.find_one({"imsi": "__open5g_ping__"}, {"_id": 1})
+            unique = self._unique_imsi_index(collection)
         except Exception as exc:
-            return {"name": "mongo-subscriber", "status": "down", "error": _safe_message(exc), "http_status": None}
-        return {"name": "mongo-subscriber", "status": "reachable", "error": None, "http_status": None}
+            return {
+                "name": "mongo-subscriber",
+                "status": "down",
+                "error": _safe_message(exc),
+                "http_status": None,
+                "imsi_unique_index": None,
+                "warning": None,
+            }
+        warning = None if unique else "no_unique_imsi_index"
+        return {
+            "name": "mongo-subscriber",
+            "status": "reachable",
+            "error": None,
+            "http_status": None,
+            "imsi_unique_index": unique,
+            "warning": warning,
+        }
 
     def _has_credentials(self, imsi: str) -> bool:
         try:
@@ -203,6 +227,7 @@ class MongoSubscriberPort:
                 )
             else:
                 prefix = f"slice.{patch.slice_index}.session.{patch.session_index}"
+                query[f"{prefix}.name"] = patch.session_name
                 result = collection.update_one(
                     query,
                     {
@@ -227,6 +252,19 @@ class MongoSubscriberPort:
         present = self._has_credentials(imsi)
         body["credentials_present"] = present
         body["attach_ready"] = present
+        previous = None
+        if existing is not None and patch.session_index is not None:
+            sessions = existing["slice"][patch.slice_index].get("session") or []
+            current = sessions[patch.session_index] if patch.session_index < len(sessions) else {}
+            previous = {
+                "slice_index": patch.slice_index,
+                "session_index": patch.session_index,
+                "name": patch.session_name,
+                "qos": current.get("qos"),
+                "ambr": current.get("ambr"),
+                "pcc_rule": current.get("pcc_rule") or [],
+                "generation": generation,
+            }
         return drop_secrets(
             {
                 "status": "written",
@@ -237,9 +275,35 @@ class MongoSubscriberPort:
                 "session_effect": "not_pushed_to_active_session",
                 "live_gx_rar": False,
                 "notes": patch.notes,
+                "previous_session": previous,
                 "subscriber": body,
             }
         )
+
+    def restore_session(self, imsi: str, previous: dict[str, Any]) -> None:
+        """Put back the session fields captured before a write. Does not touch security."""
+        try:
+            prefix = f"slice.{previous['slice_index']}.session.{previous['session_index']}"
+            generation = int(previous["generation"])
+            result = self._coll().update_one(
+                {
+                    "imsi": imsi,
+                    f"{prefix}.name": previous["name"],
+                    "open5g_dashboard.generation": generation,
+                },
+                {
+                    "$set": {
+                        f"{prefix}.qos": previous.get("qos"),
+                        f"{prefix}.ambr": previous.get("ambr"),
+                        f"{prefix}.pcc_rule": previous.get("pcc_rule") or [],
+                        "open5g_dashboard.generation": generation + 1,
+                    }
+                },
+            )
+        except Exception as exc:
+            raise SubscriberUnavailable("subscriber_store_unavailable", _safe_message(exc)) from None
+        if getattr(result, "matched_count", 0) != 1:
+            raise SubscriberConflict()
 
 
 def build_subscriber_port(settings) -> DisabledSubscriberPort | MongoSubscriberPort:

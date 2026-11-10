@@ -644,16 +644,17 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
             warnings.append("upf_down")
         return warnings
 
-    def write_subscriber(conn, actor, profile, imsi: str, content: dict, action: str):
-        sync_id = None
+    def write_subscriber(conn, actor, profile, imsi: str, content: dict, action: str, desired_version: int):
         try:
             model = parse_profile_from_stored(content)
             apply_caps(model, caps(conn))
         except ProfileError as exc:
             audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", exc.code, {})
-            db.insert_sync(conn, str(profile["id"]), int(profile["desired_version"]), "rejected", {"code": exc.code})
+            db.insert_sync(conn, str(profile["id"]), desired_version, "rejected", {"code": exc.code})
+            conn.commit()
             return fail(422, exc.code, exc.message, details=exc.details)
-        sync_id = db.insert_sync(conn, str(profile["id"]), int(profile["desired_version"]), "pending", {"action": action})
+        sync_id = db.insert_sync(conn, str(profile["id"]), desired_version, "pending", {"action": action})
+        conn.commit()
         try:
             result = subscriber_port.provision(
                 imsi,
@@ -663,20 +664,26 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
             )
         except ProfileError as exc:
             db.finish_sync(conn, sync_id, "rejected", None)
+            conn.commit()
             audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", exc.code, {})
             return fail(422, exc.code, exc.message, details=exc.details)
         except SubscriberConflict:
             db.finish_sync(conn, sync_id, "conflict", None)
+            conn.commit()
             audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", "subscriber_conflict", {})
             return fail(409, "subscriber_conflict", "Subscriber document changed before the write was applied")
         except SubscriberUnavailable as exc:
             db.finish_sync(conn, sync_id, "unavailable", None)
+            conn.commit()
             audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", exc.code, {})
             return fail(503, exc.code, exc.message)
         result["postgres_lifecycle_unchanged"] = action != "subscriber_rollback"
         result["live_gx_rar"] = False
         result["warnings"] = nf_warnings()
+        result["sync_id"] = sync_id
+        result["desired_version"] = desired_version
         db.finish_sync(conn, sync_id, "written", result.get("generation"))
+        conn.commit()
         audit(
             conn,
             actor,
@@ -686,7 +693,7 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
             f"profile:{profile['id']}",
             "allowed",
             "subscriber_document_only",
-            {"notes": result.get("notes", []), "generation": result.get("generation")},
+            {"notes": result.get("notes", []), "generation": result.get("generation"), "desired_version": desired_version},
         )
         return drop_secrets(result)
 
@@ -723,14 +730,34 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
             version = profile["desired_version"] + 1
             etag = make_etag(version, stored)
             if subscriber_port.configured:
-                written = write_subscriber(conn, actor, profile, assignment_row["imsi"], stored, "subscriber_rollback")
+                written = write_subscriber(
+                    conn,
+                    actor,
+                    profile,
+                    assignment_row["imsi"],
+                    stored,
+                    "subscriber_rollback",
+                    version,
+                )
                 if isinstance(written, JSONResponse):
                     return written
+                updated = db.update_profile_content(conn, profile_id, profile["version_etag"], version, etag, stored)
+                if updated is None:
+                    previous = written.get("previous_session")
+                    if previous:
+                        try:
+                            subscriber_port.restore_session(assignment_row["imsi"], previous)
+                            db.finish_sync(conn, written["sync_id"], "compensated", None)
+                            conn.commit()
+                        except (SubscriberUnavailable, SubscriberConflict):
+                            db.finish_sync(conn, written["sync_id"], "unavailable", None)
+                            conn.commit()
+                    return fail(409, "version_conflict", "version_etag does not match the stored profile")
             else:
                 written = {"status": "not_configured", "live_gx_rar": False}
-            updated = db.update_profile_content(conn, profile_id, profile["version_etag"], version, etag, stored)
-            if updated is None:
-                return fail(409, "version_conflict", "version_etag does not match the stored profile")
+                updated = db.update_profile_content(conn, profile_id, profile["version_etag"], version, etag, stored)
+                if updated is None:
+                    return fail(409, "version_conflict", "version_etag does not match the stored profile")
             db.insert_version(conn, updated, actor.id, "rollback")
             operations = diff_operations(updated["applied_content"], updated["content"])
             result = policy_port.apply(operations, updated["desired_version"])
@@ -833,6 +860,9 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
         body["docker_socket"] = "not_used"
         upf_targets = [item for item in body.get("targets", []) if str(item.get("name", "")).startswith("upf")]
         body["multiple_upf_supported"] = len(upf_targets) > 1
+        mongo_probe = next((item for item in body.get("targets", []) if item.get("name") == "mongo-subscriber"), {})
+        if mongo_probe.get("warning") == "no_unique_imsi_index":
+            body["index_warning"] = "no_unique_imsi_index"
         return body
 
     @app.get("/api/assignments/{assignment_id}/subscriber")
@@ -889,7 +919,15 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
                 return fail(409, "version_conflict", "version_etag does not match the stored profile")
             if profile["lifecycle"] != "validated":
                 return fail(409, "not_validated", "Validate the draft before provisioning the subscriber document")
-            written = write_subscriber(conn, actor, profile, assignment_row["imsi"], profile["content"], "subscriber_provision")
+            written = write_subscriber(
+                conn,
+                actor,
+                profile,
+                assignment_row["imsi"],
+                profile["content"],
+                "subscriber_provision",
+                int(profile["desired_version"]),
+            )
             if isinstance(written, JSONResponse):
                 return written
             current = db.profile_by_id(conn, profile_id)
