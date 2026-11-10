@@ -40,6 +40,7 @@ vmlinux.h
 # Lab runtime overrides
 lab/**/*.local.yaml
 lab/**/override.env
+lab/compose/android-ue.env
 
 # Editor and OS
 .DS_Store

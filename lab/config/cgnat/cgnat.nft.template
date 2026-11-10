@@ -1,0 +1,26 @@
+# CGNAT rules for the android-ue profile.
+# render-cgnat.sh replaces the tokens. per_ue chains start empty and
+# android-ue-add-ue.sh fills them after the PGW assigns the UE address.
+# Forward policy is drop: a UE pool source is not forwarded until that step.
+
+table ip cgnat {
+    chain per_ue {
+__PER_UE_RULES__
+    }
+
+    chain per_ue_nat {
+__PER_UE_NAT_RULES__
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+        ct state established,related accept
+        jump per_ue
+        ip daddr __UE_POOL__ iifname "__EGRESS_IF__" oifname "__SGI_IF__" accept
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority 100; policy accept;
+        jump per_ue_nat
+    }
+}
