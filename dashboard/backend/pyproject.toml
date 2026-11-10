@@ -11,8 +11,10 @@ dependencies = [
   "argon2-cffi",
   "httpx",
   "pymongo",
-  "mongomock",
 ]
+
+[project.optional-dependencies]
+dev = ["mongomock"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

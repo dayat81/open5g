@@ -18,8 +18,8 @@ def _content():
         "ambr_dl": {"value": 100, "unit": "mbps"},
         "mbr_ul": {"value": 20, "unit": "mbps"},
         "mbr_dl": {"value": 40, "unit": "mbps"},
-        "gbr_ul": {"value": 5, "unit": "mbps"},
-        "gbr_dl": {"value": 10, "unit": "mbps"},
+        "gbr_ul": {"value": 0, "unit": "mbps"},
+        "gbr_dl": {"value": 0, "unit": "mbps"},
         "app_rules": [
             {
                 "match_type": "ip",
@@ -85,6 +85,9 @@ def test_mongo_timeout_does_not_echo_the_driver_message():
         def __getitem__(self, _name):
             return self
 
+        def create_index(self, *_args, **_kwargs):
+            return "open5g_imsi_unique"
+
         def find_one(self, *_args, **_kwargs):
             raise TimeoutError("mongodb://secret-user:secret-pass@hidden/open5gs")
 
@@ -102,3 +105,37 @@ def test_mongo_timeout_does_not_echo_the_driver_message():
         assert "secret-pass" not in exc.message
     else:
         raise AssertionError("down store was treated as reachable")
+
+
+def test_generation_conflict_returns_without_replacing_security():
+    mongomock = __import__("mongomock")
+    client = mongomock.MongoClient()
+    collection = client["open5gs"]["subscribers"]
+    collection.insert_one(
+        {
+            "imsi": "001010000000001",
+            "security": {"k": PLANTED_K, "opc": PLANTED_OPC, "amf": "8000", "sqn": 32},
+            "slice": [{"sst": 1, "default_indicator": True, "session": [{"name": "internet", "type": 3, "pcc_rule": []}]}],
+        }
+    )
+    port = MongoSubscriberPort("mongodb://mongo.invalid/open5gs", "open5gs", "subscribers", 2000, client=client)
+    original = collection.find_one
+
+    def find_one(*args, **kwargs):
+        document = original(*args, **kwargs)
+        if document and args and isinstance(args[0], dict) and args[0].get("imsi") == "001010000000001":
+            collection.update_one({"imsi": "001010000000001"}, {"$set": {"open5g_dashboard.generation": 7, "security.sqn": 64}})
+        return document
+
+    collection.find_one = find_one
+    from open5g_dashboard.subscriber_port import SubscriberConflict
+
+    try:
+        port.provision("001010000000001", _content(), role="student")
+    except SubscriberConflict as exc:
+        assert exc.code == "subscriber_conflict"
+    else:
+        raise AssertionError("stale generation was written")
+    stored = original({"imsi": "001010000000001"})
+    assert stored["security"]["sqn"] == 64
+    assert stored["security"]["k"] == PLANTED_K

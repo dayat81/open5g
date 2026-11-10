@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from urllib.parse import parse_qs, urlsplit
 
 from open5g_dashboard.domain import ProfileError
-from open5g_dashboard.open5gs_schema import apply_profile_to_document, credentials_present, drop_secrets, project_subscriber
+from open5g_dashboard.open5gs_schema import drop_secrets, plan_session_update, project_subscriber
 
 _SAFE_ERRORS = {
     "TimeoutError": "MongoDB timed out",
@@ -21,6 +21,7 @@ _SAFE_ERRORS = {
     "AutoReconnect": "MongoDB connection failed",
     "ConfigurationError": "MongoDB URI was rejected",
 }
+_PUBLIC_PROJECTION = {"security": 0}
 
 
 class SubscriberUnavailable(Exception):
@@ -28,6 +29,13 @@ class SubscriberUnavailable(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class SubscriberConflict(Exception):
+    def __init__(self) -> None:
+        super().__init__("Subscriber document changed before the write was applied")
+        self.code = "subscriber_conflict"
+        self.message = "Subscriber document changed before the write was applied"
 
 
 def describe_mongo_target(uri: str) -> dict[str, str | bool]:
@@ -79,7 +87,7 @@ class DisabledSubscriberPort:
             "live_gx_rar": False,
         }
 
-    def provision(self, imsi: str, content: dict[str, Any]) -> dict[str, Any]:
+    def provision(self, imsi: str, content: dict[str, Any], *, role: str = "student", apn_allowlist: tuple[str, ...] = ()) -> dict[str, Any]:
         raise SubscriberUnavailable("subscriber_store_not_configured", "OPEN5G_MONGO_URI is empty")
 
 
@@ -92,6 +100,7 @@ class MongoSubscriberPort:
         self._collection = collection
         self._timeout_ms = timeout_ms
         self._client = client
+        self._indexed = False
 
     def describe(self) -> dict[str, str | bool]:
         return describe_mongo_target(self._uri)
@@ -110,7 +119,11 @@ class MongoSubscriberPort:
         return self._client
 
     def _coll(self):
-        return self._client_handle()[self._database][self._collection]
+        collection = self._client_handle()[self._database][self._collection]
+        if not self._indexed:
+            collection.create_index("imsi", unique=True, name="open5g_imsi_unique")
+            self._indexed = True
+        return collection
 
     def probe(self) -> dict[str, Any]:
         try:
@@ -119,9 +132,22 @@ class MongoSubscriberPort:
             return {"name": "mongo-subscriber", "status": "down", "error": _safe_message(exc), "http_status": None}
         return {"name": "mongo-subscriber", "status": "reachable", "error": None, "http_status": None}
 
+    def _has_credentials(self, imsi: str) -> bool:
+        try:
+            found = self._coll().count_documents(
+                {
+                    "imsi": imsi,
+                    "security.k": {"$exists": True, "$nin": [None, ""]},
+                    "security.opc": {"$exists": True, "$nin": [None, ""]},
+                }
+            )
+        except Exception:
+            return False
+        return found == 1
+
     def read(self, imsi: str) -> dict[str, Any]:
         try:
-            document = self._coll().find_one({"imsi": imsi})
+            document = self._coll().find_one({"imsi": imsi}, _PUBLIC_PROJECTION)
         except Exception as exc:
             raise SubscriberUnavailable("subscriber_store_unavailable", _safe_message(exc)) from None
         if document is None:
@@ -137,36 +163,80 @@ class MongoSubscriberPort:
                 "session_count": 0,
                 "live_gx_rar": False,
             }
-        return project_subscriber(document, imsi)
+        projected = project_subscriber(document, imsi)
+        present = self._has_credentials(imsi)
+        projected["credentials_present"] = present
+        projected["attach_ready"] = present
+        return projected
 
-    def provision(self, imsi: str, content: dict[str, Any]) -> dict[str, Any]:
+    def provision(
+        self,
+        imsi: str,
+        content: dict[str, Any],
+        *,
+        role: str = "student",
+        apn_allowlist: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
         try:
             collection = self._coll()
-            existing = collection.find_one({"imsi": imsi})
-            updated, notes = apply_profile_to_document(existing, imsi, content)
-            created = existing is None
-            if created:
-                collection.insert_one(updated)
+            existing = collection.find_one({"imsi": imsi}, _PUBLIC_PROJECTION)
+            patch = plan_session_update(existing, content, role=role, apn_allowlist=apn_allowlist)
+            query: dict[str, Any] = {
+                "imsi": imsi,
+                f"slice.{patch.slice_index}.session": {"$size": patch.expected_session_count},
+            }
+            if patch.expected_generation is None:
+                query["open5g_dashboard.generation"] = {"$exists": False}
             else:
-                collection.replace_one({"imsi": imsi}, updated)
-            stored = collection.find_one({"imsi": imsi})
-        except (SubscriberUnavailable, ProfileError):
+                query["open5g_dashboard.generation"] = patch.expected_generation
+            generation = 1 if patch.expected_generation is None else patch.expected_generation + 1
+            if patch.session_index is None:
+                if patch.new_session is None:
+                    raise ProfileError("session_not_selected", "No subscriber session could be selected")
+                query[f"slice.{patch.slice_index}.session.name"] = {"$ne": patch.session_name}
+                result = collection.update_one(
+                    query,
+                    {
+                        "$push": {f"slice.{patch.slice_index}.session": patch.new_session},
+                        "$set": {"open5g_dashboard.generation": generation},
+                    },
+                )
+            else:
+                prefix = f"slice.{patch.slice_index}.session.{patch.session_index}"
+                result = collection.update_one(
+                    query,
+                    {
+                        "$set": {
+                            f"{prefix}.qos": patch.qos,
+                            f"{prefix}.ambr": patch.ambr,
+                            f"{prefix}.pcc_rule": patch.pcc_rule,
+                            "open5g_dashboard.generation": generation,
+                        }
+                    },
+                )
+            if getattr(result, "matched_count", 0) != 1:
+                raise SubscriberConflict()
+            stored = collection.find_one({"imsi": imsi}, _PUBLIC_PROJECTION)
+        except (SubscriberUnavailable, ProfileError, SubscriberConflict):
             raise
         except Exception as exc:
             raise SubscriberUnavailable("subscriber_store_unavailable", _safe_message(exc)) from None
         if stored is None:
             raise SubscriberUnavailable("subscriber_store_unavailable", "MongoDB read after write failed")
         body = project_subscriber(stored, imsi)
-        if credentials_present(existing) and not body["credentials_present"]:
-            raise SubscriberUnavailable("subscriber_store_unavailable", "MongoDB read after write failed")
+        present = self._has_credentials(imsi)
+        body["credentials_present"] = present
+        body["attach_ready"] = present
         return drop_secrets(
             {
                 "status": "written",
-                "created": created,
+                "created": False,
+                "session_created": patch.session_index is None,
+                "generation": generation,
                 "effect": "subscriber_document_only",
                 "session_effect": "not_pushed_to_active_session",
                 "live_gx_rar": False,
-                "notes": notes,
+                "notes": patch.notes,
                 "subscriber": body,
             }
         )

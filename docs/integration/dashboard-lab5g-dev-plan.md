@@ -44,11 +44,12 @@ Adapter: `SubscriberPort` di `dashboard/backend/src/open5g_dashboard/subscriber_
 | Operasi | Perilaku |
 |---|---|
 | Baca | `GET /api/assignments/{id}/subscriber`. Proyeksi tanpa `security` / Ki / OPc. Semua session dikembalikan, termasuk APN UPF lain. |
-| Tulis | `POST /api/profiles/{id}/provision` setelah draft `validated`, dengan CSRF dan `If-Match`. Menulis UE-AMBR dan AMBR session terpilih dari pasangan AMBR profil yang sama. QCI/ARP ke `session.qos`. Rule IP ke `pcc_rule`. Hostname/SNI dan usage monitoring tidak ditulis. |
-| Buat dokumen | Jika IMSI belum ada, dokumen baru **tanpa** Ki/OPc (`attach_ready=false`). Kunci hanya boleh datang dari seed vault yang sudah ada, bukan dari API. |
-| Update | `security` disalin utuh. Session lain tidak dihapus. APN yang belum ada ditambahkan di samping session lama bila session yang ada lebih dari satu. Satu-satunya session boleh di-rename. |
+| Tulis | `POST /api/profiles/{id}/provision` setelah draft `validated`, dengan CSRF dan `If-Match`. `$set` atomik hanya pada session yang namanya sama persis: QCI/ARP, AMBR session, dan `pcc_rule` yang menggabungkan flow IP. UE-AMBR dan `security` tidak ditulis. Hostname/SNI dan usage monitoring tidak ditulis. Dokumen baru tanpa seed ditolak. |
+| Buat dokumen | Ditolak. Subscriber harus sudah di-seed (Ki/OPc tidak ditulis oleh dashboard). |
+| Update | `$set` pada path session yang cocok, plus `open5g_dashboard.generation`. Filter generasi lama menghasilkan 409. Session lain dan `pcc_rule` asing tidak dihapus. Tidak ada rename diam-diam. Batas Open5GS 2.8.0: 8 PCC rule, 4 session per slice, 3 dedicated bearer. |
 | Efek sesi | `live_gx_rar=false`, `session_effect=not_pushed_to_active_session`. Perubahan baru terbaca HSS/PCRF pada attach atau PDN reconnect berikutnya (`docs/capabilities.md`). Bukan sesi aktif. |
-| Rollback | `POST /api/profiles/{id}/rollback` tetap menyimpan versi Postgres. Jika Mongo dikonfigurasi, dokumen subscriber ditulis ulang dari versi itu dan tetap tidak mendorong RAR. Jika Mongo down, Postgres tetap ter-rollback dan field `subscriber_document.status` = `down`. Trafik yang sudah lewat tidak dibatalkan. |
+| Rollback | Lewat validasi, cap, dan audit yang sama dengan provision. Replay atau konflik idempotensi tidak menulis Mongo. Jika store down, respons 503 dan versi Postgres tidak berubah. |
+| Konsistensi | Baris `subscriber_sync` mencatat pending lalu written/conflict/unavailable. `GET` subscriber membandingkan intent dengan session APN yang sama (`drift`). Seed Ansible `replaceOne` menimpa seluruh dokumen, termasuk QoS dashboard. |
 | Authz | Sama dengan apply: student pemilik, instructor satu grup, admin ditolak (`domain.authorize`). |
 
 NF: `GET /api/core/status` (`telemetry.py`). Butuh sesi. Tidak memakai Docker socket.

@@ -1,5 +1,5 @@
 import { demoClient } from "./demo";
-import type { ApplyResult, DashboardClient, Draft } from "./types";
+import type { ApplyResult, DashboardClient, Draft, ProvisionResult } from "./types";
 
 export type ApiSession = {
   baseUrl: string;
@@ -73,6 +73,28 @@ function httpClient(session: ApiSession): DashboardClient {
         };
       }
       return rejected(body.error?.message ?? "API tidak mengembalikan pushed atau active dari scaffold ini", body.error?.code ?? "api_rejected");
+    },
+    async provision(): Promise<ProvisionResult> {
+      if (!ready || !session.profileId || !session.etag || !session.csrfToken) {
+        return { error: SESSION_REASON, written: false };
+      }
+      const response = await fetch(`${root}/api/profiles/${session.profileId}/provision`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "content-type": "application/json",
+          "if-match": session.etag,
+          "x-csrf-token": session.csrfToken,
+        },
+      });
+      const body = (await response.json()) as ErrorBody & { status?: string; error?: { message?: string } };
+      if (!response.ok) {
+        return { error: body.error?.message ?? "Tulis subscriber ditolak oleh API", written: false };
+      }
+      if (body.status !== "written") {
+        return { error: body.error?.message ?? "API tidak menulis dokumen subscriber", written: false };
+      }
+      return { error: null, written: true };
     },
   };
 }

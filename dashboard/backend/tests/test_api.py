@@ -1,6 +1,7 @@
 """HTTP authorization and apply behavior against PostgreSQL."""
 
 import json
+import os
 import secrets
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from open5g_dashboard.api import HASHER, create_app
 from open5g_dashboard.db import apply_migrations
 from open5g_dashboard.settings import Settings
 
-DATABASE_URL = "postgresql:///open5g_test"
+DATABASE_URL = os.environ.get("OPEN5G_TEST_DATABASE_URL", "postgresql:///open5g_test")
 PEPPER = "test-pepper-not-a-secret-value-32b"
 PLANTED_KI = "PLANTED-KI-VALUE-not-a-real-key"
 
@@ -118,6 +119,7 @@ def env():
         "other_assignment": other_assignment,
         "login_response": login,
         "student_password": student_password,
+        "instructor_password": instructor_password,
     }
 
 
@@ -373,6 +375,13 @@ def test_core_control_and_metric_stub_and_demo_isolation(env):
     assert health.json() == {"status": "ok", "core": "not_checked"}
 
 
+def _safe_content():
+    content = sample_content()
+    content["gbr_ul"] = {"value": 0, "unit": "mbps"}
+    content["gbr_dl"] = {"value": 0, "unit": "mbps"}
+    return content
+
+
 def test_migration_file_is_the_one_applied():
     sql = Path("migrations/001_init.sql").read_text()
     assert "CREATE TABLE profiles" in sql
@@ -451,7 +460,7 @@ def test_provision_writes_mongo_and_keeps_credentials_and_extra_upf(env):
     student = _login(TestClient(create_app(env["settings"], subscriber_port=port)), "student-a@example.test", env["student_password"])
     hidden = env["other"].client.get(f"/api/assignments/{env['assignment']['id']}/subscriber")
     assert hidden.status_code == 403
-    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": sample_content()})
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
     assert created.status_code == 201, created.text
     refused = student.post(f"/api/profiles/{created.json()['id']}/provision", {}, etag=created.json()["version_etag"])
     assert refused.status_code == 409
@@ -498,6 +507,9 @@ def test_down_subscriber_store_is_reported_and_does_not_leak_the_driver_error(en
         def __getitem__(self, _name):
             return self
 
+        def create_index(self, *_args, **_kwargs):
+            return "open5g_imsi_unique"
+
         def find_one(self, *_args, **_kwargs):
             raise TimeoutError("mongodb://secret-user:secret-pass@hidden/open5gs")
 
@@ -513,7 +525,7 @@ def test_down_subscriber_store_is_reported_and_does_not_leak_the_driver_error(en
     assert read.status_code == 200, read.text
     assert read.json()["status"] == "down"
     assert "secret-pass" not in read.text
-    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": sample_content()})
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
     validated = student.client.post(
         f"/api/profiles/{created.json()['id']}/validate",
         headers=student.headers(created.json()["version_etag"]),
@@ -532,7 +544,7 @@ def test_gx_rar_flag_still_rejects(env):
     settings = Settings(DATABASE_URL, PEPPER, False, False, enable_gx_rar=True)
     client = TestClient(create_app(settings))
     student = _login(client, "student-a@example.test", env["student_password"])
-    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": sample_content()})
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
     assert created.status_code == 201, created.text
     validated = student.client.post(
         f"/api/profiles/{created.json()['id']}/validate",
@@ -553,3 +565,133 @@ def test_gx_rar_flag_still_rejects(env):
     status = student.client.get("/api/core/status")
     assert status.json()["gx_rar_enabled"] is True
     assert status.json()["gx_rar_effective"] is False
+
+
+def test_instructor_can_provision_in_group_and_not_across_groups(env):
+    mongomock = __import__("mongomock")
+    mongo = mongomock.MongoClient()
+    mongo["open5gs"]["subscribers"].insert_one(
+        {
+            "imsi": "001010000000001",
+            "security": {"k": "PLANTED-KI-VALUE-not-a-real-key", "opc": "PLANTED-OPC-VALUE-not-a-real-opc", "amf": "8000"},
+            "slice": [{"sst": 1, "default_indicator": True, "session": [{"name": "internet", "type": 3, "pcc_rule": []}]}],
+        }
+    )
+    from open5g_dashboard.subscriber_port import MongoSubscriberPort
+
+    port = MongoSubscriberPort("mongodb://mongo.invalid/open5gs", "open5gs", "subscribers", 2000, client=mongo)
+    instructor = _login(
+        TestClient(create_app(env["settings"], subscriber_port=port)),
+        "instructor-a@example.test",
+        env["instructor_password"],
+    )
+    created = instructor.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
+    assert created.status_code == 201, created.text
+    validated = instructor.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=instructor.headers(created.json()["version_etag"]),
+    )
+    written = instructor.post(
+        f"/api/profiles/{created.json()['id']}/provision",
+        {},
+        etag=validated.json()["version_etag"],
+    )
+    assert written.status_code == 200, written.text
+    foreign = env["other"].post("/api/profiles", {"assignment_id": env["other_assignment"]["id"], "content": _safe_content()})
+    blocked = instructor.post(
+        f"/api/profiles/{foreign.json()['id']}/provision",
+        {},
+        etag=foreign.json()["version_etag"],
+    )
+    assert blocked.status_code == 403
+    assert blocked.json()["error"]["code"] == "cross_group_forbidden"
+
+
+def test_rollback_replay_does_not_rewrite_mongo(env):
+    mongomock = __import__("mongomock")
+    mongo = mongomock.MongoClient()
+    mongo["open5gs"]["subscribers"].insert_one(
+        {
+            "imsi": "001010000000001",
+            "security": {"k": "PLANTED-KI-VALUE-not-a-real-key", "opc": "PLANTED-OPC-VALUE-not-a-real-opc", "amf": "8000", "sqn": 64},
+            "ambr": {"downlink": {"value": 1, "unit": 3}, "uplink": {"value": 1, "unit": 3}},
+            "slice": [{"sst": 1, "default_indicator": True, "session": [{"name": "internet", "type": 3, "pcc_rule": [{"flow": [{"direction": 1, "description": "permit out udp from 192.0.2.10/32 53 to assigned"}]}]}]}],
+        }
+    )
+    from open5g_dashboard.subscriber_port import MongoSubscriberPort
+
+    port = MongoSubscriberPort("mongodb://mongo.invalid/open5gs", "open5gs", "subscribers", 2000, client=mongo)
+    student = _login(TestClient(create_app(env["settings"], subscriber_port=port)), "student-a@example.test", env["student_password"])
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
+    validated = student.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=student.headers(created.json()["version_etag"]),
+    )
+    first = student.post(
+        f"/api/profiles/{created.json()['id']}/rollback",
+        {"to_version": 1},
+        etag=validated.json()["version_etag"],
+        key="rollback-mongo",
+    )
+    assert first.status_code == 409, first.text
+    assert first.json()["subscriber_document"]["status"] == "written"
+    generation = mongo["open5gs"]["subscribers"].find_one({"imsi": "001010000000001"})["open5g_dashboard"]["generation"]
+    assert mongo["open5gs"]["subscribers"].find_one({"imsi": "001010000000001"})["security"]["sqn"] == 64
+    assert mongo["open5gs"]["subscribers"].find_one({"imsi": "001010000000001"})["ambr"]["downlink"]["value"] == 1
+    replay = student.post(
+        f"/api/profiles/{created.json()['id']}/rollback",
+        {"to_version": 1},
+        etag=first.json()["profile"]["version_etag"],
+        key="rollback-mongo",
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["subscriber_document"]["status"] == "not_rewritten"
+    assert mongo["open5gs"]["subscribers"].find_one({"imsi": "001010000000001"})["open5g_dashboard"]["generation"] == generation
+    conflict = student.post(
+        f"/api/profiles/{created.json()['id']}/rollback",
+        {"to_version": 2},
+        etag=first.json()["profile"]["version_etag"],
+        key="rollback-mongo",
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "idempotency_conflict"
+    assert mongo["open5gs"]["subscribers"].find_one({"imsi": "001010000000001"})["open5g_dashboard"]["generation"] == generation
+
+
+def test_rollback_while_subscriber_store_is_down_does_not_change_postgres(env):
+    class Down:
+        def __getitem__(self, _name):
+            return self
+
+        def create_index(self, *_args, **_kwargs):
+            return "open5g_imsi_unique"
+
+        def find_one(self, *_args, **_kwargs):
+            raise TimeoutError("mongodb://secret-user:secret-pass@hidden/open5gs")
+
+        def update_one(self, *_args, **_kwargs):
+            raise AssertionError("down store must not be updated")
+
+    from open5g_dashboard.subscriber_port import MongoSubscriberPort
+
+    port = MongoSubscriberPort("mongodb://hidden/open5gs", "open5gs", "subscribers", 200, client=Down())
+    student = _login(TestClient(create_app(env["settings"], subscriber_port=port)), "student-a@example.test", env["student_password"])
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
+    assert created.status_code == 201, created.text
+    validated = student.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=student.headers(created.json()["version_etag"]),
+    )
+    assert validated.status_code == 200, validated.text
+    failed = student.post(
+        f"/api/profiles/{created.json()['id']}/rollback",
+        {"to_version": 1},
+        etag=validated.json()["version_etag"],
+        key="rollback-down",
+    )
+    assert failed.status_code == 503, failed.text
+    assert failed.json()["error"]["code"] == "subscriber_store_unavailable"
+    assert "secret-pass" not in failed.text
+    current = student.client.get(f"/api/profiles/{created.json()['id']}")
+    assert current.json()["desired_version"] == 1
+    assert current.json()["lifecycle"] == "validated"

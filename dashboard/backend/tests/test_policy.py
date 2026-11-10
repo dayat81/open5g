@@ -10,7 +10,7 @@ def test_stock_port_rejects_without_claiming_a_push():
     assert result.executed is False
     assert result.path == "gx_rar_immediate"
     assert any(reason["op"] == "gx_rar" and reason["capability"] == "not_integrated" for reason in result.reasons)
-    assert result.live if hasattr(result, "live") else StockPolicyPort().live is False
+    assert StockPolicyPort().live is False
 
 
 def test_draft_flag_does_not_report_pushed_or_active():

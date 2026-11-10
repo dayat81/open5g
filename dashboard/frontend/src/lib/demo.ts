@@ -51,4 +51,10 @@ export const demoClient: DashboardClient = {
     }
     return previewUnsupportedApply(draft, appliedQci);
   },
+  async provision() {
+    return {
+      error: "Mode demo tidak menulis ke MongoDB. Tulis subscriber hanya lewat sesi API yang sudah ada.",
+      written: false,
+    };
+  },
 };

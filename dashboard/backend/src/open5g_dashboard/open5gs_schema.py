@@ -16,13 +16,27 @@ Nothing here opens a socket or writes a credential.
 
 from __future__ import annotations
 
-import copy
+import ipaddress
+import re
+from dataclasses import dataclass
 from typing import Any
 
 from open5g_dashboard.domain import ProfileError
 
+# Verified against Open5GS tag v2.8.0 lib/proto/types.h and the ogs_assert
+# call sites in lib/dbi/session.c and lib/dbi/subscription.c.
+# OGS_MAX_NUM_OF_BEARER is 4 per session, including the default bearer.
+MAX_PCC_RULES = 8
+MAX_SESSIONS = 4
+MAX_DEDICATED_BEARERS = 3
+MAX_FLOWS_PER_RULE = 15
+MAX_SLICES = 8
+GBR_QCI = {1, 2, 3, 4}
+STUDENT_QCI = {5, 6, 7, 8, 9}
+STUDENT_MIN_ARP = 5
 INT32_MIN = -2147483648
 INT32_MAX = 2147483647
+_DASHBOARD_FLOW = re.compile(r"^permit out ip from \S+ to assigned$")
 UNIT_NAME_TO_CODE = {"bps": 0, "kbps": 1, "mbps": 2, "gbps": 3}
 CODE_TO_NAME = {0: "bps", 1: "kbps", 2: "mbps", 3: "gbps", 4: "tbps"}
 PREEMPTION_DISABLED = 1
@@ -106,134 +120,292 @@ def _bitrate_pair(content: dict[str, Any], prefix: str) -> dict[str, dict[str, i
     }
 
 
-def _default_slice(document: dict[str, Any]) -> dict[str, Any]:
-    slices = document.get("slice")
-    if not isinstance(slices, list):
-        slices = []
-        document["slice"] = slices
-    for item in slices:
-        if isinstance(item, dict) and item.get("default_indicator") is True:
-            if not isinstance(item.get("session"), list):
-                item["session"] = []
-            return item
-    if slices and isinstance(slices[0], dict):
-        if not isinstance(slices[0].get("session"), list):
-            slices[0]["session"] = []
-        return slices[0]
-    created = {"sst": 1, "default_indicator": True, "session": []}
-    slices.append(created)
-    return created
+@dataclass(frozen=True)
+class SessionPatch:
+    slice_index: int
+    session_index: int | None
+    session_name: str
+    qos: dict[str, Any]
+    ambr: dict[str, Any]
+    pcc_rule: list[dict[str, Any]]
+    new_session: dict[str, Any] | None
+    expected_generation: int | None
+    expected_session_count: int
+    notes: list[str]
 
 
-def _select_session(sessions: list[Any], apn: str) -> tuple[dict[str, Any] | None, str]:
-    records = [item for item in sessions if isinstance(item, dict)]
-    for session in records:
-        if session.get("name") == apn:
-            return session, "matched"
-    if len(records) == 1:
-        return records[0], "rename_only"
-    if not records:
-        return None, "create"
-    return None, "add"
+def _bps_of(node: dict[str, Any] | None) -> int:
+    if not node:
+        return 0
+    if "bps" in node and isinstance(node["bps"], int):
+        return int(node["bps"])
+    encoded = encode_bitrate(int(node["value"]), str(node["unit"]))
+    return int(encoded["value"]) * (1000 ** int(encoded["unit"]))
 
 
-def _ip_rules(content: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+def enforce_role_qos(role: str, content: dict[str, Any]) -> None:
+    qci = int(content["qci"])
+    priority = int(content["arp"]["priority"])
+    if role == "student" and (qci not in STUDENT_QCI or priority < STUDENT_MIN_ARP):
+        raise ProfileError(
+            "role_qos_forbidden",
+            "Students may store non-GBR QCI 5-9 and ARP priority 5 or lower privilege",
+        )
+    if role == "instructor" and not 1 <= qci <= 9:
+        raise ProfileError("role_qos_forbidden", "Instructor QCI is outside 1-9")
+    if _bps_of(content.get("gbr_ul")) > 0 or _bps_of(content.get("gbr_dl")) > 0:
+        if qci not in GBR_QCI:
+            raise ProfileError(
+                "gbr_on_non_gbr_qci",
+                "PCRF emits a GBR AVP whenever the stored GBR is non-zero. Non-GBR QCI cannot carry GBR.",
+            )
+
+
+def _normalize_cidr(pattern: str) -> str:
+    return str(ipaddress.ip_network(pattern, strict=False))
+
+
+def _dashboard_rule(rule: dict[str, Any]) -> bool:
+    flows = rule.get("flow") if isinstance(rule.get("flow"), list) else []
+    if not flows:
+        return False
+    return all(
+        isinstance(flow, dict) and isinstance(flow.get("description"), str) and _DASHBOARD_FLOW.match(flow["description"])
+        for flow in flows
+    )
+
+
+def _flows_for(content: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     notes: list[str] = []
     rules = content.get("app_rules") or []
     if any(isinstance(rule, dict) and rule.get("enabled") is False for rule in rules):
         notes.append("disabled_rules_skipped")
     enabled = [rule for rule in rules if isinstance(rule, dict) and rule.get("enabled") is True]
     enabled.sort(key=lambda rule: int(rule.get("precedence") or 0))
-    written: list[dict[str, Any]] = []
-    qos = {
-        "index": int(content["qci"]),
-        "arp": encode_arp(content["arp"]),
-        "mbr": _bitrate_pair(content, "mbr"),
-        "gbr": _bitrate_pair(content, "gbr"),
-    }
+    flows: list[dict[str, Any]] = []
     omitted = False
     for rule in enabled:
         if rule.get("match_type") != "ip":
             omitted = True
             continue
-        written.append(
+        flows.append(
             {
-                "flow": [
-                    {
-                        "direction": FLOW_BIDIRECTIONAL,
-                        "description": f"permit out ip from {rule['pattern']} to assigned",
-                    }
-                ],
-                "qos": qos,
+                "direction": FLOW_BIDIRECTIONAL,
+                "description": f"permit out ip from {_normalize_cidr(str(rule['pattern']))} to assigned",
             }
         )
     if omitted:
         notes.append("hostname_sni_not_written")
-    return written, notes
+    if len(flows) > MAX_FLOWS_PER_RULE:
+        raise ProfileError(
+            "flow_limit",
+            "Open5GS 2.8.0 allows at most 15 flows in one PCC rule",
+            {"limit": MAX_FLOWS_PER_RULE, "flows": len(flows)},
+        )
+    return flows, notes
 
 
-def apply_profile_to_document(existing: dict[str, Any] | None, imsi: str, content: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """Return a subscriber document and stable note codes. Security keys are preserved, never created."""
+def _qos_block(content: dict[str, Any]) -> dict[str, Any]:
+    qos: dict[str, Any] = {
+        "index": int(content["qci"]),
+        "arp": encode_arp(content["arp"]),
+        "mbr": _bitrate_pair(content, "mbr"),
+    }
+    if int(content["qci"]) in GBR_QCI:
+        qos["gbr"] = _bitrate_pair(content, "gbr")
+    return qos
+
+
+def _prefix_collision(names: list[str]) -> bool:
+    folded = [name.lower() for name in names]
+    for index, left in enumerate(folded):
+        for right in folded[index + 1 :]:
+            if left.startswith(right) or right.startswith(left):
+                return True
+    return False
+
+
+def _target_slice(document: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    slices = document.get("slice") if isinstance(document.get("slice"), list) else []
+    if len(slices) > MAX_SLICES:
+        raise ProfileError("slice_limit", "Open5GS 2.8.0 asserts above 8 slices", {"limit": MAX_SLICES})
+    chosen: tuple[int, dict[str, Any]] | None = None
+    for index, item in enumerate(slices):
+        if isinstance(item, dict) and item.get("default_indicator") is True:
+            chosen = (index, item)
+            break
+    if chosen is None:
+        for index, item in enumerate(slices):
+            if isinstance(item, dict):
+                chosen = (index, item)
+                break
+    if chosen is None:
+        raise ProfileError("slice_missing", "Subscriber has no slice. This writer does not create one.")
+    if not isinstance(chosen[1].get("session"), list):
+        raise ProfileError("slice_missing", "Subscriber slice has no session array")
+    return chosen
+
+
+def _generation(document: dict[str, Any]) -> int | None:
+    dashboard = document.get("open5g_dashboard")
+    if not isinstance(dashboard, dict) or "generation" not in dashboard:
+        return None
+    value = dashboard.get("generation")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return int(value)
+
+
+def _merge_pcc(existing_rules: list[Any], content: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     notes: list[str] = []
-    if existing is None:
-        document: dict[str, Any] = {
-            "imsi": imsi,
-            "schema_version": 1,
-            "msisdn": [],
-            "imeisv": [],
-            "mme_host": [],
-            "mme_realm": [],
-            "purge_flag": [],
-            "access_restriction_data": 32,
-            "network_access_mode": 0,
-            "subscriber_status": 0,
-            "operator_determined_barring": 0,
-            "subscribed_rau_tau_timer": 12,
-            "slice": [],
-        }
-        notes.append("created_without_credentials")
+    flows, flow_notes = _flows_for(content)
+    notes.extend(flow_notes)
+    kept: list[dict[str, Any]] = []
+    dashboard_rules: list[dict[str, Any]] = []
+    for rule in existing_rules:
+        if not isinstance(rule, dict):
+            continue
+        if _dashboard_rule(rule):
+            dashboard_rules.append(rule)
+        else:
+            kept.append(rule)
+    qos = _qos_block(content) if flows else None
+    merged = list(kept)
+    if flows and qos is not None:
+        owned = {"flow": flows, "qos": qos}
+        if dashboard_rules:
+            merged.append(owned)
+            if len(dashboard_rules) > 1:
+                merged.extend(dashboard_rules[1:])
+                notes.append("extra_dashboard_rules_kept")
+            notes.append("dashboard_pcc_rule_updated")
+        else:
+            merged.append(owned)
+            notes.append("dashboard_pcc_rule_added")
+        notes.append("flows_merged_into_one_pcc_rule")
     else:
-        if existing.get("imsi") not in (None, imsi):
-            raise ProfileError("imsi_mismatch", "Refusing to rewrite a subscriber document for a different IMSI")
-        document = copy.deepcopy(existing)
-        notes.append("updated_existing")
-    document["imsi"] = imsi
-    session_ambr = _bitrate_pair(content, "ambr")
-    document["ambr"] = session_ambr
-    notes.append("ue_ambr_matches_selected_session_ambr")
-    slice_doc = _default_slice(document)
-    sessions = slice_doc["session"]
-    target, how = _select_session(sessions, str(content["apn"]))
-    if how == "create":
-        target = {"name": content["apn"], "type": 3}
-        sessions.append(target)
-        notes.append("session_created")
-    elif how == "add":
-        target = {"name": content["apn"], "type": 3}
-        sessions.append(target)
-        notes.append("session_added_alongside_existing")
-        notes.append("other_sessions_preserved")
-    elif how == "rename_only" and target is not None and target.get("name") != content["apn"]:
-        notes.append("only_session_renamed")
-    elif how == "matched" and len([item for item in sessions if isinstance(item, dict)]) > 1:
-        notes.append("other_sessions_preserved")
-    if target is None:
-        raise ProfileError("session_not_selected", "No subscriber session could be selected")
-    if "type" not in target:
-        target["type"] = 3
-    previous = target.get("pcc_rule")
-    if isinstance(previous, list) and previous:
-        notes.append("pcc_rules_replaced_on_selected_session")
-    target["name"] = content["apn"]
-    target["qos"] = {"index": int(content["qci"]), "arp": encode_arp(content["arp"])}
-    target["ambr"] = session_ambr
-    pcc_rules, rule_notes = _ip_rules(content)
-    target["pcc_rule"] = pcc_rules
-    notes.extend(rule_notes)
+        merged.extend(dashboard_rules)
+        if not flows:
+            notes.append("no_ip_pcc_rule")
+    dedicated = sum(1 for rule in merged if isinstance(rule.get("flow"), list) and rule["flow"])
+    if len(merged) > MAX_PCC_RULES:
+        raise ProfileError(
+            "pcc_rule_limit",
+            "Open5GS 2.8.0 asserts when a session has more than 8 PCC rules",
+            {"limit": MAX_PCC_RULES, "rules": len(merged)},
+        )
+    if dedicated > MAX_DEDICATED_BEARERS:
+        raise ProfileError(
+            "dedicated_bearer_limit",
+            "Open5GS 2.8.0 allows 4 bearers per session, including the default bearer",
+            {"limit": MAX_DEDICATED_BEARERS, "dedicated": dedicated},
+        )
+    if existing_rules and len(merged) < len([rule for rule in existing_rules if isinstance(rule, dict)]):
+        raise ProfileError("pcc_rule_drop_rejected", "Existing PCC rules cannot be removed by this writer")
+    notes.append("existing_pcc_rules_kept")
+    return merged, notes
+
+
+def plan_session_update(
+    existing: dict[str, Any] | None,
+    content: dict[str, Any],
+    *,
+    role: str,
+    apn_allowlist: tuple[str, ...] = (),
+) -> SessionPatch:
+    """Plan an allowlisted session update. Does not copy or return security."""
+    if not isinstance(existing, dict):
+        raise ProfileError(
+            "subscriber_not_seeded",
+            "Refusing to insert a subscriber. Seed Ki and OPc first, then update the session.",
+        )
+    enforce_role_qos(role, content)
+    apn = str(content["apn"])
+    if apn_allowlist and apn not in apn_allowlist:
+        raise ProfileError("apn_not_allowlisted", "APN is not on the configured SMF/UPF allowlist", {"apn": apn})
+    if not apn_allowlist:
+        notes_allow = ["apn_allowlist_not_configured"]
+    else:
+        notes_allow = ["apn_allowlist_matched"]
+    slice_index, slice_doc = _target_slice(existing)
+    sessions = [item for item in slice_doc.get("session") or [] if isinstance(item, dict)]
+    match_index = next((index for index, session in enumerate(sessions) if session.get("name") == apn), None)
+    names = [str(session.get("name") or "") for session in sessions]
+    if match_index is None:
+        names = [*names, apn]
+    if _prefix_collision([name for name in names if name]):
+        raise ProfileError(
+            "apn_prefix_collision",
+            "Open5GS matches a stored APN as a prefix of the requested DNN",
+        )
     if content.get("usage"):
-        notes.append("usage_monitoring_not_written")
-    notes.append("live_session_not_modified")
-    return document, notes
+        notes_allow.append("usage_monitoring_not_written")
+    notes_allow.append("ue_ambr_not_written")
+    notes_allow.append("security_not_written")
+    notes_allow.append("live_session_not_modified")
+    if match_index is None:
+        if len(sessions) + 1 > MAX_SESSIONS:
+            raise ProfileError(
+                "session_limit",
+                "Open5GS 2.8.0 asserts when a slice has more than 4 sessions",
+                {"limit": MAX_SESSIONS, "sessions": len(sessions) + 1},
+            )
+        pcc_rule, rule_notes = _merge_pcc([], content)
+        new_session = {
+            "name": apn,
+            "type": 3,
+            "qos": {"index": int(content["qci"]), "arp": encode_arp(content["arp"])},
+            "ambr": _bitrate_pair(content, "ambr"),
+            "pcc_rule": pcc_rule,
+        }
+        return SessionPatch(
+            slice_index,
+            None,
+            apn,
+            new_session["qos"],
+            new_session["ambr"],
+            pcc_rule,
+            new_session,
+            _generation(existing),
+            len(sessions),
+            [*notes_allow, *rule_notes, "session_added_alongside_existing", "session_rename_not_performed"],
+        )
+    target = sessions[match_index]
+    pcc_rule, rule_notes = _merge_pcc(list(target.get("pcc_rule") or []), content)
+    qos = {"index": int(content["qci"]), "arp": encode_arp(content["arp"])}
+    ambr = _bitrate_pair(content, "ambr")
+    return SessionPatch(
+        slice_index,
+        match_index,
+        apn,
+        qos,
+        ambr,
+        pcc_rule,
+        None,
+        _generation(existing),
+        len(sessions),
+        [*notes_allow, *rule_notes, "session_matched", "session_rename_not_performed"],
+    )
+
+
+def drift_fields(content: dict[str, Any], sessions: list[dict[str, Any]]) -> list[str]:
+    """Compare intent with the session of the same APN. UE-AMBR is not part of the write."""
+    match = next((session for session in sessions if session.get("name") == content.get("apn")), None)
+    if match is None:
+        return ["apn"]
+    drifted: list[str] = []
+    if match.get("qci") != content.get("qci"):
+        drifted.append("qci")
+    arp = match.get("arp") if isinstance(match.get("arp"), dict) else {}
+    wanted = content.get("arp") if isinstance(content.get("arp"), dict) else {}
+    if arp.get("priority") != wanted.get("priority"):
+        drifted.append("arp")
+    for key in ("ambr_ul", "ambr_dl"):
+        observed = match.get(key) if isinstance(match.get(key), dict) else {}
+        desired = content.get(key) if isinstance(content.get(key), dict) else {}
+        if observed.get("bps") != desired.get("bps"):
+            drifted.append(key)
+    return drifted
 
 
 def credentials_present(document: dict[str, Any] | None) -> bool:

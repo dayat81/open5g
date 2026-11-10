@@ -3,5 +3,8 @@
 vault_ue_ki: REPLACE_WITH_32_HEX_CHARACTERS
 vault_ue_opc: REPLACE_WITH_32_HEX_CHARACTERS
 # Optional dashboard subscriber store. Empty disables writes.
-# A URI may carry credentials and tls=true. Placeholder host only.
+# Prefer a least-privilege user that can find and update only the subscribers
+# collection. Do not grant this user the security field if a view can hide it.
+# The adapter never reads or writes security. A URI may carry credentials and tls=true.
+# Placeholder host only. Join the mgmt network only after a separate approval.
 vault_open5gs_mongo_uri: mongodb://REPLACE_MONGO_USER:REPLACE_MONGO_PASSWORD@REPLACE_MONGO_HOST/open5gs?authSource=admin&tls=false

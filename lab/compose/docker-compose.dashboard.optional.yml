@@ -14,12 +14,17 @@ services:
       POSTGRES_USER: open5g
       POSTGRES_PASSWORD: REPLACE_WITH_LOCAL_PASSWORD
       POSTGRES_DB: open5g
+    volumes:
+      - dashboard-postgres-data:/var/lib/postgresql/data
     networks: [dashboard]
   dashboard-api:
     profiles: ["dashboard"]
     image: REPLACE_WITH_LOCAL_MIRROR/open5g-dashboard-api:local
     restart: "no"
     depends_on: [dashboard-postgres]
+    command: ["python", "-m", "open5g_dashboard"]
+    expose:
+      - "8000"
     environment:
       OPEN5G_DATABASE_URL: postgresql://open5g:REPLACE_WITH_LOCAL_PASSWORD@dashboard-postgres:5432/open5g
       OPEN5G_SESSION_PEPPER: REPLACE_WITH_32_CHARACTER_LOCAL_SECRET
@@ -33,6 +38,10 @@ services:
       OPEN5G_METRICS_ENDPOINTS: ""
       OPEN5G_HEALTH_ENDPOINTS: ""
       OPEN5G_METRICS_TIMEOUT_S: "2"
+      OPEN5G_APN_ALLOWLIST: ""
+      OPEN5G_CORS_ORIGINS: ""
+      OPEN5G_BIND_HOST: 0.0.0.0
+      OPEN5G_BIND_PORT: "8000"
     networks: [dashboard, mgmt]
 networks:
   dashboard:
@@ -40,3 +49,5 @@ networks:
   mgmt:
     external: true
     name: lab5g-dev_mgmt
+volumes:
+  dashboard-postgres-data:

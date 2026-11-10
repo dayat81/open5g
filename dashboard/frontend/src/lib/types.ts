@@ -33,8 +33,14 @@ export type ApplyResult = {
   reasons: ApplyReason[];
 };
 
+export type ProvisionResult = {
+  error: string | null;
+  written: boolean;
+};
+
 export type DashboardClient = {
   mode: "demo" | "api";
   validate(draft: Draft): Promise<{ draft: Draft; error: string | null }>;
   apply(draft: Draft, appliedQci: number | null): Promise<ApplyResult>;
+  provision(): Promise<ProvisionResult>;
 };
