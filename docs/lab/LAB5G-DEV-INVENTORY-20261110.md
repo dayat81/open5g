@@ -51,4 +51,4 @@ Terverifikasi di lab, read-only. Tidak ada yang diubah atau di-restart. Jalur ak
 - PCRF: image stok ditambah bind konfigurasi. Patch admin-RAR tidak terpasang.
 - Pada host tamu ada listener SSH dan satu proses lokal yang mungkin proxy egress. Alamat dan port disamarkan. Dugaan itu belum diverifikasi.
 
-Pemulihan ke baseline `master` disetujui pemilik pada 10 Nov 2026 pukul 15:11 WIB. Butir itu adalah MR di [`docs/pm/DELIVERY-TIMELINE.md`](../pm/DELIVERY-TIMELINE.md) dan menjadi dependensi uji e2e dashboard (M5).
+Pemulihan ke baseline `master` disetujui pada 10 Nov 2026 pukul 15:11 WIB. Butir itu adalah M1b di [`docs/pm/DELIVERY-TIMELINE.md`](../pm/DELIVERY-TIMELINE.md) dan menjadi dependensi uji e2e dashboard (M5).

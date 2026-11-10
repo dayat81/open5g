@@ -13,7 +13,7 @@ Dokumen ini hanya memuat peran dan aturan kerja. Pengenal pelaksana dan rincian 
 - `main` (ujung `d0d4bc4`, tanpa `infra/`) dan `master` (ujung `3af0834`, dengan `infra/` lewat PR #5) berdivergensi.
 - Belum ada CI. Belum ada lisensi untuk kode baru. Templat secret yang ada hanya contoh (`.env.example`, `vault.yml.example`), tanpa nilai.
 - Target tulis hanya lab5g-dev. lab5g-vm read-only.
-- Pemulihan lab5g-dev ke baseline `master` disetujui pemilik pada 10 Nov 2026 pukul 15:11 WIB. Butir itu ada di [timeline](DELIVERY-TIMELINE.md) sebagai MR dan menjadi dependensi uji e2e dashboard (M5).
+- Pemulihan lab5g-dev ke baseline `master` disetujui pada 10 Nov 2026 pukul 15:11 WIB. Butir itu ada di [timeline](DELIVERY-TIMELINE.md) sebagai M1b dan menjadi dependensi uji e2e dashboard (M5).
 
 ## Peran
 
