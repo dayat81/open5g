@@ -9,7 +9,7 @@
 | Lab | Hanya `lab5g-dev` (`172.22.20.21`). `lab5g-vm` tetap read-only dan tidak disentuh. |
 | Core | Open5GS **v2.8.0** EPC CUPS, image `gradiant/open5gs:2.8.0`, **diasumsikan tanpa patch**. |
 | RAN | OAI eNB + OAI en-gNB, proses terpisah, tag git **`2026.w43`**. |
-| Jendela | Hari 0 plus uji RAN, maksimum **8 hari kerja** (Hari 0–7). GO boleh lebih awal bila bukti lengkap. |
+| Jendela | Hari 0 plus uji RAN, maksimum **8 hari kerja** (Hari 0–7). Hasil tiap hari: **LANJUT** atau **STOP**. **GO / NO-GO** hanya pada rekomendasi akhir. |
 | Eksekusi | Tidak ada rebuild, pull image, perubahan compose, atau restart di lab sebelum PR rencana ini di-approve Netdrive. Merge PR dilakukan manual oleh Netdrive. |
 
 Sumber lab yang dipakai di sini: inventori read-only Open5G Lab Ops, 10 Nov 2026 15:10–15:12 WIB; `lab/compose/docker-compose.yml`; `lab/versions.md` (snapshot 6 Nov 2026 20:17 WIB); `docs/evidence/gate-b-endc-integrated/SUMMARY.md`; `docs/evidence/gate-a-lab5g-dev/SUMMARY.md`.
@@ -18,9 +18,17 @@ Sumber lab yang dipakai di sini: inventori read-only Open5G Lab Ops, 10 Nov 2026
 
 ## 1. Tujuan dan exit criteria
 
-Gate B menguji **EN-DC Option 3x** dengan **SgNB / en-gNB terpisah** dari eNB, di EPC yang sudah ada. Master node adalah eNB LTE. Secondary node adalah en-gNB NR. Control plane UE tetap lewat S1-MME di eNB. Pada Option 3x, bearer yang diuji adalah split bearer / SCG bearer: **S1-U downlink berpindah dari eNB ke en-gNB**, dan traffic downlink pengguna lewat NR.
+Gate B menguji **EN-DC Option 3x** dengan **SgNB / en-gNB terpisah** dari eNB, di EPC yang sudah ada. Master node adalah eNB LTE. Secondary node adalah en-gNB NR. Control plane UE tetap lewat S1-MME di eNB.
 
-Exit criteria di bawah mengikuti FR-15 dan Gate B pada PRD v0.6. Semuanya wajib. RRC NR saja, atau throughput NR pada proses yang sama, tidak menutup Gate B.
+Istilah arsitektur yang dipakai dokumen ini:
+
+| Opsi | Arti di rencana ini |
+|---|---|
+| **Option 3x** | S1-U terminated di en-gNB, dengan **SCG split bearer** (PDCP di en-gNB). Sebagian downlink boleh diteruskan lewat X2-U ke eNB. |
+| Option 3a | SCG bearer tanpa split. Bukan target exit Gate B. |
+| Option 3 | MCG split bearer di eNB. Bukan target exit Gate B. |
+
+Exit criteria di bawah (ID **E1–E7**) mengikuti FR-15 dan Gate B pada PRD v0.6. Semuanya wajib untuk rekomendasi GO. RRC NR saja, atau throughput NR pada proses yang sama, tidak menutup Gate B. ID ini adalah acuan [B-S1](https://github.com/dayat81/open5g/pull/6) pada draf QA.
 
 | # | Exit criterion | Bukti yang diterima |
 |---|---|---|
@@ -28,9 +36,9 @@ Exit criteria di bawah mengikuti FR-15 dan Gate B pada PRD v0.6. Semuanya wajib.
 | E2 | X2AP over SCTP port **36422**: X2 Setup, lalu SgNB Addition Request, SgNB Addition Request Acknowledge, dan SgNB Reconfiguration Complete | Pcap pada jaringan X2, plus log kedua proses |
 | E3 | RRC reconfiguration yang membawa konfigurasi NR ke UE | Log UE dan pcap RRC (dari proses RAN atau UE) |
 | E4 | S1AP **E-RAB Modification Indication** (eNB → MME) dan **E-RAB Modification Confirm** (MME → eNB) | Pcap S1-MME (SCTP 36412) |
-| E5 | Downlink S1-U pindah dari eNB ke en-gNB dengan **TEID baru** | Pcap PFCP Session Modification **SGW-C → SGW-U** dan pcap GTP-U. TEID serta alamat GTP sesudah indikasi berbeda dari TEID/alamat eNB sebelumnya, dan menunjuk ke en-gNB. |
-| E6 | Split bearer / SCG bearer Option 3x: downlink pengguna lewat NR | Payload downlink uji terlihat pada GTP-U en-gNB, bukan hanya pada GTP-U eNB |
-| E7 | Data uplink dan downlink end-to-end sampai SGi | Ping atau transfer ke `l5gd-server` `10.99.9.20` sukses setelah E5, dengan pcap SGi yang sejalan |
+| E5 | Downlink S1-U pindah dari eNB ke en-gNB dengan **TEID baru** | Pcap S11 Modify Bearer Request/Response (MME → SGW-C), PFCP Session Modification **SGW-C → SGW-U** (F-TEID downlink), dan GTP-U. TEID serta alamat GTP sesudah indikasi berbeda dari TEID/alamat eNB sebelumnya, dan menunjuk ke en-gNB. |
+| E6 | Option 3x: **SCG split bearer, S1-U terminated di en-gNB** | Selama aliran uji, sedikitnya 100 paket GTP-U downlink pada S1-U dari SGW-U ke en-gNB memakai TEID_en-gNB yang baru. Sisa downlink di S1-U eNB atau di X2-U dicatat sebagai informasi, bukan syarat gagal. |
+| E7 | Data uplink dan downlink end-to-end sampai SGi | `ping -c 5` ke `10.99.9.20` berhasil 100%, dan satu aliran `iperf3` downlink 30 detik selesai tanpa putus. Throughput bukan syarat lulus pada rfsim. |
 
 S1AP untuk UE tetap di eNB. en-gNB pada Option 3x tidak menggantikan S1-MME. Yang pindah adalah tunnel S1-U downlink bearer yang ditambahkan ke SgNB.
 
@@ -40,7 +48,7 @@ Pada 6 Nov 2026 20:17 WIB, srsRAN 4G 25.10 di `lab5g-dev` menjalankan sel LTE da
 
 Yang tercapai pada topologi itu:
 
-- Attach, UE `10.45.0.4` (larian sebelumnya `10.45.0.3`).
+- Attach, alamat PDN UE `<UE-PDN>` (larian sebelumnya juga `<UE-PDN>`; angka mentah tidak diulang di dokumen ini).
 - RRC NR reconfiguration dan Random Access Complete (`c-rnti=0x4601`).
 - Beban NR tercatat kira-kira DL 3,50–4,66 Mbps dan UL 3,66–4,75 Mbps.
 - S1-MME `10.99.1.10:36412` ↔ `10.99.1.20` ESTAB.
@@ -93,10 +101,11 @@ flowchart LR
 
   UE --- ENB
   UE --- GNB
-  ENB ---|"X2 SCTP 36422<br/>10.99.12.0/24"| GNB
+  ENB ---|"X2-C SCTP 36422<br/>10.99.12.0/24"| GNB
+  ENB -.->|"X2-U GTP-U<br/>informatif"| GNB
   ENB ---|"S1-MME SCTP 36412<br/>10.99.1.0/24"| MME
   MME --- HSS
-  MME --- SGWC
+  MME ---|"S11 GTP-C"| SGWC
   SGWC ---|"Sx PFCP UDP 8805"| SGWU
   SGWU ---|"S1-U GTP-U 2152<br/>setelah E-RAB Mod: ke en-gNB"| GNB
   SGWC --- SMF
@@ -178,7 +187,7 @@ Dokumen pada commit `cfee4c20` (dibaca dari pohon tag, bukan dari `develop`):
 - `radio/rfsimulator/README.md`: `--rfsim`; default klien ke `127.0.0.1:4043`; eNB/gNB memakai `--rfsimulator.[0].serveraddr server`. Dokumen ini **tidak** berisi topologi EN-DC. Rfsim “is not designed to run close to real-time”.
 - Bagian LTE UE di `FEATURE_SET.md` tidak menyebut EN-DC. Mode yang disebut untuk nrUE adalah SA, phy-test, dan noS1, bukan NSA.
 
-**UNKNOWN — UE EN-DC rfsim:** tidak ada pernyataan upstream pada commit ini bahwa `nr-uesoftmodem` atau `lte-uesoftmodem` menyelesaikan EN-DC lewat rfsim. Spike ada untuk menguji hal itu, bukan untuk menganggapnya didukung. Hari 1 membaca `--help` binary terpin dan README rfsim pada commit yang sama. Bila tidak ada mode EN-DC, itu NO-GO jalur UE (§3), bukan alasan mencoba `develop`.
+**UNKNOWN — UE EN-DC rfsim:** tidak ada pernyataan upstream pada commit ini bahwa `nr-uesoftmodem` atau `lte-uesoftmodem` menyelesaikan EN-DC lewat rfsim. Spike ada untuk menguji hal itu, bukan untuk menganggapnya didukung. Hari 1 membaca `--help` binary terpin dan README rfsim pada commit yang sama, lalu **menuliskan** topologi rfsim (siapa TCP server, jumlah kanal, port) dan nama field HSS yang dipakai untuk H3. T-B3 dan semua kasus sesudahnya **diblokir** sampai tulisan itu ada (§3, §6). Bila tidak ada mode EN-DC, hari itu **STOP**. Rekomendasi akhir NO-GO disusun Architect; Netdrive yang memutuskan. Bukan alasan mencoba `develop`.
 
 ### 2.5 Open5GS 2.8.0 tanpa patch — hipotesis yang wajib diuji
 
@@ -188,7 +197,7 @@ Pada tag sumber Open5GS `v2.8.0`, `src/mme/s1ap-handler.c` memuat `s1ap_handle_e
 
 | ID | Hipotesis | Cara uji |
 |---|---|---|
-| H1 | MME pada image lab menerima E-RAB Modification Indication dari OAI eNB dan membalas E-RAB Modification Confirm | T-B5, pcap S1-MME. Log “Not implemented” atau tidak ada Confirm = gagal |
+| H1 | MME pada image lab menerima E-RAB Modification Indication dari OAI eNB dan membalas E-RAB Modification Confirm dalam **10 detik** | T-B5, pcap S1-MME. Log “Not implemented”, tidak ada Confirm, atau Confirm setelah 10,0 detik = gagal |
 | H2 | SGW-C mengirim PFCP Session Modification ke SGW-U, dan SGW-U mengganti F-TEID downlink ke `10.99.2.31` dengan TEID baru | T-B6 dan T-B7 |
 | H3 | HSS dan MME menerima UE yang memasang EN-DC (bit DCNR di UE Network Capability, dan restriction NR-as-secondary tidak menolak) | T-B4. Nilai historis `access_restriction_data=32` pada uji integrated **bukan** bukti DCNR untuk SgNB terpisah. Jangan menyalinnya sebagai konfigurasi baru tanpa membaca field subscriber live |
 
@@ -198,145 +207,166 @@ Subscriber uji, Ki, OPc, dan IMSI tidak ditulis ke git.
 
 ## 3. Rencana harian (maksimum 8 hari kerja)
 
-Hari kerja dihitung di WIB. Hari 0 adalah prasyarat Gate A yang sudah ada di PRD, bukan gate baru. Uji OAI hanya mulai setelah Hari 0 GO. Bila Hari 0 makan lebih dari satu hari, sisa hari OAI menyusut; batas akhir tetap Hari 7.
+Hari kerja dihitung di WIB. Hari 0 memulihkan **subset** baseline yang dipakai T-B0: attach LTE dan ping SGi. Itu bukan penutupan Gate A. T1 dan T2 Gate A (dua APN, SDF+URR) tetap terbuka. Uji OAI hanya mulai setelah Hari 0 berstatus **LANJUT**. Bila Hari 0 makan lebih dari satu hari, sisa hari OAI menyusut; batas akhir tetap Hari 7.
 
-Setiap hari menghasilkan bukti di direktori lab di luar git (usulan `/home/lab/lab5g-dev/evidence/gate-b-oai-rfsim/hari-N/`), lalu ringkasan yang sudah disensor masuk ke format §6. Isi bukti per langkah: pcap per antarmuka yang disebut, cuplikan log (`docker logs`, tanpa IMSI/kunci), dan tangkapan layar atau teks `docker ps` / `ss` bila tidak ada GUI. Pcap diambil dari container `nicolaka/netshoot` yang menempel ke jaringan docker yang bersangkutan, atau dari bridge docker di guest. Tidak ada port publish baru.
+Hasil tiap hari hanya **LANJUT** atau **STOP**. **GO** dan **NO-GO** tidak ditulis pada baris hari. Keduanya hanya muncul sekali, sebagai rekomendasi Architect atas seluruh spike, setelah QA menyusun evidence. Netdrive yang memutuskan dan menandatangani (§6.4).
+
+Setiap hari menghasilkan bukti di direktori lab di luar git (usulan `/home/lab/lab5g-dev/evidence/gate-b-oai-rfsim/hari-N/`). Pcap memakai nama §6.0. Cuplikan log mengikuti SOP redaksi §6.2. Pcap diambil dari container `nicolaka/netshoot` yang menempel ke jaringan docker yang bersangkutan, atau dari bridge docker di guest. Tidak ada port publish baru.
 
 Perintah di bawah adalah kriteria, bukan skrip baru di repo. Lab Ops menulis perintah operasional di catatan hari itu setelah PR di-approve.
 
-### Henti dini (berlaku setiap hari)
+`lab/scripts/endc-up.sh` dan T9 di `docs/plan-poc-slicing-core.md` (srsENB integrated) **tidak dijalankan** pada hari mana pun. Keduanya bukan bukti Gate B (B-L2).
+
+### STOP (berlaku setiap hari)
 
 Berhenti pada hari yang sama, jangan lanjut ke langkah RAN berikutnya, bila salah satu ini terjadi:
 
 1. Hari 0 tidak menghasilkan attach LTE dan ping SGi.
 2. Sisa disk `/` akan turun di bawah **8 GiB** bila pull atau build berikutnya jalan.
-3. Binary terpin tidak memuat mode EN-DC untuk UE, dan tidak ada jalur rfsim yang tertulis di dokumen commit yang sama.
-4. MME membalas error atau tidak membalas Confirm untuk E-RAB Modification Indication pada image 2.8.0 tanpa patch, setelah satu kali ulang dengan pcap yang sudah lengkap (PLMN, TAC, alamat, dan TEID sudah dicek).
-5. Softmodem tetap kehilangan slot setelah mitigasi §4 (srsRAN mati, bandwidth kecil, pinning), sehingga tidak ada satu larian attach yang utuh untuk dipcap.
-6. Batas Hari 7 tercapai tanpa E1–E7.
+3. Binary terpin tidak memuat mode EN-DC untuk UE, dan tidak ada jalur rfsim yang tertulis di dokumen commit yang sama. Keluaran Hari 1 yang menyatakan hal ini memblokir T-B3 dan sesudahnya.
+4. Keluaran tertulis Hari 1 (topologi rfsim EN-DC dan field HSS/DCNR untuk H3) belum ada ketika seseorang hendak memulai T-B3.
+5. MME membalas error, tidak membalas Confirm, atau Confirm tiba lebih dari **10,0 detik** setelah E-RAB Modification Indication, pada image 2.8.0 tanpa patch, setelah satu kali ulang dengan pcap yang sudah lengkap (PLMN, TAC, alamat, dan TEID sudah dicek).
+6. Softmodem tetap kehilangan slot setelah mitigasi §4 (srsRAN mati, bandwidth kecil, pinning), sehingga tidak ada satu larian attach yang utuh untuk dipcap.
+7. Batas Hari 7 tercapai tanpa E1–E7 pada satu sesi UE yang sama.
 
-Henti dini menulis status **NO-GO** untuk jalur yang gagal, menjalankan rollback §5, dan mengembalikan baseline Hari 0 (attach + ping). Henti dini **tidak** membeli Amarisoft. Amarisoft hanya rekomendasi tertulis; biaya tetap keputusan Netdrive.
+STOP menjalankan rollback §5 dan mengembalikan jalur attach + ping Hari 0. STOP **tidak** membeli Amarisoft. Architect kemudian merekomendasikan NO-GO. Netdrive memutuskan. Amarisoft hanya rekomendasi tertulis; biaya tetap keputusan Netdrive.
 
 ### Pemicu rekomendasi fallback Amarisoft
 
-Fallback ini sudah ada di PRD v0.6 (Callbox + UEsim). Rencana ini tidak menambah produk lain. Rekomendasi ditulis di ringkasan bukti bila salah satu pemicu berikut yang menyebabkan NO-GO:
+Fallback ini sudah ada di PRD v0.6 (Callbox + UEsim). Rencana ini tidak menambah produk lain. Architect menulis rekomendasi itu di evidence bila STOP disebabkan salah satu hal berikut:
 
 - UE OAI tidak punya mode EN-DC rfsim pada tag yang di-pin.
 - X2 Setup tidak selesai setelah alamat, port 36422, PLMN, dan TAC sudah sesuai dokumen tag.
-- Rangkaian SgNB Addition tidak selesai.
-- H1 atau H2 gagal pada Open5GS 2.8.0 tanpa patch.
+- Rangkaian SgNB Addition tidak selesai pada larian emas.
+- H1 atau H2 gagal pada Open5GS 2.8.0 tanpa patch, termasuk Confirm yang melewati 10 detik.
 - Delapan hari kerja habis tanpa E1–E7, dan penyebabnya bukan jendela lab yang dipindah karena prioritas dashboard (§7, R-21).
 
 srsENB + OAI gNB sebagai jembatan X2 tetap tidak dianjurkan (ROADMAP: X2AP srsENB tidak memakai jalur SgNB yang diminta D3).
 
-### Hari 0 — pulihkan baseline Gate A
+### Hari 0 — pulihkan attach + ping (bukan tutup Gate A)
 
-Lab live pada 10 Nov 2026 15:10 WIB **bukan** baseline Gate A. State-nya PoC slicing. `l5gd-smf` EXITED (255) sejak **6 Nov 2026 21:12 WIB** (`cannot open file /etc/o5/smf.yaml` pada override PoC). UPF lepas asosiasi dari SMF pada 6 Nov 21:05 WIB. Sesi SGW-U terakhir lepas 6 Nov 21:26 WIB. UE yang masih jalan hanya siklus RRC. Ada `upf-a`, `upf-b`, dan `cgnat`. File `.bak-endc`, `.bak-poc`, dan `.lte-endc` tidak dihapus.
+Lab live pada 10 Nov 2026 15:10 WIB **bukan** baseline attach yang dipakai T-B0. State-nya PoC slicing. `l5gd-smf` EXITED (255) sejak **6 Nov 2026 21:12 WIB** (`cannot open file /etc/o5/smf.yaml` pada override PoC). UPF lepas asosiasi dari SMF pada 6 Nov 21:05 WIB. Sesi SGW-U terakhir lepas 6 Nov 21:26 WIB. UE yang masih jalan hanya siklus RRC. Ada `upf-a`, `upf-b`, dan `cgnat`. File `.bak-endc`, `.bak-poc`, dan `.lte-endc` tidak dihapus.
 
 Langkah:
 
 1. Catat `docker ps -a`, compose file yang aktif, dan `docker image inspect` Open5GS. Tanpa restart dulu.
-2. Kembalikan runtime core ke jalur Gate A: SMF stock `gradiant/open5gs:2.8.0` yang bisa membuka konfigurasi, UPF terasosiasi, **tanpa** rebuild source dan **tanpa** patch PCRF. Override PoC yang mematahkan `smf.yaml` tidak dipakai pada perintah jalan. File PoC tetap di disk.
-3. Hentikan kontainer PoC yang tidak ada pada bukti Gate A (`upf-a`, `upf-b`, `cgnat`) setelah core Gate A berdiri. Jangan menghapus volume-nya.
-4. RAN baseline: srsUE lalu srsENB **LTE-only** (jalur `lte-only-restore.sh` hanya bila file `.bak-endc` memang konfigurasi LTE yang lulus Gate A). Integrated EN-DC srsRAN tidak dipakai sebagai bukti Hari 0.
-5. Verifikasi: S1 ESTAB MME `10.99.1.10` ↔ eNB `10.99.1.20`; attach; ping UE → `10.99.9.20`.
+2. Kembalikan runtime core ke jalur yang bisa attach: SMF stock `gradiant/open5gs:2.8.0` yang bisa membuka konfigurasi, UPF terasosiasi, **tanpa** rebuild source dan **tanpa** patch PCRF. Override PoC yang mematahkan `smf.yaml` tidak dipakai pada perintah jalan. File PoC tetap di disk.
+3. Hentikan kontainer PoC yang tidak diperlukan untuk attach + ping (`upf-a`, `upf-b`, `cgnat`) setelah core itu berdiri. Jangan menghapus volume-nya.
+4. RAN: srsUE lalu srsENB **LTE-only**. Integrated EN-DC srsRAN, `endc-up.sh`, dan T9 tidak dipakai.
+5. Verifikasi T-B0: S1 ESTAB MME `10.99.1.10` ↔ eNB `10.99.1.20`; attach; `ping -c 5` UE → `10.99.9.20` dengan 0% loss. Dua APN dan SDF+URR **tidak** diuji di sini.
 
-Bukti: log SMF yang menunjukkan file konfigurasi terbuka dan asosiasi PFCP; `docker ps`; pcap S1-MME singkat; log attach tanpa IMSI; keluaran ping.
+Bukti: log SMF yang menunjukkan file konfigurasi terbuka dan asosiasi PFCP; `docker ps`; `hari-0-s1mme.pcap`; log attach yang sudah disensor; keluaran ping.
 
-| Hasil | Arti |
+| Hasil hari | Arti |
 |---|---|
-| GO | Attach dan ping SGi berhasil pada baseline LTE. Uji OAI boleh dijadwalkan. |
-| NO-GO | SMF tetap mati, atau attach/ping gagal. OAI tidak dimulai. Perbaiki baseline di jendela berikut; hari OAI tidak “dipinjam” untuk debug PoC. |
+| LANJUT | T-B0 lulus. Uji OAI boleh dijadwalkan. Gate A tetap terbuka pada T1/T2. |
+| STOP | SMF tetap mati, atau attach/ping gagal. OAI tidak dimulai. |
 | Fallback | Tidak ada. Hari 0 bukan uji RAN. Amarisoft tidak relevan. |
 
-### Hari 1 — pin, image, jaringan, baca binary
+### Hari 1 — pin, image, jaringan, keluaran tertulis (B-L3)
 
-Langkah: sediakan image amd64 §2.4 lewat mirror (jaringan lab internal tidak punya egress; proxy host port 11080 pada inventori **belum diverifikasi**). Catat RepoDigest. Cocokkan dengan tabel §2.4. Bila digest tidak cocok, image itu tidak dipakai; bangun dari commit `cfee4c20` hanya di mesin yang sisa disknya aman (§4), lalu pindahkan image. Buat jaringan `x2` `10.99.12.0/24` dan jaringan rfsim yang sudah dikunci. Pasang eNB/en-gNB ke `s1mme`, `s1u`, dan `x2` **tanpa** men-start softmodem bila Hari 0 belum GO. Baca `--help` dan contoh konfigurasi NSA pada commit yang sama. Putuskan satu UE yang akan dicoba lebih dulu dan tulis UNKNOWN yang tersisa.
+Langkah: sediakan image amd64 §2.4 lewat mirror (jaringan lab internal tidak punya egress; proxy host port 11080 pada inventori **belum diverifikasi**). Catat RepoDigest. Cocokkan dengan tabel §2.4. Bila digest tidak cocok, image itu tidak dipakai; bangun dari commit `cfee4c20` hanya di mesin yang sisa disknya aman (§4), lalu pindahkan image. Buat jaringan `x2` `10.99.12.0/24` dan jaringan rfsim yang sudah dikunci. Pasang eNB/en-gNB ke `s1mme`, `s1u`, dan `x2` **tanpa** men-start softmodem bila Hari 0 belum LANJUT. S11 tetap hanya MME `10.99.4.10` dan SGW-C `10.99.4.11`; OAI tidak mendapat alamat S11. Baca `--help` dan contoh konfigurasi NSA pada commit yang sama.
 
-Bukti: digest, `df -h /`, kutipan `--help` (mode NSA / rfsim), daftar jaringan `docker network ls`.
+**Keluaran wajib, tertulis, sebelum T-B3:** satu catatan `hari-1-keluaran.md` di direktori bukti lab (bukan git) yang memuat dua hal:
 
-| Hasil | Arti |
+1. Topologi rfsim EN-DC: proses mana TCP server, proses mana klien, jumlah kanal, port (default upstream 4043 atau port lain yang terbaca di binary). Bila tidak bisa ditetapkan dari binary dan dokumen commit, tulis UNKNOWN dan hari ini STOP.
+2. Field HSS/MME untuk H3: nama field subscriber yang mengatur DCNR dan “NR as secondary RAT”, plus kelas nilainya (diizinkan atau ditolak). Tanpa IMSI, Ki, OPc, GUTI, IMEI, atau SUPI. Nilai historis `access_restriction_data=32` tidak disalin sebagai konfigurasi.
+
+| Hasil hari | Arti |
 |---|---|
-| GO | Digest cocok atau image dibangun dari commit yang sama; disk di atas ambang; mode yang akan diuji tertulis. |
-| NO-GO | Tidak ada mode UE EN-DC pada binary dan dokumen commit. Spike UE berhenti di sini. |
-| Fallback | NO-GO pada baris di atas memicu **rekomendasi** Amarisoft. Tidak ada pembelian pada hari ini. |
+| LANJUT | Digest cocok atau image dibangun dari commit yang sama; disk di atas ambang; `hari-1-keluaran.md` lengkap dan tidak berstatus UNKNOWN pada topologi. T-B3 boleh dimulai pada hari berikutnya. |
+| STOP | Tidak ada mode UE EN-DC, atau topologi rfsim tidak bisa ditulis. T-B3 dan sesudahnya tidak dijalankan. |
+| Fallback | STOP pada baris mode UE memicu **rekomendasi** Amarisoft di rekomendasi akhir. Tidak ada pembelian pada hari ini. |
 
-### Hari 2 — OAI eNB saja, S1 Setup
+### Hari 2 — OAI eNB saja, S1 Setup (T-B1 bagian eNB)
 
-srsENB dan srsUE tetap mati. Nyalakan hanya OAI eNB (rfsim server bila itu perannya). Tanpa en-gNB dan tanpa UE.
+srsENB dan srsUE tetap mati. Nyalakan hanya OAI eNB. Tanpa en-gNB dan tanpa UE. Simpan `hari-2-s1mme.pcap`.
 
-Bukti: pcap S1-MME (S1 Setup Request/Response), log MME “eNB associated”, `ss` SCTP 36412 antara `10.99.1.10` dan `10.99.1.30`. Satu cuplikan CPU (`docker stats` atau `pidstat`) selama eNB idle.
+Bukti: S1 Setup Request/Response, log MME, `ss` SCTP 36412 antara `10.99.1.10` dan `10.99.1.30`, plus bukti proses § T-B1 untuk container eNB. Satu cuplikan CPU selama eNB idle.
 
-| Hasil | Arti |
+| Hasil hari | Arti |
 |---|---|
-| GO | S1 Setup sukses dengan PLMN 001/01 dan TAC 1 (atau nilai live Hari 0, bila berbeda — catat, jangan menebak). |
-| NO-GO | eNB tidak menyelesaikan S1 Setup setelah alamat dan PLMN dicek. Jangan menambah gNB untuk “mencoba untung”. |
-| Fallback | Belum, kecuali penyebabnya adalah binary yang salah tag. Ulangi sekali dengan image yang digest-nya benar. Masih gagal pada akhir hari = henti dini RAN. |
+| LANJUT | S1 Setup sukses dengan PLMN 001/01 dan TAC 1 (atau nilai live Hari 0, bila berbeda — catat, jangan menebak). |
+| STOP | eNB tidak menyelesaikan S1 Setup setelah alamat dan PLMN dicek. Jangan menambah gNB. |
+| Fallback | Ulangi sekali bila digest image salah. Masih gagal pada akhir hari = STOP. |
 
-### Hari 3 — en-gNB dan X2 Setup
+### Hari 3 — en-gNB dan X2 Setup (T-B1 lengkap, T-B2)
 
-Nyalakan en-gNB `nr-softmodem --nsa` pada tag yang sama. Tanpa UE.
+Nyalakan en-gNB `nr-softmodem --nsa` pada tag yang sama. Tanpa UE. Simpan `hari-3-x2c.pcap` dan `hari-3-s1mme.pcap`.
 
-Bukti: pcap X2 SCTP 36422, X2 Setup Request dan X2 Setup Response antara `10.99.12.20` dan `10.99.12.21`. Log kedua proses. Pcap S1-MME tetap menunjukkan satu asosiasi eNB (en-gNB tidak menjadi MME kedua).
+Bukti: X2 Setup Request/Response pada SCTP 36422 antara `10.99.12.20` dan `10.99.12.21`. Argv kedua proses sesuai T-B1. S1-MME tetap satu asosiasi eNB.
 
-| Hasil | Arti |
+| Hasil hari | Arti |
 |---|---|
-| GO | X2 Setup sukses. |
-| NO-GO | Tidak ada X2 Setup sukses pada hari ini setelah IP dan port 36422 dicek. |
-| Fallback | NO-GO hari ini = rekomendasi Amarisoft untuk jalur X2 OAI. Rollback §5 sebelum akhir hari. |
+| LANJUT | T-B2 lulus dan T-B1 lengkap (kedua argv, digest, srsENB tidak berjalan). |
+| STOP | Tidak ada X2 Setup sukses pada hari ini setelah IP dan port 36422 dicek. |
+| Fallback | STOP hari ini masuk pemicu rekomendasi Amarisoft untuk jalur X2 OAI. Rollback §5 sebelum akhir hari. |
 
-### Hari 4 — UE rfsim dan RRC NR
+### Hari 4 — UE rfsim dan RRC NR (T-B3)
 
-Nyalakan satu UE. Target: attach LTE lewat eNB, lalu RRC Connection Reconfiguration yang memuat sel NR.
+**Diblokir** bila `hari-1-keluaran.md` belum ada atau topologinya UNKNOWN. Setelah blokir lepas: nyalakan satu UE sesuai topologi tertulis itu. Target: attach LTE lewat eNB, lalu RRC Connection Reconfiguration yang memuat sel NR.
 
-Bukti: log UE (redacted), pcap RRC, pcap S1-MME (Initial Context / E-RAB Setup awal, tunnel masih ke `10.99.2.30`). CPU selama prosedur.
+Bukti: `hari-4-s1mme.pcap`, log UE yang sudah disensor, pcap RRC. Tunnel S1-U awal masih ke `10.99.2.30` (TEID_eNB). CPU selama prosedur.
 
-| Hasil | Arti |
+| Hasil hari | Arti |
 |---|---|
-| GO | UE attach di LTE dan RRC reconfiguration NR terlihat (E3). Belum cukup untuk Gate B. |
-| NO-GO | UE tidak melihat sel, atau tidak ada reconfiguration NR. Satu kali ulang dengan bandwidth §4. Masih gagal = NO-GO UE rfsim. |
-| Fallback | NO-GO UE rfsim memicu rekomendasi Amarisoft. Jangan beralih ke image `develop` pada hari yang sama. |
+| LANJUT | T-B3 lulus. Belum cukup untuk Gate B. |
+| STOP | UE tidak melihat sel, atau tidak ada reconfiguration NR, setelah satu kali ulang dengan bandwidth §4. |
+| Fallback | STOP UE rfsim masuk pemicu rekomendasi Amarisoft. Jangan beralih ke image `develop`. |
 
-### Hari 5 — SgNB Addition, E-RAB Modification, TEID
+### Hari 5 — satu larian terkorelasi (T-B4..T-B7, dan aliran bila sesi masih hidup)
 
-Bukti, masing-masing file pcap terpisah:
+Satu sesi UE. Jangan menggabungkan ID dari attach yang berbeda. Semua pesan di bawah memakai kunci yang sama, dicatat di `hari-5-korelasi.csv` dengan stempel waktu WIB:
 
-- X2: SgNB Addition Request, SgNB Addition Request Acknowledge, SgNB Reconfiguration Complete (E2).
-- S1-MME: E-RAB Modification Indication dan Confirm (E4, H1).
-- Sx: PFCP Session Modification dari `10.99.6.11` ke `10.99.6.12` yang mengubah F-TEID downlink (E5, H2).
-- S1-U: GTP-U downlink sesudah itu menuju `10.99.2.31`, TEID sama dengan yang di PFCP, dan berbeda dari TEID eNB `10.99.2.30`.
+`stempel_waktu_WIB`, `MeNB_UE_X2AP_ID`, `SgNB_UE_X2AP_ID`, `MME_UE_S1AP_ID`, `eNB_UE_S1AP_ID`, `E-RAB_ID`, `TEID_eNB`, `TEID_en-gNB`, `Transport_Layer_Address`.
 
-| Hasil | Arti |
+File pcap wajib, satu set, dari larian ini saja:
+
+`hari-5-s1mme.pcap`, `hari-5-x2c.pcap`, `hari-5-x2u.pcap`, `hari-5-s11.pcap`, `hari-5-pfcp.pcap`, `hari-5-s1u.pcap`, `hari-5-sgi.pcap`.
+
+Isi yang harus satu sama lain cocok:
+
+- X2-C: SgNB Addition Request, SgNB Addition Request Acknowledge, SgNB Reconfiguration Complete.
+- Pada Acknowledge: MeNB UE X2AP ID, SgNB UE X2AP ID, E-RAB ID, Transport Layer Address, GTP-TEID. GTP-TEID itu = **TEID_en-gNB**.
+- S1-MME: E-RAB Modification Indication dan Confirm. Indication memuat E-RAB ID yang sama, Transport Layer Address en-gNB (`10.99.2.31`), dan GTP-TEID = TEID_en-gNB. Confirm tiba dalam **10,0 detik** (selisih `frame.time_epoch`).
+- S11: Modify Bearer Request dan Modify Bearer Response, MME `10.99.4.10` ↔ SGW-C `10.99.4.11`, F-TEID yang sama.
+- PFCP: Session Modification **Request** SGW-C `10.99.6.11` → SGW-U `10.99.6.12` dengan F-TEID downlink = TEID_en-gNB.
+- S1-U: GTP-U downlink sesudah Confirm menuju `10.99.2.31` dengan TEID_en-gNB, berbeda dari TEID_eNB yang sebelumnya menuju `10.99.2.30`.
+- X2-U: GTP-U eNB ↔ en-gNB disimpan. Ini artefak informatif, bukan syarat lulus T-B8.
+
+| Hasil hari | Arti |
 |---|---|
-| GO | E2, E4, dan E5 lengkap pada satu larian UE yang sama. |
-| NO-GO | Confirm tidak ada, atau PFCP/GTP-U tidak pindah ke en-gNB. Ini NO-GO core-tanpa-patch bila RAN sudah mengirim Indication yang valid. |
-| Fallback | NO-GO H1 atau H2 memicu rekomendasi Amarisoft **hanya bila** penyebab yang tersisa adalah UE/RAN. Bila MME Open5GS yang menolak prosedur, rekomendasi ke Netdrive adalah: Gate B pada core ini tidak lulus tanpa keputusan patch terpisah. Rencana ini tidak menulis patch itu. |
+| LANJUT | T-B4, T-B5, T-B6, dan T-B7 lulus pada ID yang sama. |
+| STOP | Confirm tidak ada, Confirm melewati 10 detik, atau S11/PFCP/GTP-U tidak memindahkan TEID ke en-gNB. Satu kali ulang seluruh larian (bukan gabungan dua larian) masih di hari ini. Masih gagal = STOP. |
+| Fallback | Bila MME yang menolak prosedur pada image tanpa patch, rekomendasi akhir ke Netdrive: Gate B pada core ini tidak lulus tanpa keputusan patch terpisah. Rencana ini tidak menulis patch itu. |
 
-### Hari 6 — downlink NR dan data SGi
+### Hari 6 — aliran downlink pada sesi yang sama (T-B8, T-B9)
 
-Kirim ping dan satu aliran downlink (iperf atau setara yang sudah ada di `l5gd-server`) **setelah** pindah TEID.
+Lanjutkan sesi Hari 5. ID di `hari-6-korelasi.csv` harus sama dengan Hari 5. Bila sesi putus, seluruh T-B4..T-B9 diulang sebagai **satu** larian baru pada hari ini; larian Hari 5 ditandai tidak dipakai untuk E2E-02.
 
-Bukti: pcap GTP-U di en-gNB berisi payload downlink (E6); pcap SGi `10.99.9.20` sejalan; ping UL dan DL dari UE (E7). Simpan juga cuplikan GTP-U eNB pada jendela yang sama supaya terlihat bearer downlink tidak tetap di eNB.
+Aliran uji: `ping -c 5` ke `10.99.9.20`, lalu satu `iperf3` downlink 30 detik ke server yang sama. Hitung paket DL GTP-U pada `hari-6-s1u.pcap` (atau `hari-5-s1u.pcap` bila aliran sempat selesai di sesi Hari 5) dengan filter §6.0 dan TEID_en-gNB.
 
-| Hasil | Arti |
+| Hasil hari | Arti |
 |---|---|
-| GO | E6 dan E7 lulus. Gabungan Hari 2–6 menutup E1–E7. |
-| NO-GO | Control plane lengkap tetapi downlink tetap di eNB, atau ping SGi gagal setelah pindah TEID. |
-| Fallback | Sama dengan Hari 5: tulis pemicu yang mana, lalu rollback. |
+| LANJUT | T-B8 (≥ 100 paket) dan T-B9 (ping 100% dan iperf3 30 detik utuh) lulus. |
+| STOP | Kurang dari 100 paket pada TEID_en-gNB, ping loss, atau iperf3 putus. Paket sisa di TEID_eNB atau di X2-U dicatat dan tidak menjadi alasan STOP. |
+| Fallback | Sama dengan Hari 5 bila penyebabnya control plane. Bila control plane utuh dan hanya aliran yang gagal, STOP tanpa otomatis merekomendasikan Amarisoft sampai Architect melihat CPU dan rfsim. |
 
-### Hari 7 — paket bukti, atau sisa ulang yang sudah diizinkan hari sebelumnya
+### Hari 7 — kasus negatif, evidence, rollback
 
-Tidak ada skenario baru. Ulangan hanya untuk satu langkah yang Hari 5 atau 6 nyatakan “ulang sekali”. Selebihnya: susun ringkasan §6, jalankan rollback §5, ulangi attach + ping baseline, dan hentikan OAI.
+Tidak ada skenario positif baru. Urutan:
 
-| Hasil | Arti |
+1. T-B10, T-B11, dan T-B12 pada larian **terpisah** dari larian emas E2E-02. Pcap `hari-7-*`.
+2. QA menyusun ringkasan §6.3.
+3. Rollback §5, ulangi T-B0 (attach + ping). T1/T2 tidak dijalankan.
+4. Architect menulis rekomendasi GO atau NO-GO. Netdrive memutuskan dan menandatangani.
+
+| Hasil hari | Arti |
 |---|---|
-| GO | Ringkasan bukti E1–E7 lengkap, baseline Hari 0 hidup lagi, `lab5g-vm` tidak tersentuh. |
-| NO-GO | Bukti masih bolong pada akhir hari. Status spike = NO-GO. Gate B tetap terbuka. Integrated srsENB tetap achieved-but-not-accepted. |
-| Fallback | Rekomendasi Amarisoft ditulis di ringkasan bila pemicu §3 terpenuhi. Tidak ada pesanan pada dokumen ini. |
+| LANJUT | Bukti E1–E7 lengkap pada satu sesi, T-B10..T-B12 tercatat, T-B0 sesudah rollback lulus, `lab5g-vm` tidak tersentuh. Architect boleh merekomendasikan GO. |
+| STOP | Bukti positif masih bolong, atau rollback tidak mengembalikan attach + ping. Architect merekomendasikan NO-GO. Gate B tetap terbuka. Integrated srsENB tetap achieved-but-not-accepted. |
 
-GO keseluruhan hanya bila E1–E7 lulus pada rfsim **dan** rollback baseline terbukti. Lulus sebagian tetap NO-GO Gate B.
-
----
+Rekomendasi GO hanya bila E1–E7 lulus pada rfsim dalam satu sesi **dan** T-B0 sesudah rollback lulus. Lulus sebagian tetap rekomendasi NO-GO. T-B10..T-B12 yang tercatat sebagai temuan tidak menahan GO bila larian emas utuh; yang menahan GO adalah kegagalan larian emas atau kegagalan T-B12 (LTE tidak hidup saat en-gNB mati).
 
 ## 4. Kebutuhan hardware, RF, dan SDR
 
@@ -404,12 +434,12 @@ Semua baris di bawah **setelah** PR ini di-approve Netdrive. Sebelum itu: tidak 
 - [ ] Alamat S1 rencana §2.3 dipasang hanya pada container OAI. `10.99.1.20` dan `10.99.2.20` tidak diubah.
 - [ ] MME live: TAI/PLMN dan S1 `10.99.1.10` dibaca sebelum eNB OAI start. eNB OAI memakai TAI yang sama. Tidak ada whitelist yang menolak eNB baru; bila ada, catat dan berhenti untuk keputusan, jangan mengedit diam-diam di luar jendela.
 - [ ] Subscriber uji di HSS untuk EN-DC, disimpan di lab. Tidak ada IMSI, Ki, atau OPc di git, di ringkasan, atau di tiket.
-- [ ] Akses pcap: netshoot atau tcpdump pada bridge `s1mme`, `s1u`, `x2`, `pfcp`, dan `sgi` (plus `gx` bila ada transaksi). File pcap di disk lab, bukan di git. Ringkasan yang di-commit mengikuti §6 dan tidak memuat kunci.
+- [ ] Akses pcap: netshoot atau tcpdump pada bridge `s1mme`, `s1u`, `x2` (X2-C dan X2-U), `s11`, `pfcp`, dan `sgi` (plus `gx` bila ada transaksi). Nama file `hari-N-{s1mme|x2c|x2u|s11|pfcp|s1u|sgi}.pcap` (§6). File pcap di disk lab, bukan di git. Ringkasan yang di-commit mengikuti §6 dan SOP redaksi.
 - [ ] Rollback ke srsRAN baseline **tanpa** mengganggu Gate A:
   1. Hentikan dan hapus container OAI saja.
   2. Hapus jaringan `x2` dan jaringan rfsim yang dibuat untuk spike.
   3. Jangan mengganti image Open5GS dan jangan menghapus `.bak-endc` / `.bak-poc`.
-  4. Kembalikan RAN ke srsRAN LTE-only yang lulus Hari 0. `lte-only-restore.sh` hanya mengembalikan file RAN dari `.bak-endc` lalu memanggil `lab-up.sh`. Skrip itu **tidak** memperbaiki SMF yang mati. Rollback yang sah adalah kembali ke runtime **sesudah Hari 0 GO**, lalu ulangi attach dan ping `10.99.9.20`.
+  4. Kembalikan RAN ke srsRAN LTE-only yang lulus Hari 0. `lte-only-restore.sh` hanya mengembalikan file RAN dari `.bak-endc` lalu memanggil `lab-up.sh`. Skrip itu **tidak** memperbaiki SMF yang mati, dan **bukan** prosedur lulus Gate B (T9 / `endc-up.sh` tidak dipakai). Rollback yang sah adalah kembali ke runtime **sesudah Hari 0 LANJUT**, lalu ulangi attach dan ping `10.99.9.20`.
   5. Direktori bukti Gate A (`docs/evidence/gate-a-lab5g-dev/`) tidak ditulis ulang.
 - [ ] Tidak ada snapshot qcow2 hari ini (inventori). Sebelum Hari 0, tanyakan ke Netdrive apakah snapshot akan dibuat. Tanpa jawaban, rollback yang ada hanya prosedural di atas.
 - [ ] Kunci jendela dengan pekerjaan dashboard (§7). Spike tidak me-restart stack pada jam integrasi dashboard.
@@ -418,40 +448,231 @@ Semua baris di bawah **setelah** PR ini di-approve Netdrive. Sebelum itu: tidak 
 
 ## 6. Peran QA
 
-QA memiliki kasus berikut. **T-B0 bukan exit Gate B dan bukan gate baru.** T-B1 sampai T-B9 memetakan E1–E7. Lulus T-B1 saja, atau T-B1+T-B3 tanpa T-B4–T-B7, adalah hasil yang sama kelasnya dengan integrated srsENB: dicapai, tidak diterima.
+QA menyusun evidence. Architect memberi rekomendasi GO atau NO-GO. Netdrive memutuskan dan menandatangani. Hasil harian tetap LANJUT/STOP (§3).
 
-| ID | Menelusuri | Lulus bila |
-|---|---|---|
-| T-B0 | Prasyarat Gate A | SMF Up, S1 `10.99.1.10`↔`10.99.1.20`, attach LTE, ping `10.99.9.20`. Dilakukan di Hari 0 dan diulang sesudah rollback |
-| T-B1 | E1 | Dua proses OAI terpisah pada tag yang sama; srsENB tidak jalan |
-| T-B2 | E2, bagian setup | X2 Setup Request/Response pada SCTP 36422 |
-| T-B3 | E3 | RRC Connection Reconfiguration memuat konfigurasi NR ke UE |
-| T-B4 | E2, bagian addition | SgNB Addition Request, Acknowledge, dan SgNB Reconfiguration Complete pada X2, satu UE |
-| T-B5 | E4, H1 | E-RAB Modification Indication dan Confirm pada S1-MME |
-| T-B6 | E5, H2 | PFCP Session Modification SGW-C `10.99.6.11` → SGW-U `10.99.6.12` mengubah F-TEID downlink |
-| T-B7 | E5 | GTP-U downlink pindah ke `10.99.2.31` dengan TEID yang sama dengan T-B6 dan berbeda dari TEID eNB |
-| T-B8 | E6 | Payload downlink uji ada di GTP-U en-gNB (SCG / Option 3x) |
-| T-B9 | E7 | UL dan DL dari UE sampai `10.99.9.20` sesudah T-B7 |
+**T-B0 bukan exit Gate B, bukan penutupan Gate A, dan bukan gate baru.** T-B0 hanya subset attach LTE + ping SGi. T1 dan T2 Gate A (dua APN, SDF+URR) tetap terbuka. T-B1 sampai T-B9 memetakan E1–E7. Lulus T-B1 saja, atau T-B1+T-B3 tanpa T-B4–T-B7, adalah hasil yang sama kelasnya dengan integrated srsENB: dicapai, tidak diterima.
 
-H3 (DCNR / restriction) dicatat sebagai bagian dari T-B4: bila Addition tidak terjadi, log MME/HSS yang sudah disensor harus menunjukkan apakah penolakan ada di capability. Tanpa cuplikan itu, T-B4 yang gagal belum menjelaskan penyebabnya.
+**Blokir:** T-B3, T-B4, T-B5, T-B6, T-B7, T-B8, T-B9, T-B10, T-B11, dan T-B12 tidak dimulai sebelum `hari-1-keluaran.md` tertulis dan memuat topologi rfsim EN-DC serta field HSS/DCNR untuk H3 (§3 Hari 1). T-B0, T-B1, dan T-B2 tidak menunggu catatan itu.
 
-### Format bukti
+`docs/plan-poc-slicing-core.md` T9 dan `lab/scripts/endc-up.sh` (srsENB integrated) **tidak dipakai** sebagai prosedur atau bukti lulus. Itu jawaban eksplisit untuk B-L2 pada draf QA PR #6.
 
-Selaras dengan `docs/evidence/gate-a-lab5g-dev/SUMMARY.md` dan `docs/evidence/gate-b-endc-integrated/SUMMARY.md`. File baru **tidak** dibuat oleh rencana ini. QA menambahkannya hanya setelah ada larian, di jalur yang diusulkan `docs/evidence/gate-b-oai-rfsim/SUMMARY.md`, lewat perubahan terpisah.
+### 6.0 Filter, nama pcap, IE, dan kolom wajib
 
-Isi ringkasan:
+Nama file, N = nomor hari:
 
-1. Catatan pembuka: siapa yang menjalankan, bahwa `lab5g-vm` tidak dipakai.
-2. Judul, **Status** (`GO` / `NO-GO` / `belum dijalankan`), waktu snapshot dalam WIB, scope `lab5g-dev` saja.
-3. Tabel versi: commit OAI, RepoDigest amd64, image Open5GS id, kernel, `nproc`, RAM.
-4. Tabel hasil per T-B0–T-B9. Angka dari log atau pcap. Tanpa IMSI, Ki, OPc, atau kunci.
-5. Cuplikan gaya tshark yang sudah dipotong (S1-MME, X2, S1-U, Sx). Contoh pola yang sudah dipakai bukti integrated: baris `ESTAB` dan baris GTP-U, tanpa payload subscriber.
-6. Alasan GO atau NO-GO, termasuk pemicu fallback bila ada. Fallback tetap berlabel rekomendasi.
-7. Titik konfigurasi (file lab, bukan secret) dan batas: tidak ada patch core, tidak ada perubahan `lab5g-vm`.
+`hari-N-s1mme.pcap`, `hari-N-x2c.pcap`, `hari-N-x2u.pcap`, `hari-N-s11.pcap`, `hari-N-pfcp.pcap`, `hari-N-s1u.pcap`, `hari-N-sgi.pcap`.
+
+Filter tampilan. Port S11 diasumsikan UDP **2123**. Hari 0 mengonfirmasi dengan `ss` di MME dan SGW-C. Bila port live berbeda, filter memakai port itu dan selisihnya ditulis di lembar korelasi.
+
+| Artefak | Filter tshark |
+|---|---|
+| X2-C | `sctp.port == 36422 && x2ap` |
+| S1-MME | `sctp.port == 36412 && s1ap` |
+| Sx / PFCP | `udp.port == 8805 && pfcp` |
+| S1-U dan X2-U | `udp.port == 2152 && gtp` |
+| S11 | `udp.port == 2123 && gtpv2` |
+
+IE yang wajib ada dan wajib disalin ke lembar korelasi:
+
+| Pesan | IE |
+|---|---|
+| SgNB Addition Request Acknowledge (X2AP) | MeNB UE X2AP ID, SgNB UE X2AP ID, E-RAB ID, Transport Layer Address, GTP-TEID |
+| E-RAB Modification Indication (S1AP) | MME UE S1AP ID, eNB UE S1AP ID, E-RAB ID, Transport Layer Address, GTP-TEID |
+| PFCP Session Modification Request, SGW-C → SGW-U | F-TEID downlink |
+
+GTP-TEID pada Acknowledge dan pada Indication, serta F-TEID downlink pada PFCP Request, harus sama. Nilai itu adalah **TEID_en-gNB**. **TEID_eNB** adalah GTP-TEID S1-U downlink ke `10.99.2.30` sebelum Indication. Keduanya, bersama **E-RAB ID**, adalah kolom wajib. Kolom lengkap larian emas ada di Hari 5.
+
+X2AP ID tidak diharapkan muncul di dalam pesan S1AP. Lembar korelasi yang mengikat keduanya. Pesan S1AP tanpa E-RAB ID, Transport Layer Address, dan GTP-TEID gagal pada T-B5 meskipun X2AP lengkap.
+
+Timeout T-B5: `frame.time_epoch` Confirm dikurangi `frame.time_epoch` Indication ≤ **10,0** detik, diukur pada `hari-5-s1mme.pcap` (atau pcap larian ulang yang menggantikan larian itu seluruhnya).
+
+### 6.1 Pemetaan ke draf QA PR #6
+
+Sumber ID: [PR #6](https://github.com/dayat81/open5g/pull/6), file `docs/qa/TEST-PLAN-gate-A-F.md` pada cabang `qa/test-plan-gate-a-f`. Dibaca 10 Nov 2026. B-S2 pada draf itu adalah review render IaC, bukan langkah lab rencana ini.
+
+| ID draf QA | Di rencana ini |
+|---|---|
+| B-S1 | §1, exit criteria **E1–E7**, plus alasan integrated srsENB achieved-but-not-accepted |
+| B-L1 | T-B1 .. T-B9 |
+| E2E-02 | T-B4 .. T-B9 pada **satu** sesi UE (Hari 5, dilanjutkan Hari 6 hanya bila ID tidak berubah) |
+| B-L3 | Hari 1 (`hari-1-keluaran.md`: topologi rfsim dan field HSS/DCNR) dan T-B3 |
+| B-L2 | T9 dan `endc-up.sh` **tidak dipakai**. Bukan prosedur, bukan bukti lulus |
+
+### 6.2 SOP redaksi
+
+Berlaku untuk ringkasan yang di-commit, cuplikan tshark, CSV korelasi, tiket, dan log yang meninggalkan lab. Pcap mentah tetap di lab dan tidak di-commit.
+
+| Objek | Di artefak yang di-commit |
+|---|---|
+| IMSI | `<IMSI-UE-1>` |
+| GUTI | `<GUTI-UE-1>` |
+| IMEI | `<IMEI-UE-1>` |
+| SUPI | `<SUPI-UE-1>` |
+| Ki, OPc, kunci | tidak ditulis |
+| Alamat PDN UE pada narasi bukti lama | `<UE-PDN>` |
+
+Sebelum commit, pencarian teks pada ringkasan harus kosong untuk pola IMSI 14–15 digit, IMEI 15 digit, dan label `GUTI` atau `SUPI` yang diikuti nilai mentah. Filter tshark untuk cuplikan yang di-commit tidak menampilkan field itu (`-T fields` hanya frame time, prosedur, ID X2AP/S1AP yang bukan GUTI, E-RAB ID, TEID, dan alamat transport RAN). Alamat manajemen `172.22.20.21` **tetap ditulis**. Konvensi dokumen yang sudah di repo (`docs/evidence/gate-a-lab5g-dev/SUMMARY.md`, `docs/prd/PRD-v0.6.md`, `docs/plan-poc-slicing-core.md`) memakai alamat itu sebagai konteks topologi lab, dan scan provenance v0.6 mengizinkannya. Draf QA PR #6 memakai placeholder untuk IP; rencana ini mengikuti dokumen yang sudah di pohon `master`, bukan draf yang belum di-merge.
+
+### 6.3 Kasus
+
+Tiap kasus memakai lima bagian. “Lulus” di sini adalah hasil kasus, bukan GO spike.
+
+#### T-B0 — subset attach + ping
+
+- **Precondition:** SMF stock dapat membuka konfigurasinya. Bukan override PoC yang gagal sejak 6 Nov 2026 21:12 WIB. srsRAN LTE-only, bukan `endc-up.sh`.
+- **Langkah:** S1 Setup srsENB ke MME. Attach satu UE. `ping -c 5` ke `10.99.9.20`.
+- **Lulus:** S1 ESTAB `10.99.1.10` ↔ `10.99.1.20`. Attach sukses. Ping 5/5, 0% loss. Tidak mengklaim T1 atau T2.
+- **Artefak:** `hari-0-s1mme.pcap`, keluaran ping, log attach tersensor.
+- **Gagal:** SMF tidak Up, tidak ada ESTAB, attach gagal, atau ping loss. Hari 0 = STOP.
+
+#### T-B1 — dua proses OAI, srsENB mati
+
+- **Precondition:** Hari 0 LANJUT. Image §2.4 sudah punya digest.
+- **Langkah:** Jalankan container eNB dan en-gNB. Rekam `docker ps -a`, argv, dan digest. Pastikan container srsENB tidak berstatus running.
+- **Lulus:** `docker ps` menunjukkan dua container OAI sekaligus. Argv eNB memuat `lte-softmodem`. Argv en-gNB memuat `nr-softmodem` dan `--nsa`. RepoDigest amd64 sama dengan §2.4 (atau image dibangun dari commit `cfee4c20` dan digest build itu yang dicatat). Tidak ada container srsENB yang running.
+- **Artefak:** salinan teks `docker ps -a`; `docker inspect` bidang `Config.Cmd` atau `docker exec … tr '\\0' ' ' < /proc/1/cmdline`; `docker image inspect` RepoDigest; baris yang menunjukkan srsENB Exited atau tidak ada.
+- **Gagal:** satu proses, `--nsa` tidak ada, digest lain, atau srsENB masih running. Hari terkait = STOP.
+
+#### T-B2 — X2 Setup
+
+- **Precondition:** T-B1 lulus. Kedua proses di `10.99.12.20` dan `10.99.12.21`.
+- **Langkah:** Biarkan X2 Setup selesai tanpa UE.
+- **Lulus:** `hari-3-x2c.pcap` (atau pcap hari saat setup terjadi) memuat X2 Setup Request dan X2 Setup Response sukses. Filter `sctp.port == 36422 && x2ap`.
+- **Artefak:** pcap X2-C dan log kedua proses, tersensor.
+- **Gagal:** tidak ada Response sukses setelah alamat dan port dicek. Hari 3 = STOP.
+
+#### T-B3 — RRC reconfiguration NR
+
+- **Precondition:** `hari-1-keluaran.md` lengkap. T-B2 lulus. Satu UE sesuai topologi tertulis.
+- **Langkah:** Attach LTE, tunggu RRC Connection Reconfiguration yang memuat sel NR.
+- **Lulus:** reconfiguration NR terlihat di log UE dan di pcap RRC. TEID_eNB ke `10.99.2.30` sudah tercatat untuk dipakai Hari 5.
+- **Artefak:** `hari-4-s1mme.pcap`, cuplikan RRC tanpa IMSI/GUTI/IMEI/SUPI.
+- **Gagal:** tidak ada reconfiguration NR setelah satu ulang dengan bandwidth §4. Hari 4 = STOP. Kasus ini tidak dimulai bila precondition tulisan Hari 1 belum ada.
+
+#### T-B4 — SgNB Addition
+
+- **Precondition:** T-B3 lulus pada UE yang sama, atau larian ulang utuh yang menggantikan sesi itu. Bukan larian T-B10.
+- **Langkah:** satu larian Hari 5. Jangan menyambung ID dari attach lain.
+- **Lulus:** filter `sctp.port == 36422 && x2ap` menunjukkan SgNB Addition Request, SgNB Addition Request Acknowledge, dan SgNB Reconfiguration Complete. Acknowledge memuat MeNB UE X2AP ID, SgNB UE X2AP ID, E-RAB ID, Transport Layer Address, dan GTP-TEID. GTP-TEID disalin ke kolom TEID_en-gNB. E-RAB ID terisi di kolom wajib.
+- **Artefak:** `hari-5-x2c.pcap`, baris `hari-5-korelasi.csv` dengan stempel WIB.
+- **Gagal:** salah satu dari tiga pesan tidak ada, atau salah satu IE kosong. Larian emas gagal. Satu ulang seluruh larian masih di Hari 5; gabungan dua larian tidak sah.
+
+#### T-B5 — E-RAB Modification, batas 10 detik
+
+- **Precondition:** T-B4 lulus pada larian yang sama. Kolom TEID_en-gNB dan E-RAB ID sudah terisi.
+- **Langkah:** ukur Indication dan Confirm pada `hari-5-s1mme.pcap`.
+- **Lulus:** filter `sctp.port == 36412 && s1ap` menunjukkan E-RAB Modification Indication lalu E-RAB Modification Confirm. Indication memuat MME UE S1AP ID, eNB UE S1AP ID, E-RAB ID yang sama dengan T-B4, Transport Layer Address `10.99.2.31`, dan GTP-TEID = TEID_en-gNB. Selisih waktu Confirm − Indication ≤ 10,0 detik.
+- **Artefak:** `hari-5-s1mme.pcap` dan dua stempel WIB di CSV.
+- **Gagal:** tidak ada Confirm, Confirm setelah 10,0 detik, E-RAB ID berbeda, atau TEID/alamat bukan en-gNB. H1 gagal. Hari 5 = STOP setelah satu ulang seluruh larian.
+
+#### T-B6 — S11 Modify Bearer dan PFCP
+
+- **Precondition:** T-B5 lulus pada larian yang sama.
+- **Langkah:** bandingkan S11 dan PFCP dengan TEID_en-gNB.
+- **Lulus:** filter `udp.port == 2123 && gtpv2` pada `hari-5-s11.pcap` menunjukkan Modify Bearer Request (MME `10.99.4.10` → SGW-C `10.99.4.11`) dan Modify Bearer Response. Filter `udp.port == 8805 && pfcp` pada `hari-5-pfcp.pcap` menunjukkan Session Modification Request dari `10.99.6.11` ke `10.99.6.12` yang memuat F-TEID downlink = TEID_en-gNB dan alamat `10.99.2.31`.
+- **Artefak:** `hari-5-s11.pcap`, `hari-5-pfcp.pcap`, kolom TEID_en-gNB dan E-RAB ID.
+- **Gagal:** salah satu dari dua transaksi tidak ada, atau F-TEID bukan TEID_en-gNB. H2 gagal.
+
+#### T-B7 — GTP-U pindah ke en-gNB
+
+- **Precondition:** T-B6 lulus. TEID_eNB dari sebelum Indication sudah tercatat dan berbeda dari TEID_en-gNB.
+- **Langkah:** pada `hari-5-s1u.pcap`, cari GTP-U downlink pertama sesudah stempel Confirm.
+- **Lulus:** filter `udp.port == 2152 && gtp` menunjukkan paket dari `10.99.2.12` ke `10.99.2.31` dengan TEID = TEID_en-gNB. Kolom TEID_eNB tetap terisi dengan nilai lama ke `10.99.2.30`.
+- **Artefak:** `hari-5-s1u.pcap` dan CSV.
+- **Gagal:** downlink sesudah Confirm masih hanya ke eNB, atau TEID tidak sama dengan PFCP.
+
+#### T-B8 — SCG split bearer, ambang 100 paket
+
+- **Precondition:** T-B7 lulus. Sesi dan ID tidak berubah. Aliran uji T-B9 sedang atau sudah berjalan.
+- **Langkah:** hitung paket downlink GTP-U SGW-U → en-gNB selama aliran `iperf3` 30 detik.
+- **Lulus:** jumlah paket dengan `ip.src == 10.99.2.12 && ip.dst == 10.99.2.31 && gtp.teid == TEID_en-gNB` **≥ 100**. Option 3x yang diterima adalah SCG split bearer dengan S1-U terminated di en-gNB. Paket sisa di S1-U menuju eNB, dan paket X2-U pada `hari-N-x2u.pcap`, dicatat jumlahnya sebagai informasi. Keduanya tidak menggagalkan T-B8.
+- **Artefak:** pcap S1-U aliran, `hari-N-x2u.pcap`, angka hitungan, CSV.
+- **Gagal:** kurang dari 100 paket pada TEID_en-gNB selama aliran 30 detik.
+
+#### T-B9 — ping dan iperf3
+
+- **Precondition:** T-B7 lulus pada sesi yang sama.
+- **Langkah:** dari UE, `ping -c 5` ke `10.99.9.20`, lalu satu aliran `iperf3` downlink selama 30 detik ke server itu.
+- **Lulus:** ping 5/5, 0% loss, dan iperf3 selesai 30 detik tanpa putus. Angka throughput ditulis bila ada, dan **tidak** menjadi syarat lulus pada rfsim. Pcap `hari-N-sgi.pcap` menunjukkan aliran yang sama.
+- **Artefak:** keluaran ping, keluaran iperf3, `hari-N-sgi.pcap`.
+- **Gagal:** loss pada ping, atau iperf3 berhenti sebelum 30 detik.
+
+#### T-B10 — SgNB Addition Reject
+
+- **Precondition:** T-B2 pernah lulus. Larian ini **bukan** larian emas E2E-02. `hari-1-keluaran.md` sudah ada.
+- **Langkah:** setelah X2 Setup, hentikan en-gNB, lalu picu addition (attach ulang). Jangan mengubah image atau PLMN di luar langkah ini.
+- **Lulus:** `hari-7-x2c.pcap` memuat SgNB Addition Reject, dan Cause (nama dan nilai) tertulis di catatan hari. Bila stack tidak mengirim Reject dan hanya timeout, timeout itu ditulis sebagai hasil observasi. Kasus tetap “tercatat”. Tidak ada Cause dan tidak ada timeout yang tertulis = kasus belum selesai.
+- **Artefak:** pcap X2-C larian negatif, baris Cause atau timeout.
+- **Gagal:** larian negatif tidak dijalankan, atau hasilnya tidak ditulis. Kegagalan T-B10 tidak membatalkan T-B4 pada larian emas yang sudah utuh.
+
+#### T-B11 — SgNB Release atau kegagalan SCG
+
+- **Precondition:** ada sesi yang sudah melewati T-B4, pada larian yang tidak dipakai sebagai satu-satunya bukti T-B8. Keluaran Hari 1 ada.
+- **Langkah:** hentikan en-gNB atau picu SgNB Release / SCG failure. Amati UE dan S1-U.
+- **Lulus:** bukti menunjukkan UE kembali ke LTE-only. Bila MME memproses perubahan E-RAB, S1-U kembali ke eNB (`10.99.2.30`, TEID yang baru atau TEID_eNB) dan itu tertulis. Bila S1-U tidak kembali ke eNB, tulis **temuan** (MME/E-RAB Modification tidak mengembalikan tunnel). Temuan itu tetap membuat T-B11 tercatat; bukan kegagalan larian emas.
+- **Artefak:** `hari-7-s1mme.pcap`, `hari-7-s1u.pcap`, `hari-7-x2c.pcap`, kalimat temuan bila tunnel tidak kembali.
+- **Gagal:** tidak ada bukti keadaan UE sesudah release. Kasus belum selesai, bukan NO-GO otomatis atas E1–E7.
+
+#### T-B12 — fallback LTE saat en-gNB mati
+
+- **Precondition:** en-gNB stopped. eNB OAI masih jalan, atau jalur Hari 0 (srsRAN LTE-only) sudah dikembalikan. Keluaran Hari 1 ada bila yang diuji adalah eNB OAI tanpa en-gNB. Untuk rollback srsRAN, cukup T-B0.
+- **Langkah:** dengan en-gNB tidak running, attach LTE dan `ping -c 5` ke `10.99.9.20`.
+- **Lulus:** attach sukses dan ping 5/5, 0% loss. `docker ps` menunjukkan en-gNB tidak running.
+- **Artefak:** keluaran ping, `docker ps`, `hari-7-s1mme.pcap` atau pcap rollback.
+- **Gagal:** attach atau ping gagal ketika en-gNB mati. Rekomendasi GO tidak diberikan.
+
+### 6.4 Template SUMMARY dan tanda tangan
+
+File baru **tidak** dibuat oleh rencana ini. QA menulisnya setelah ada larian, di jalur yang diusulkan `docs/evidence/gate-b-oai-rfsim/SUMMARY.md`, lewat perubahan terpisah. Heading mengikuti `docs/evidence/gate-b-endc-integrated/SUMMARY.md` dan catatan pembuka yang sama bentuknya dengan `docs/evidence/gate-a-lab5g-dev/SUMMARY.md`.
+
+Status di heading memakai kosakata evidence yang sudah ada: rekomendasi Architect **GO** ditulis **ACCEPTED** hanya setelah Netdrive menandatangani setuju. Rekomendasi **NO-GO** ditulis **NOT ACCEPTED**. Sebelum tanda tangan Netdrive, status yang di-commit adalah `NOT ACCEPTED` bila spike sudah STOP, atau kalimat “Architect merekomendasikan GO; menunggu tanda tangan Netdrive” bila evidence lengkap dan keputusan belum ada. Jangan menulis ACCEPTED sebelum tanda tangan.
+
+```markdown
+> Repository note: evidence summary for the Gate B OAI rfsim run. Raw pcaps stay on lab5g-dev and are not in this checkout. IMSI, GUTI, IMEI, SUPI, Ki, and OPc are not included. lab5g-vm was not used.
+
+# Gate B — EN-DC Option 3x (OAI eNB + OAI en-gNB, rfsim)
+
+**Status:** ACCEPTED atau NOT ACCEPTED, sesuai keputusan Netdrive.
+**Snapshot time:** YYYY-MM-DD HH:MM:SS +07 (WIB).
+**Scope:** `lab5g-dev` only (`172.22.20.21`). Live lab `lab5g-vm` not modified.
+
+## Source / versions
+
+| Component | Version / note |
+|---|---|
+| OAI | tag `2026.w43`, commit, RepoDigest amd64 eNB/en-gNB/UE |
+| Open5GS | `gradiant/open5gs:2.8.0`, image id |
+| Kernel / CPU | `uname -r`, `nproc` |
+
+## Redacted results (numbers from actual logs/metrics)
+
+| Check | Result |
+|---|---|
+| T-B0 .. T-B12 | lulus / gagal / temuan, dengan E-RAB ID, TEID_eNB, TEID_en-gNB |
+| UE PDN | `<UE-PDN>` |
+
+### Short redacted tshark-style excerpt (no IMSI/keys)
+
+Cuplikan S1-MME, X2-C, S11, PFCP, S1-U. Tanpa IMSI, GUTI, IMEI, SUPI.
+
+## Why ACCEPTED atau Why NOT ACCEPTED
+
+Satu sesi atau alasan STOP. Pemicu Amarisoft, bila ada, sebagai rekomendasi.
+
+## Config touchpoints (sanitized examples in this package)
+
+File lab yang dipakai, tanpa secret.
+
+## Coordination / limits
+
+- T9 / `endc-up.sh` tidak dipakai.
+- T1/T2 Gate A tidak ditutup oleh T-B0.
+- X2-U dan sisa DL di eNB: informasi.
+- Architect recommendation: GO atau NO-GO. Nama dan waktu WIB.
+- Netdrive decision: ACCEPTED atau NOT ACCEPTED. Nama dan waktu WIB.
+```
 
 Pcap mentah tetap di lab.
-
----
 
 ## 7. Risiko dan mitigasi
 
@@ -461,7 +682,7 @@ ID baru mengikuti [RISKS.md](../RISKS.md). R-12 tetap untuk riwayat “stack bel
 |---|---|---|
 | R-13 | EN-DC rfsim OAI belum stabil. Feature set tag ini menyebut NSA gNB unstable, satu UE. Jalur UE EN-DC rfsim = UNKNOWN | Satu UE. Henti dini Hari 1 atau Hari 4. Tidak ada OTA sebelum GO rfsim |
 | R-14 | eNB, en-gNB, dan UE tidak satu commit | Pin `cfee4c20` dan digest §2.4. Tolak `latest`, `develop`, `2026.w44`, `v3.0.0` |
-| R-15 | MME image lab tidak menangani E-RAB Modification Indication sesuai OAI | H1 / T-B5. Tanpa patch. NO-GO bila Confirm tidak ada |
+| R-15 | MME image lab tidak menangani E-RAB Modification Indication sesuai OAI | H1 / T-B5. Confirm wajib dalam 10 detik. Tanpa patch. Rekomendasi NO-GO bila Confirm tidak ada atau terlambat |
 | R-16 | PFCP modify di SGW-U tidak memindahkan F-TEID ke en-gNB | H2 / T-B6 / T-B7 |
 | R-17 | Rekonsiliasi capability EN-DC/DCNR di HSS/MME menolak NR secondary | Subscriber uji dibaca di lab. Nilai 32 dari uji integrated tidak disalin sebagai bukti |
 | R-18 | 8 vCPU non-RT tidak cukup untuk eNB + en-gNB + UE + EPC | Mitigasi §4, atau resize 16 vCPU / 32 GiB bila Netdrive setuju |
