@@ -1,0 +1,9 @@
+---
+dashboard_enabled: false
+dashboard_enable_gx_rar: false
+dashboard_mongo_database: open5gs
+dashboard_mongo_collection: subscribers
+dashboard_mongo_timeout_ms: 2000
+dashboard_metrics_timeout_s: 2
+dashboard_metrics_endpoints: ''
+dashboard_health_endpoints: ''

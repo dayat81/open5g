@@ -4,4 +4,6 @@ uvicorn
 psycopg[binary]
 argon2-cffi
 httpx
+pymongo
+mongomock
 pytest>=8

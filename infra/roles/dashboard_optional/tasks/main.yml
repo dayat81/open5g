@@ -1,0 +1,13 @@
+---
+- name: Refuse the optional dashboard unless lab5g-dev enabled it
+  ansible.builtin.assert:
+    that:
+      - dashboard_enabled | bool
+      - lab_environment == 'lab5g-dev'
+    fail_msg: The dashboard role is not part of the default lab stack. Set dashboard_enabled on lab5g-dev before rendering it.
+
+- name: Render the dashboard environment without starting containers
+  ansible.builtin.template:
+    src: dashboard.env.j2
+    dest: '{{ lab_root }}/dashboard.env'
+    mode: '0600'

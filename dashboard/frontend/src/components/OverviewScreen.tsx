@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { CoreStatusPanel } from "./CoreStatusPanel";
 import { DemoBanner } from "./DemoBanner";
 import { EvidenceBadge } from "./EvidenceBadge";
 import { Shell } from "./Shell";
@@ -12,7 +13,7 @@ const NODES = [
   ["pcrf.svg", "PCRF"],
 ];
 
-export function OverviewScreen({ mode = "demo" }: { mode?: "demo" | "api" }) {
+export function OverviewScreen({ mode = "demo", apiBase }: { mode?: "demo" | "api"; apiBase?: string }) {
   return (
     <Shell active="/" mode={mode}>
       {mode === "demo" ? <DemoBanner /> : null}
@@ -63,6 +64,7 @@ export function OverviewScreen({ mode = "demo" }: { mode?: "demo" | "api" }) {
         </div>
         <p className="note">S1-U menuju SGW-U, S5/S8-U menuju PGW-U, SGi keluar. N3/N6/N4 dan PCF bukan jalur ini.</p>
       </section>
+      <CoreStatusPanel mode={mode} apiBase={apiBase} />
       <section className="panel" aria-label="Kelas status">
         <h2>Kelas status</h2>
         <EvidenceBadge state="saved" />

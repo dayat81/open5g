@@ -95,6 +95,8 @@ table.wf tbody tr:last-child td { border-bottom: none; }
 .prov.unsup { border-style: dashed; color: var(--text-muted); }
 .full { margin-bottom: var(--space-3); }
 .note { font-size: 10px; color: var(--text-muted); margin-top: var(--space-2); font-style: normal; }
+.nf-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: 6px; }
+.nf-list li { display: flex; justify-content: space-between; gap: var(--space-2); font-size: 12px; }
 .tbd { border: 1px dashed var(--border-default); border-radius: var(--radius-sm); color: var(--text-muted); background: var(--surface-subtle); padding: 1px 5px; font-size: 9px; display: inline-block; }
 .us-map { color: var(--text-secondary); font-size: 10px; }
 footer.wf-foot { margin-top: var(--space-4); font-size: 10px; color: var(--text-muted); border-top: 1px solid var(--border-subtle); padding-top: var(--space-3); }

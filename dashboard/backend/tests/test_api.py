@@ -117,6 +117,7 @@ def env():
         "assignment": assignment,
         "other_assignment": other_assignment,
         "login_response": login,
+        "student_password": student_password,
     }
 
 
@@ -376,3 +377,179 @@ def test_migration_file_is_the_one_applied():
     sql = Path("migrations/001_init.sql").read_text()
     assert "CREATE TABLE profiles" in sql
     assert "open5g_forbid_mutation" in sql
+
+
+def test_core_status_is_not_configured_until_endpoints_exist(env):
+    bare = TestClient(create_app(env["settings"]))
+    assert bare.get("/api/core/status").status_code == 401
+    status = env["student"].client.get("/api/core/status")
+    assert status.status_code == 200, status.text
+    body = status.json()
+    assert body["status"] == "not_configured"
+    assert body["gx_rar_enabled"] is False
+    assert body["gx_rar_effective"] is False
+    assert body["docker_socket"] == "not_used"
+    assert body["multiple_upf_supported"] is True
+    names = {item["name"]: item["status"] for item in body["targets"]}
+    assert names["smf"] == "not_configured"
+    assert names["upf-a"] == "not_configured"
+    assert names["upf-b"] == "not_configured"
+    assert names["mongo-subscriber"] == "not_configured"
+
+
+def test_core_status_reports_down_nfs_without_failing(env):
+    class PartialReader:
+        def collect(self):
+            return {
+                "configured": True,
+                "status": "partial",
+                "partial": True,
+                "data_origin": "prometheus",
+                "targets": [
+                    {"name": "smf", "status": "down", "error": "ConnectError", "http_status": None, "metric_names": []},
+                    {"name": "upf-a", "status": "reachable", "error": None, "http_status": 200, "metric_names": ["ues_active"]},
+                    {"name": "upf-b", "status": "down", "error": "TimeoutException", "http_status": None, "metric_names": []},
+                ],
+                "note": "One down NF does not drop the other targets.",
+            }
+
+    client = TestClient(create_app(env["settings"], metrics_reader=PartialReader()))
+    caller = _login(client, "student-a@example.test", env["student_password"])
+    status = caller.client.get("/api/core/status")
+    assert status.status_code == 200, status.text
+    body = status.json()
+    assert body["status"] == "partial"
+    by_name = {item["name"]: item["status"] for item in body["targets"]}
+    assert by_name["smf"] == "down"
+    assert by_name["upf-a"] == "reachable"
+    assert by_name["upf-b"] == "down"
+
+
+def test_provision_writes_mongo_and_keeps_credentials_and_extra_upf(env):
+    mongomock = __import__("mongomock")
+    mongo = mongomock.MongoClient()
+    planted = "PLANTED-KI-VALUE-not-a-real-key"
+    mongo["open5gs"]["subscribers"].insert_one(
+        {
+            "imsi": "001010000000001",
+            "security": {"k": planted, "opc": "PLANTED-OPC-VALUE-not-a-real-opc", "amf": "8000"},
+            "slice": [
+                {
+                    "sst": 1,
+                    "default_indicator": True,
+                    "session": [
+                        {"name": "internet", "type": 3, "pcc_rule": []},
+                        {"name": "upf-b", "type": 3, "pcc_rule": []},
+                    ],
+                }
+            ],
+        }
+    )
+    from open5g_dashboard.subscriber_port import MongoSubscriberPort
+
+    port = MongoSubscriberPort("mongodb://mongo.invalid/open5gs", "open5gs", "subscribers", 2000, client=mongo)
+    student = _login(TestClient(create_app(env["settings"], subscriber_port=port)), "student-a@example.test", env["student_password"])
+    hidden = env["other"].client.get(f"/api/assignments/{env['assignment']['id']}/subscriber")
+    assert hidden.status_code == 403
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": sample_content()})
+    assert created.status_code == 201, created.text
+    refused = student.post(f"/api/profiles/{created.json()['id']}/provision", {}, etag=created.json()["version_etag"])
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "not_validated"
+    validated = student.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=student.headers(created.json()["version_etag"]),
+    )
+    assert validated.status_code == 200, validated.text
+    written = student.post(
+        f"/api/profiles/{created.json()['id']}/provision",
+        {},
+        etag=validated.json()["version_etag"],
+    )
+    assert written.status_code == 200, written.text
+    body = written.json()
+    assert body["status"] == "written"
+    assert body["live_gx_rar"] is False
+    assert body["postgres_lifecycle_unchanged"] is True
+    assert body["session_effect"] == "not_pushed_to_active_session"
+    assert planted not in written.text
+    assert body["subscriber"]["credentials_present"] is True
+    assert body["subscriber"]["session_count"] == 2
+    stored = mongo["open5gs"]["subscribers"].find_one({"imsi": "001010000000001"})
+    assert stored["security"]["k"] == planted
+    assert [item["name"] for item in stored["slice"][0]["session"]] == ["internet", "upf-b"]
+    current = student.client.get(f"/api/profiles/{created.json()['id']}")
+    assert current.json()["lifecycle"] == "validated"
+    assert current.json()["applied_content"] is None
+    denied_admin = env["admin"].post(
+        f"/api/profiles/{created.json()['id']}/provision",
+        {},
+        etag=validated.json()["version_etag"],
+    )
+    assert denied_admin.status_code == 403
+    again = student.client.get(f"/api/assignments/{env['assignment']['id']}/subscriber")
+    assert again.status_code == 200
+    assert again.json()["found"] is True
+    assert planted not in again.text
+
+
+def test_down_subscriber_store_is_reported_and_does_not_leak_the_driver_error(env):
+    class Down:
+        def __getitem__(self, _name):
+            return self
+
+        def find_one(self, *_args, **_kwargs):
+            raise TimeoutError("mongodb://secret-user:secret-pass@hidden/open5gs")
+
+        def replace_one(self, *_args, **_kwargs):
+            raise TimeoutError("mongodb://secret-user:secret-pass@hidden/open5gs")
+
+    from open5g_dashboard.subscriber_port import MongoSubscriberPort
+
+    port = MongoSubscriberPort("mongodb://hidden/open5gs", "open5gs", "subscribers", 200, client=Down())
+    client = TestClient(create_app(env["settings"], subscriber_port=port))
+    student = _login(client, "student-a@example.test", env["student_password"])
+    read = student.client.get(f"/api/assignments/{env['assignment']['id']}/subscriber")
+    assert read.status_code == 200, read.text
+    assert read.json()["status"] == "down"
+    assert "secret-pass" not in read.text
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": sample_content()})
+    validated = student.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=student.headers(created.json()["version_etag"]),
+    )
+    failed = student.post(
+        f"/api/profiles/{validated.json()['id']}/provision",
+        {},
+        etag=validated.json()["version_etag"],
+    )
+    assert failed.status_code == 503
+    assert failed.json()["error"]["code"] == "subscriber_store_unavailable"
+    assert "secret-pass" not in failed.text
+
+
+def test_gx_rar_flag_still_rejects(env):
+    settings = Settings(DATABASE_URL, PEPPER, False, False, enable_gx_rar=True)
+    client = TestClient(create_app(settings))
+    student = _login(client, "student-a@example.test", env["student_password"])
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": sample_content()})
+    assert created.status_code == 201, created.text
+    validated = student.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=student.headers(created.json()["version_etag"]),
+    )
+    applied = student.post(
+        f"/api/profiles/{created.json()['id']}/apply",
+        {},
+        etag=validated.json()["version_etag"],
+        key="gx-flag-1",
+    )
+    assert applied.status_code == 409, applied.text
+    body = applied.json()
+    assert body["status"] == "rejected"
+    assert body["executed"] is False
+    assert body["path"] == "gx_rar_admin_draft"
+    assert body["status"] not in {"pushed", "active"}
+    status = student.client.get("/api/core/status")
+    assert status.json()["gx_rar_enabled"] is True
+    assert status.json()["gx_rar_effective"] is False

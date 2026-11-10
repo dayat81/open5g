@@ -140,6 +140,7 @@ export function ProfileEditor({ client = demoClient }: { client?: DashboardClien
             </button>
             <p className="apply-note">
               Simpan draft tidak membuat status active. Apply pada scaffold ini menolak operasi yang belum terverifikasi.
+              Tulis Mongo untuk APN/QCI/ARP/AMBR berlaku pada attach berikutnya. Gx RAR hidup tetap mati.
             </p>
           </div>
         </form>

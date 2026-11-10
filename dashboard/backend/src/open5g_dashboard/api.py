@@ -1,4 +1,4 @@
-"""HTTP scaffold. Stock apply calls the rejecting adapter only."""
+"""HTTP API. Immediate Gx apply stays rejected. Subscriber writes go through the store port."""
 
 from __future__ import annotations
 
@@ -32,10 +32,12 @@ from open5g_dashboard.domain import (
     parse_profile,
     reattach_notice_id,
     redact,
-    stock_immediate_apply,
     stock_reattach,
 )
+from open5g_dashboard.policy_port import build_policy_port
 from open5g_dashboard.settings import Settings
+from open5g_dashboard.subscriber_port import SubscriberUnavailable, build_subscriber_port, drop_secrets
+from open5g_dashboard.telemetry import build_metrics_reader, combine_status
 
 # Scaffold parameters, not a reviewed production KDF policy.
 HASHER = PasswordHasher(time_cost=1, memory_cost=8192, parallelism=1)
@@ -44,9 +46,18 @@ IMSI_RE = re.compile(r"^[0-9]{15}$")
 SCOPE_KEYS = {"owner_user_id", "group_id", "imsi", "owner", "group"}
 
 
-def create_app(settings: Settings) -> FastAPI:
+def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, policy_port=None) -> FastAPI:
     app = FastAPI(title="open5g dashboard scaffold", version="0.1.0")
     app.state.settings = settings
+    if subscriber_port is None:
+        subscriber_port = build_subscriber_port(settings)
+    if metrics_reader is None:
+        metrics_reader = build_metrics_reader(settings)
+    if policy_port is None:
+        policy_port = build_policy_port(settings)
+    app.state.subscriber_port = subscriber_port
+    app.state.metrics_reader = metrics_reader
+    app.state.policy_port = policy_port
 
     def connect_db():
         return connect(settings.database_url, row_factory=dict_row)
@@ -567,7 +578,7 @@ def create_app(settings: Settings) -> FastAPI:
                 f"apply.{profile_id}.{profile['version_etag']}.{body.get('client_note', '')}".encode()
             ).hexdigest()
             operations = diff_operations(profile["applied_content"], profile["content"])
-            result = stock_immediate_apply(operations, profile["desired_version"])
+            result = policy_port.apply(operations, profile["desired_version"])
             return open_job(conn, actor, profile, key, request_hash, result)
 
     @app.post("/api/profiles/{profile_id}/reattach-notice")
@@ -615,7 +626,7 @@ def create_app(settings: Settings) -> FastAPI:
             if error:
                 return error
             actor = actor_from(session)
-            profile, _assignment, denied = load_profile_for(conn, actor, profile_id, "edit")
+            profile, assignment_row, denied = load_profile_for(conn, actor, profile_id, "edit")
             if denied:
                 return denied
             if request.headers.get("if-match") != profile["version_etag"]:
@@ -632,19 +643,33 @@ def create_app(settings: Settings) -> FastAPI:
             updated = db.update_profile_content(conn, profile_id, profile["version_etag"], version, etag, stored)
             db.insert_version(conn, updated, actor.id, "rollback")
             operations = diff_operations(updated["applied_content"], updated["content"])
-            result = stock_immediate_apply(operations, updated["desired_version"])
+            result = policy_port.apply(operations, updated["desired_version"])
             request_hash = hashlib.sha256(f"rollback.{profile_id}.{body.get('to_version')}.{etag}".encode()).hexdigest()
             job_response = open_job(conn, actor, updated, key, request_hash, result)
             payload = job_response.body
             import json
             parsed = json.loads(payload)
+            subscriber_document: dict[str, Any] = {"status": "not_configured", "live_gx_rar": False}
+            if subscriber_port.configured:
+                try:
+                    written = subscriber_port.provision(assignment_row["imsi"], stored)
+                    subscriber_document = {
+                        "status": "written",
+                        "live_gx_rar": False,
+                        "session_effect": written.get("session_effect"),
+                    }
+                except ProfileError as exc:
+                    subscriber_document = {"status": "rejected", "live_gx_rar": False, "error": {"code": exc.code, "message": exc.message}}
+                except SubscriberUnavailable as exc:
+                    subscriber_document = {"status": "down", "live_gx_rar": False, "error": {"code": exc.code, "message": exc.message}}
             return JSONResponse(
                 status_code=job_response.status_code,
                 content={
                     "profile": public_profile(updated),
                     "job": parsed,
                     "traffic_undone": False,
-                    "note": "Rollback stores a new desired version. It does not undo traffic already sent.",
+                    "subscriber_document": subscriber_document,
+                    "note": "Rollback stores a new desired version. It does not undo traffic already sent or push a live Gx RAR.",
                 },
             )
 
@@ -684,6 +709,135 @@ def create_app(settings: Settings) -> FastAPI:
                 return fail(403, "core_control_forbidden", "Students and instructors have no core controls")
             audit(conn, actor, None, None, "core_restart", "core", "denied", "core_control_not_implemented", {})
             return fail(501, "core_control_not_implemented", "This scaffold does not restart a core")
+
+    def assignment_imsi(conn, assignment_id: str):
+        row = db.assignment_by_id(conn, assignment_id)
+        if row is None:
+            return None, fail(404, "assignment_not_found", "Assignment was not found")
+        return row, None
+
+    @app.get("/api/core/status")
+    def core_status(request: Request):
+        with connect_db() as conn:
+            session, error = require_user(conn, request, mutating=False)
+            if error:
+                return error
+        try:
+            scraped = metrics_reader.collect()
+        except Exception:
+            scraped = {
+                "configured": True,
+                "status": "down",
+                "partial": False,
+                "data_origin": "none",
+                "targets": [],
+                "note": "NF status collection failed closed for this request.",
+            }
+        try:
+            probe = subscriber_port.probe()
+        except Exception:
+            probe = {"name": "mongo-subscriber", "status": "down", "error": "MongoDB request failed", "http_status": None}
+        body = combine_status(scraped, probe)
+        body["gx_rar_enabled"] = settings.enable_gx_rar
+        body["gx_rar_effective"] = False
+        body["gx_rar_reason"] = (
+            "Live Gx RAR is off. The PCRF admin-RAR patch is draft and the stock image cannot push an active session."
+        )
+        body["subscriber_store"] = subscriber_port.describe()
+        body["docker_socket"] = "not_used"
+        body["multiple_upf_supported"] = True
+        return body
+
+    @app.get("/api/assignments/{assignment_id}/subscriber")
+    def read_subscriber(assignment_id: str, request: Request):
+        with connect_db() as conn:
+            session, error = require_user(conn, request, mutating=False)
+            if error:
+                return error
+            row, missing = assignment_imsi(conn, assignment_id)
+            if missing:
+                return missing
+            denied = decide(conn, actor_from(session), row, "read", f"subscriber:{assignment_id}")
+            if denied:
+                return denied
+            imsi = row["imsi"]
+            try:
+                return drop_secrets(subscriber_port.read(imsi))
+            except SubscriberUnavailable as exc:
+                if exc.code == "subscriber_store_not_configured":
+                    return drop_secrets(subscriber_port.read(imsi))
+                return {
+                    "status": "down",
+                    "found": False,
+                    "configured": True,
+                    "imsi": imsi,
+                    "credentials_present": False,
+                    "attach_ready": False,
+                    "security_returned": False,
+                    "sessions": [],
+                    "session_count": 0,
+                    "live_gx_rar": False,
+                    "error": {"code": exc.code, "message": exc.message},
+                }
+
+    @app.post("/api/profiles/{profile_id}/provision")
+    def provision_profile(profile_id: str, request: Request):
+        with connect_db() as conn:
+            session, error = require_user(conn, request, mutating=True)
+            if error:
+                return error
+            actor = actor_from(session)
+            profile, assignment_row, denied = load_profile_for(conn, actor, profile_id, "apply")
+            if denied:
+                return denied
+            if request.headers.get("if-match") != profile["version_etag"]:
+                return fail(409, "version_conflict", "version_etag does not match the stored profile")
+            if profile["lifecycle"] != "validated":
+                return fail(409, "not_validated", "Validate the draft before provisioning the subscriber document")
+            imsi = assignment_row["imsi"]
+            try:
+                result = subscriber_port.provision(imsi, profile["content"])
+            except ProfileError as exc:
+                audit(
+                    conn,
+                    actor,
+                    str(profile["owner_user_id"]),
+                    str(profile["group_id"]),
+                    "subscriber_provision",
+                    f"profile:{profile_id}",
+                    "denied",
+                    exc.code,
+                    {},
+                )
+                return fail(422, exc.code, exc.message, details=exc.details)
+            except SubscriberUnavailable as exc:
+                audit(
+                    conn,
+                    actor,
+                    str(profile["owner_user_id"]),
+                    str(profile["group_id"]),
+                    "subscriber_provision",
+                    f"profile:{profile_id}",
+                    "denied",
+                    exc.code,
+                    {},
+                )
+                status = 503 if exc.code == "subscriber_store_not_configured" else 503
+                return fail(status, exc.code, exc.message)
+            result["postgres_lifecycle_unchanged"] = True
+            result["live_gx_rar"] = False
+            audit(
+                conn,
+                actor,
+                str(profile["owner_user_id"]),
+                str(profile["group_id"]),
+                "subscriber_provision",
+                f"profile:{profile_id}",
+                "allowed",
+                "subscriber_document_only",
+                {"created": result.get("created"), "notes": result.get("notes", [])},
+            )
+            return drop_secrets(result)
 
     @app.get("/api/metrics/drilldown")
     def drilldown(request: Request):

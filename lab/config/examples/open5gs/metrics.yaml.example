@@ -1,0 +1,16 @@
+# Example only. Not rendered by Ansible and not mounted into the lab containers.
+# Enabling this is a separate lab change and needs owner approval.
+# Upstream Open5GS metrics tutorial (read 2026-11-10) documents export for AMF, MME, and SMF.
+# This EPC lab has no AMF. HSS, PCRF, SGW-C/U, and UPF are not claimed here.
+# Bind the listener on an address that the dashboard can reach. Do not publish it on the host
+# until that exposure is reviewed. 127.0.0.1 below is a placeholder, not a lab address.
+mme:
+  metrics:
+    server:
+      - address: 127.0.0.1
+        port: 9090
+smf:
+  metrics:
+    server:
+      - address: 127.0.0.1
+        port: 9091

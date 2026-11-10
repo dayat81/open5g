@@ -1,0 +1,42 @@
+# OPTIONAL. The lab project does not load this file.
+# Guest tool: standalone docker-compose v2.29.7. Do not assume the `docker compose` plugin.
+# Lab networks have no egress. The image names below must be loaded from a local mirror.
+# This service is behind the compose profile "dashboard", so a plain up of this file starts nothing.
+# MongoDB in the live stack is on the external network lab5g-dev_mgmt and is not published on the host.
+# Leave OPEN5G_MONGO_URI empty until that attachment is approved. Do not mount a Docker socket.
+name: lab5g-dev-dashboard
+services:
+  dashboard-postgres:
+    profiles: ["dashboard"]
+    image: REPLACE_WITH_LOCAL_MIRROR/postgres:16
+    restart: "no"
+    environment:
+      POSTGRES_USER: open5g
+      POSTGRES_PASSWORD: REPLACE_WITH_LOCAL_PASSWORD
+      POSTGRES_DB: open5g
+    networks: [dashboard]
+  dashboard-api:
+    profiles: ["dashboard"]
+    image: REPLACE_WITH_LOCAL_MIRROR/open5g-dashboard-api:local
+    restart: "no"
+    depends_on: [dashboard-postgres]
+    environment:
+      OPEN5G_DATABASE_URL: postgresql://open5g:REPLACE_WITH_LOCAL_PASSWORD@dashboard-postgres:5432/open5g
+      OPEN5G_SESSION_PEPPER: REPLACE_WITH_32_CHARACTER_LOCAL_SECRET
+      OPEN5G_COOKIE_SECURE: "0"
+      OPEN5G_ENABLE_DEMO_ROUTES: "0"
+      OPEN5G_MONGO_URI: ""
+      OPEN5G_MONGO_DATABASE: open5gs
+      OPEN5G_MONGO_COLLECTION: subscribers
+      OPEN5G_MONGO_TIMEOUT_MS: "2000"
+      OPEN5G_ENABLE_GX_RAR: "0"
+      OPEN5G_METRICS_ENDPOINTS: ""
+      OPEN5G_HEALTH_ENDPOINTS: ""
+      OPEN5G_METRICS_TIMEOUT_S: "2"
+    networks: [dashboard, mgmt]
+networks:
+  dashboard:
+    internal: true
+  mgmt:
+    external: true
+    name: lab5g-dev_mgmt

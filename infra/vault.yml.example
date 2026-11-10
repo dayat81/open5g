@@ -2,3 +2,6 @@
 # Encrypt the real vault.yml with: ansible-vault encrypt vault.yml
 vault_ue_ki: REPLACE_WITH_32_HEX_CHARACTERS
 vault_ue_opc: REPLACE_WITH_32_HEX_CHARACTERS
+# Optional dashboard subscriber store. Empty disables writes.
+# A URI may carry credentials and tls=true. Placeholder host only.
+vault_open5gs_mongo_uri: mongodb://REPLACE_MONGO_USER:REPLACE_MONGO_PASSWORD@REPLACE_MONGO_HOST/open5gs?authSource=admin&tls=false

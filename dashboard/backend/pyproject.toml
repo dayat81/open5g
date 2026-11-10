@@ -10,6 +10,8 @@ dependencies = [
   "psycopg[binary]",
   "argon2-cffi",
   "httpx",
+  "pymongo",
+  "mongomock",
 ]
 
 [tool.pytest.ini_options]
