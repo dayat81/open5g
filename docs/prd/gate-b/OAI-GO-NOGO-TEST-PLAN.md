@@ -201,7 +201,7 @@ Pada tag sumber Open5GS `v2.8.0`, `src/mme/s1ap-handler.c` memuat `s1ap_handle_e
 | H2 | SGW-C mengirim PFCP Session Modification ke SGW-U, dan SGW-U mengganti F-TEID downlink ke `10.99.2.31` dengan TEID baru | T-B6 dan T-B7 |
 | H3 | HSS dan MME menerima UE yang memasang EN-DC (bit DCNR di UE Network Capability, dan restriction NR-as-secondary tidak menolak) | T-B4. Nilai historis `access_restriction_data=32` pada uji integrated **bukan** bukti DCNR untuk SgNB terpisah. Jangan menyalinnya sebagai konfigurasi baru tanpa membaca field subscriber live |
 
-Subscriber uji, Ki, OPc, dan IMSI tidak ditulis ke git.
+Subscriber uji, IMSI, GUTI, IMEI, SUPI, Ki, dan OPc tidak ditulis ke git.
 
 ---
 
@@ -366,7 +366,7 @@ Tidak ada skenario positif baru. Urutan:
 | LANJUT | Bukti E1–E7 lengkap pada satu sesi, T-B10..T-B12 tercatat, T-B0 sesudah rollback lulus, `lab5g-vm` tidak tersentuh. Architect boleh merekomendasikan GO. |
 | STOP | Bukti positif masih bolong, atau rollback tidak mengembalikan attach + ping. Architect merekomendasikan NO-GO. Gate B tetap terbuka. Integrated srsENB tetap achieved-but-not-accepted. |
 
-Rekomendasi GO hanya bila E1–E7 lulus pada rfsim dalam satu sesi **dan** T-B0 sesudah rollback lulus. Lulus sebagian tetap rekomendasi NO-GO. T-B10..T-B12 yang tercatat sebagai temuan tidak menahan GO bila larian emas utuh; yang menahan GO adalah kegagalan larian emas atau kegagalan T-B12 (LTE tidak hidup saat en-gNB mati).
+Rekomendasi GO hanya bila E1–E7 lulus pada rfsim dalam satu sesi **dan** T-B0 sesudah rollback lulus. Lulus sebagian tetap rekomendasi NO-GO. T-B10..T-B12 yang tercatat sebagai temuan tidak menahan GO bila larian emas utuh; yang menahan GO adalah kegagalan larian emas atau kegagalan T-B12 (attach dan ping lewat eNB OAI, S1-U di eNB, saat en-gNB mati atau SCG dilepas). Rollback srsRAN tidak menggantikan T-B12.
 
 ## 4. Kebutuhan hardware, RF, dan SDR
 
@@ -433,7 +433,7 @@ Semua baris di bawah **setelah** PR ini di-approve Netdrive. Sebelum itu: tidak 
 - [ ] Jaringan docker internal `x2` = `10.99.12.0/24` tanpa port publish. Alamat eNB `10.99.12.20`, en-gNB `10.99.12.21`.
 - [ ] Alamat S1 rencana §2.3 dipasang hanya pada container OAI. `10.99.1.20` dan `10.99.2.20` tidak diubah.
 - [ ] MME live: TAI/PLMN dan S1 `10.99.1.10` dibaca sebelum eNB OAI start. eNB OAI memakai TAI yang sama. Tidak ada whitelist yang menolak eNB baru; bila ada, catat dan berhenti untuk keputusan, jangan mengedit diam-diam di luar jendela.
-- [ ] Subscriber uji di HSS untuk EN-DC, disimpan di lab. Tidak ada IMSI, Ki, atau OPc di git, di ringkasan, atau di tiket.
+- [ ] Subscriber uji di HSS untuk EN-DC, disimpan di lab. Tidak ada IMSI, GUTI, IMEI, SUPI, Ki, atau OPc di git, di ringkasan, atau di tiket. Redaksi mengikuti SOP §6.2.
 - [ ] Akses pcap: netshoot atau tcpdump pada bridge `s1mme`, `s1u`, `x2` (X2-C dan X2-U), `s11`, `pfcp`, dan `sgi` (plus `gx` bila ada transaksi). Nama file `hari-N-{s1mme|x2c|x2u|s11|pfcp|s1u|sgi}.pcap` (§6). File pcap di disk lab, bukan di git. Ringkasan yang di-commit mengikuti §6 dan SOP redaksi.
 - [ ] Rollback ke srsRAN baseline **tanpa** mengganggu Gate A:
   1. Hentikan dan hapus container OAI saja.
@@ -511,7 +511,9 @@ Berlaku untuk ringkasan yang di-commit, cuplikan tshark, CSV korelasi, tiket, da
 | Ki, OPc, kunci | tidak ditulis |
 | Alamat PDN UE pada narasi bukti lama | `<UE-PDN>` |
 
-Sebelum commit, pencarian teks pada ringkasan harus kosong untuk pola IMSI 14–15 digit, IMEI 15 digit, dan label `GUTI` atau `SUPI` yang diikuti nilai mentah. Filter tshark untuk cuplikan yang di-commit tidak menampilkan field itu (`-T fields` hanya frame time, prosedur, ID X2AP/S1AP yang bukan GUTI, E-RAB ID, TEID, dan alamat transport RAN). Alamat manajemen `172.22.20.21` **tetap ditulis**. Konvensi dokumen yang sudah di repo (`docs/evidence/gate-a-lab5g-dev/SUMMARY.md`, `docs/prd/PRD-v0.6.md`, `docs/plan-poc-slicing-core.md`) memakai alamat itu sebagai konteks topologi lab, dan scan provenance v0.6 mengizinkannya. Draf QA PR #6 memakai placeholder untuk IP; rencana ini mengikuti dokumen yang sudah di pohon `master`, bukan draf yang belum di-merge.
+Sebelum commit, pencarian teks pada ringkasan harus kosong untuk pola IMSI 14–15 digit, IMEI 15 digit, dan label `GUTI` atau `SUPI` yang diikuti nilai mentah. Filter tshark untuk cuplikan yang di-commit tidak menampilkan field itu (`-T fields` hanya frame time, prosedur, ID X2AP/S1AP yang bukan GUTI, E-RAB ID, TEID, dan alamat transport RAN).
+
+Identitas UE (IMSI, GUTI, IMEI, SUPI) dan alamat PDN UE memakai placeholder (`<IMSI-UE-1>`, `<GUTI-UE-1>`, `<IMEI-UE-1>`, `<SUPI-UE-1>`, `<UE-PDN>`). Alamat manajemen `172.22.20.21` **tetap ditulis**. Keputusan Architect pada re-review d544e13: ikuti konvensi yang sudah ada di `master`, yaitu `docs/prd/PRD-v0.6.md`, `docs/evidence/gate-a-lab5g-dev/SUMMARY.md`, dan IaC `infra/group_vars/all/lab.yml` (`lab_vm_ip`). Scan provenance v0.6 memperlakukan alamat manajemen lab sebagai konteks topologi, bukan secret. Draf QA PR #6 memakai placeholder untuk IP; rencana ini tidak mengganti alamat manajemen yang sudah dipakai dokumen `master`.
 
 ### 6.3 Kasus
 
@@ -544,10 +546,13 @@ Tiap kasus memakai lima bagian. “Lulus” di sini adalah hasil kasus, bukan GO
 #### T-B3 — RRC reconfiguration NR
 
 - **Precondition:** `hari-1-keluaran.md` lengkap. T-B2 lulus. Satu UE sesuai topologi tertulis.
-- **Langkah:** Attach LTE, tunggu RRC Connection Reconfiguration yang memuat sel NR.
-- **Lulus:** reconfiguration NR terlihat di log UE dan di pcap RRC. TEID_eNB ke `10.99.2.30` sudah tercatat untuk dipakai Hari 5.
-- **Artefak:** `hari-4-s1mme.pcap`, cuplikan RRC tanpa IMSI/GUTI/IMEI/SUPI.
-- **Gagal:** tidak ada reconfiguration NR setelah satu ulang dengan bandwidth §4. Hari 4 = STOP. Kasus ini tidak dimulai bila precondition tulisan Hari 1 belum ada.
+- **Langkah:** Attach LTE. Pada DL RRC, dekode `RRCConnectionReconfiguration`. Pada UL RRC, catat `RRCConnectionReconfigurationComplete` dari UE.
+- **Lulus:** di dalam `RRCConnectionReconfiguration` LTE terlihat sekaligus:
+  - `nr-Config-r15` / `nr-SecondaryCellGroupConfig-r15`, dan isinya memuat `CellGroupConfig` NR (`scg-Config`);
+  - `sk-Counter-r15`.
+  `RRCConnectionReconfigurationComplete` dari UE tercatat pada pcap atau log yang sama. TEID_eNB ke `10.99.2.30` sudah tercatat untuk Hari 5. Nama field Wireshark boleh berbeda antar versi dissector; yang mengikat adalah nama IE pada hasil decode, bukan string filter.
+- **Artefak:** `hari-4-s1mme.pcap` atau pcap RRC dari proses UE/eNB, cuplikan decode ketiga IE di atas plus Complete, tanpa IMSI, GUTI, IMEI, atau SUPI.
+- **Gagal:** salah satu IE tidak ada, Complete tidak tercatat, atau tidak ada reconfiguration NR setelah satu ulang dengan bandwidth §4. Hari 4 = STOP. Kasus ini tidak dimulai bila tulisan Hari 1 belum ada.
 
 #### T-B4 — SgNB Addition
 
@@ -599,11 +604,12 @@ Tiap kasus memakai lima bagian. “Lulus” di sini adalah hasil kasus, bukan GO
 
 #### T-B10 — SgNB Addition Reject
 
-- **Precondition:** T-B2 pernah lulus. Larian ini **bukan** larian emas E2E-02. `hari-1-keluaran.md` sudah ada.
-- **Langkah:** setelah X2 Setup, hentikan en-gNB, lalu picu addition (attach ulang). Jangan mengubah image atau PLMN di luar langkah ini.
-- **Lulus:** `hari-7-x2c.pcap` memuat SgNB Addition Reject, dan Cause (nama dan nilai) tertulis di catatan hari. Bila stack tidak mengirim Reject dan hanya timeout, timeout itu ditulis sebagai hasil observasi. Kasus tetap “tercatat”. Tidak ada Cause dan tidak ada timeout yang tertulis = kasus belum selesai.
-- **Artefak:** pcap X2-C larian negatif, baris Cause atau timeout.
-- **Gagal:** larian negatif tidak dijalankan, atau hasilnya tidak ditulis. Kegagalan T-B10 tidak membatalkan T-B4 pada larian emas yang sudah utuh.
+- **Precondition:** X2 Setup sukses pada larian ini, en-gNB tetap running. Bukan larian emas E2E-02. `hari-1-keluaran.md` sudah ada.
+- **Langkah (jalur utama):** picu Reject dari en-gNB yang tetap hidup, lewat konfigurasi atau penolakan admisi. Kandidat yang disebut QA: batas UE/admission, band atau ARFCN yang tidak didukung UE, atau kapabilitas yang tidak cocok. Pada commit `cfee4c20`, `openair2/X2AP/x2ap_eNB_generate_messages.h` memuat SgNB Addition Request, ACK, Reconfiguration Complete, dan Release, dan **tidak** memuat generator SgNB Addition Request Reject. Kenop konfigurasi yang memaksa Reject **belum terverifikasi = UNKNOWN**. Hari 1 menuliskan hasil baca pohon yang sama. Bila kenop ketemu, pakai kenop itu. Bila tetap UNKNOWN, jangan mengarang batas UE atau band.
+- **Lulus:** hanya jalur utama. `hari-7-x2c.pcap` memuat SgNB Addition Reject dengan Cause (nama dan nilai). `docker ps` menunjukkan en-gNB masih running dan X2 Setup pada larian yang sama sudah sukses. UE tetap LTE-only: tidak ada SCG, dan S1-U downlink tetap ke eNB `10.99.2.30`.
+- **Jalur cadangan:** hanya bila pemicu Reject masih UNKNOWN atau larian utama tidak menghasilkan Reject. Hentikan en-gNB setelah X2 Setup, lalu catat timeout addition. Ini bukti jalur **tanpa respons**, bukan Reject, dan **bukan** lulus T-B10.
+- **Artefak:** pcap X2-C, `docker ps`, Cause bila ada, atau catatan timeout jalur cadangan.
+- **Gagal:** tidak ada larian, atau hasilnya tidak ditulis. Tidak lulus karena pemicu UNKNOWN tidak membatalkan T-B4 pada larian emas. Yang menahan rekomendasi GO tetap kegagalan larian emas atau kegagalan T-B12.
 
 #### T-B11 — SgNB Release atau kegagalan SCG
 
@@ -613,13 +619,14 @@ Tiap kasus memakai lima bagian. “Lulus” di sini adalah hasil kasus, bukan GO
 - **Artefak:** `hari-7-s1mme.pcap`, `hari-7-s1u.pcap`, `hari-7-x2c.pcap`, kalimat temuan bila tunnel tidak kembali.
 - **Gagal:** tidak ada bukti keadaan UE sesudah release. Kasus belum selesai, bukan NO-GO otomatis atas E1–E7.
 
-#### T-B12 — fallback LTE saat en-gNB mati
+#### T-B12 — fallback Option 3x pada stack OAI
 
-- **Precondition:** en-gNB stopped. eNB OAI masih jalan, atau jalur Hari 0 (srsRAN LTE-only) sudah dikembalikan. Keluaran Hari 1 ada bila yang diuji adalah eNB OAI tanpa en-gNB. Untuk rollback srsRAN, cukup T-B0.
-- **Langkah:** dengan en-gNB tidak running, attach LTE dan `ping -c 5` ke `10.99.9.20`.
-- **Lulus:** attach sukses dan ping 5/5, 0% loss. `docker ps` menunjukkan en-gNB tidak running.
-- **Artefak:** keluaran ping, `docker ps`, `hari-7-s1mme.pcap` atau pcap rollback.
-- **Gagal:** attach atau ping gagal ketika en-gNB mati. Rekomendasi GO tidak diberikan.
+- **Precondition:** stack OAI. eNB OAI (`lte-softmodem`) tetap running. Bukan srsRAN. Keluaran Hari 1 ada.
+- **Langkah:** matikan en-gNB, atau lepas SCG, lalu attach LTE dan `ping -c 5` ke `10.99.9.20` lewat eNB OAI. S1-U downlink harus di eNB (`10.99.2.30`), bukan di en-gNB.
+- **Lulus:** attach sukses, ping 5/5 dengan 0% loss, `docker ps` menunjukkan eNB OAI running, dan GTP-U downlink pada `hari-7-s1u.pcap` menuju `10.99.2.30`.
+- **Artefak:** keluaran ping, `docker ps`, `hari-7-s1mme.pcap`, `hari-7-s1u.pcap`.
+- **Gagal:** attach atau ping gagal, atau S1-U tidak di eNB OAI. Rekomendasi GO tidak diberikan.
+- **Bukan kasus ini:** rollback ke srsRAN. Itu prosedur §5 dan bukti T-B0 (baseline attach+ping), diulang terpisah pada Hari 7 langkah 3.
 
 ### 6.4 Template SUMMARY dan tanda tangan
 
@@ -712,7 +719,7 @@ Pertanyaan yang masih terbuka:
 
 1. Apakah guest di-resize ke 16 vCPU dan 32 GiB sebelum Hari 2, atau spike jalan di 8 vCPU / 15 GiB dengan mitigasi §4?
 2. Apakah snapshot qcow2 dibuat sebelum Hari 0? Inventori menyatakan tidak ada snapshot.
-3. Hari 0 mengembalikan baseline Gate A (SMF stock, tanpa override PoC yang rusak, RAN LTE-only). Apakah file PoC slicing tetap menganggur di disk selama seluruh spike? Rencana ini mengasumikan ya.
+3. Hari 0 mengembalikan baseline T-B0 (subset attach+ping; SMF stock, tanpa override PoC yang rusak, RAN LTE-only). Apakah file PoC slicing tetap menganggur di disk selama seluruh spike? Rencana ini mengasumikan ya. T1/T2 Gate A tidak ikut tertutup.
 4. Apakah `10.99.13.0/24` diterima untuk rfsim, atau Lab Ops menunjuk subnet kosong lain?
 5. Siapa yang menyediakan mirror image, mengingat egress guest belum terbukti (port 11080 belum diverifikasi)?
 6. Jendela jam mana yang tersisa sesudah integrasi dashboard?
@@ -733,3 +740,4 @@ Pertanyaan yang masih terbuka:
 | 8 vCPU / 15 GiB cukup untuk tiga proses OAI plus EPC | Belum ada pengukuran OAI di guest ini |
 | Proxy host port 11080 bisa menarik image | Inventori: belum diverifikasi |
 | Band, SDR, dan UE COTS untuk OTA | Tidak ada perangkatnya. Di luar go/no-go |
+| Cara memicu SgNB Addition Reject pada commit `cfee4c20` sementara en-gNB tetap hidup | Generator X2AP pada tag itu memuat ACK dan Release, bukan Reject. Kenop admission, band/ARFCN, atau capability belum terverifikasi |
