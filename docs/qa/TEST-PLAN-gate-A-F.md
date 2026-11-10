@@ -4,7 +4,7 @@ Dokumen ini merangkum draf rencana uji Gate A–F untuk repositori [dayat81/open
 
 **Status:** draf QA, read-only terhadap kode produk. Kriteria penerimaan tidak dikarang: hanya yang tercatat di paket PRD v0.6 (termasuk ROADMAP, DECISIONS, RISKS) atau tes T1–T10 yang merujuk `docs/plan-poc-slicing-core.md` sebagai sumber ROADMAP. Pemeriksaan scaffold yang bukan exit criteria ditandai eksplisit. Hasil lab Gate A dan Gate C–F untuk draf ini **belum dijalankan**. Untuk Gate B, T-B0..T-B2 dikumpulkan sebagai bukti parsial (evidence Lab Ops di [PR #8](https://github.com/dayat81/open5g/pull/8)); T-B3..T-B12 tidak dijalankan di fase ini (lihat catatan Gate B).
 
-**Cakupan fase 1.** Gerbang rilis fase ini: dashboard hidup, `/api/core/status`, dan provision dengan readback pada IMSI uji (`` `<IMSI-UE-1>` ``). Temuan yang tidak menghentikan dashboard atau merusak EPC adalah fase 2 dan tidak memblokir (non-blocking).
+**Cakupan fase 1.** Gerbang rilis fase ini: dashboard hidup, `/api/core/status`, dan provision dengan readback pada IMSI uji (`` `<IMSI-UE-1>` ``). Smoke profil PCRF lewat web (W0–W8): [SMOKE-web-pcrf-profile.md](SMOKE-web-pcrf-profile.md). Temuan yang tidak menghentikan dashboard atau merusak EPC adalah fase 2 dan tidak memblokir (non-blocking).
 
 Dokumen ini tidak memuat alamat IP privat/internal, hostname internal sensitif, token, kata sandi, atau identitas pelanggan (IMSI/MSISDN). Nilai lab ditulis sebagai placeholder, misalnya `` `<IMSI-UE-1>` `` dan `` `<IP-SGi>` ``.
 
