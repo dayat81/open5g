@@ -47,6 +47,9 @@ eBPF, if it is later built, would be a proposed detection point. It would not be
 | [`ebpf/`](ebpf/README.md) | Proposed detection. No program is checked in. |
 | [`dashboard/`](dashboard/README.md) | Multi-user dashboard scaffold. Policy rules and schema only, so far. |
 | [`docs/prd/`](docs/prd/PRD-v0.6.md) | Canonical Product Manager pack v0.6 (PRD, roadmap, decisions, risks). |
+| [`docs/pm/DELIVERY-TIMELINE.md`](docs/pm/DELIVERY-TIMELINE.md) | Delivery timeline. Dates are planning targets, not commitments. |
+| [`docs/pm/TEAM.md`](docs/pm/TEAM.md) | Team roles and working rules. |
+| [`docs/lab/LAB5G-DEV-INVENTORY-20261110.md`](docs/lab/LAB5G-DEV-INVENTORY-20261110.md) | Sanitized lab5g-dev inventory, 10 Nov 2026. |
 | [`docs/ux/`](docs/ux/README.md) | Sanitized UX pack: hi-fi, localStorage prototype, lo-fi. The prototype is not the app. |
 | [`docs/evidence/`](docs/evidence/README.md) | Gate evidence only when a summary is actually in the tree. |
 | [`docs/DELIVERABLES.md`](docs/DELIVERABLES.md) | Included and pending deliverables, Gates A–F. |
