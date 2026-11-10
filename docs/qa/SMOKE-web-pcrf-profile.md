@@ -4,7 +4,7 @@ Dokumen ini adalah prosedur smoke untuk mengubah profil PCRF dari dashboard web,
 
 **Keputusan:** Netdrive, 10 Nov 2026, 17:21 WIB — profil PCRF diuji lewat web.
 
-**Status:** prosedur QA. Uji ini **belum dijalankan**. Dev sedang membangun form login dan editor profil. Lab Ops sedang menyiapkan IMSI UE srsRAN dan iperf3. Dokumen ini tidak mengubah kode produk dan tidak menyatakan GO.
+**Status:** prosedur QA. Prasyarat W0, termasuk baseline iperf3, sudah dicatat Lab Ops (10 Nov 2026, 17:38 WIB); lihat W0. W1–W8 **belum dijalankan**. Dev sedang membangun form login dan editor profil. Dokumen ini tidak mengubah kode produk dan tidak menyatakan GO.
 
 **Identitas yang boleh tertulis di dokumen dan di bukti:** placeholder saja.
 
@@ -56,7 +56,7 @@ Urutan jalannya: W0, lalu W1–W4 pada IMSI yang sama, lalu W5–W6, lalu W7, la
 1. Catat SHA penuh PR Dev (keluaran `git rev-parse HEAD` pada commit yang di-deploy) dan digest image yang benar-benar berjalan. Keduanya harus merujuk artefak yang sama.
 2. Pastikan akun student uji `` `<akun-student-uji>` `` ada dan masuk grup yang memiliki `` `<IMSI-UE-SRS>` ``. Kata sandi tetap di luar repo dan di luar bukti.
 3. Pastikan Lab Ops sudah mengisi data keamanan (Ki/OPc) untuk `` `<IMSI-UE-SRS>` `` **di luar dashboard**, dan `attach_ready=true`. Dashboard tidak dipakai untuk menulis Ki/OPc.
-4. Ambil cadangan Mongo **sebelum** uji. Hitung hash sub-dokumen keamanan subscriber itu. Simpan hanya algoritma dan digest.
+4. Ambil cadangan Mongo **sebelum** uji. Hitung hash sub-dokumen keamanan subscriber itu hanya atas bidang `k`, `opc`, dan `amf`; kecualikan `sqn`. Simpan hanya algoritma dan digest. `sqn` dikecualikan karena nilainya naik pada setiap autentikasi, sehingga digest ikut berubah walaupun `k`, `opc`, dan `amf` tidak ditulis ulang (temuan Lab Ops, 10 Nov 2026, 17:38 WIB).
 5. Ukur baseline iperf3 **sebelum** perubahan profil, ke server di `` `<IP-SGi>` ``: arah DL (`iperf3 -R`) dan UL, masing-masing 3 kali 30 detik. Catat ketiga angka per arah.
 6. Pilih nilai APN-AMBR untuk W2 yang jauh di bawah kapasitas radio dan di bawah baseline W0, misalnya DL 5 Mbps dan UL 2 Mbps. Jika baseline sudah di bawah contoh itu, catat angkanya dan sepakati nilai yang lebih rendah dengan Lab Ops sebelum W2, supaya W6 masih bisa dibandingkan.
 
@@ -64,15 +64,26 @@ Urutan jalannya: W0, lalu W1–W4 pada IMSI yang sama, lalu W5–W6, lalu W7, la
 
 - SHA dan digest image tercatat dan saling cocok.
 - Akun uji bisa dipakai. IMSI uji `attach_ready=true` tanpa menulis ulang data keamanan dari web.
-- Cadangan Mongo ada di lokasi lab di luar repo. Digest sub-dokumen keamanan tercatat.
+- Cadangan Mongo ada di lokasi lab di luar repo. Digest sub-dokumen keamanan tercatat, dihitung hanya atas `k`, `opc`, dan `amf`.
 - Enam angka baseline (3 DL, 3 UL) tercatat, masing-masing 30 detik.
 
 **Bukti yang wajib**
 
 - SHA penuh dan digest image.
 - Konfirmasi akun `` `<akun-student-uji>` `` dan `attach_ready=true` untuk `` `<IMSI-UE-SRS>` ``, tanpa Ki/OPc dan tanpa kata sandi.
-- Waktu cadangan (WIB) dan hash sub-dokumen keamanan (algoritma + digest).
+- Waktu cadangan (WIB) dan hash sub-dokumen keamanan (algoritma + digest atas `k`, `opc`, dan `amf` saja).
 - Tabel iperf3 baseline, berlabel RAN/UE NYATA, dengan placeholder `` `<IP-SGi>` `` saja.
+
+**Catatan hasil (Lab Ops, 10 Nov 2026, 17:38 WIB).** Bukti W0 ada di komentar Lab Ops: https://github.com/dayat81/open5g/pull/7#issuecomment-6765184449
+
+Baseline iperf3 yang tercatat (QCI 9, AMBR 1 Gbps, 3 kali 30 detik, server `` `<IP-SGi>` ``):
+
+| Arah | Ulangan 1 | Ulangan 2 | Ulangan 3 |
+| --- | --- | --- | --- |
+| DL | 17,6 Mbit/s | 17,6 Mbit/s | 17,9 Mbit/s |
+| UL | 17,4 Mbit/s | 17,6 Mbit/s | 17,3 Mbit/s |
+
+Sekitar 17 Mbit/s kemungkinan besar batas link ZMQ.
 
 ### W1 — Login web sebagai student
 
@@ -167,19 +178,19 @@ Urutan jalannya: W0, lalu W1–W4 pada IMSI yang sama, lalu W5–W6, lalu W7, la
 2. Baca dokumen subscriber yang sama di Mongo (bidang profil).
 3. Bandingkan keduanya dengan nilai yang di-provision pada W3, termasuk tanda drift.
 4. Periksa seluruh badan respons API: tidak ada bidang keamanan.
-5. Hitung ulang hash sub-dokumen keamanan dengan algoritma yang sama seperti W0.
+5. Hitung ulang hash sub-dokumen keamanan dengan algoritma yang sama seperti W0, hanya atas bidang `k`, `opc`, dan `amf`. Kecualikan `sqn`. Alasan pengecualian ada di W0.
 
 **Hasil yang diharapkan**
 
 - Nilai di API dan di Mongo sama dengan input W2/W3. `drift=false`.
 - Respons tidak memuat bidang keamanan, Ki, atau OPc.
-- Hash sub-dokumen keamanan identik dengan hash W0.
+- Hash atas `k`, `opc`, dan `amf` identik dengan hash W0.
 
 **Bukti yang wajib**
 
 - Kutipan API dan kutipan bidang profil Mongo, keduanya tersunting, yang menunjukkan QCI dan APN-AMBR serta `drift=false`.
 - Pernyataan pemeriksa bahwa respons tidak memuat bidang keamanan, Ki, atau OPc. Jangan menempelkan respons mentah jika masih ada kemungkinan bidang itu muncul; sunting dulu.
-- Digest W4 di samping digest W0. Keduanya sama.
+- Digest W4 di samping digest W0, keduanya atas `k`, `opc`, dan `amf` saja. Keduanya sama.
 
 ### W5 — UE re-attach
 
@@ -212,6 +223,8 @@ Urutan jalannya: W0, lalu W1–W4 pada IMSI yang sama, lalu W5–W6, lalu W7, la
 - **Level:** RAN/UE NYATA.
 - **Blocking:** bukan NO-GO bila throughput tidak ter-cap **dan** sinyal W5 benar. Catat sebagai keterbatasan enforcement EPC (fase 2), bukan bug dashboard. Konfirmasi ke Lab Ops dan Architect apakah UPF Open5GS v2.8 atau eNB yang menegakkan batas laju AMBR.
 
+**Peringatan:** server iperf3 berjalan di port 5201 sebagai proses utama container server. Jangan mematikannya dan jangan me-restart-nya.
+
 **Langkah**
 
 1. Setelah attach W5, jalankan iperf3 ke `` `<IP-SGi>` ``: DL (`iperf3 -R`) dan UL, masing-masing 3 kali 30 detik. Prosedur dan server sama dengan baseline W0.
@@ -239,18 +252,18 @@ Urutan jalannya: W0, lalu W1–W4 pada IMSI yang sama, lalu W5–W6, lalu W7, la
 
 1. Lewat web, sebagai `` `<akun-student-uji>` ``, kembalikan profil `` `<IMSI-UE-SRS>` `` ke nilai semula (nilai sebelum W2).
 2. Provision perubahan balik itu.
-3. Ulangi readback seperti W4: API, Mongo, `drift`, dan hash sub-dokumen keamanan.
+3. Ulangi readback seperti W4: API, Mongo, `drift`, dan hash sub-dokumen keamanan hanya atas `k`, `opc`, dan `amf` (`sqn` dikecualikan; alasan di W0).
 
 **Hasil yang diharapkan**
 
 - API dan Mongo memuat nilai semula. `drift=false`.
-- Hash sub-dokumen keamanan tetap identik dengan W0.
+- Hash atas `k`, `opc`, dan `amf` tetap identik dengan W0.
 - Respons readback tetap tanpa bidang keamanan, Ki, atau OPc.
 
 **Bukti yang wajib**
 
 - Respons provision balik dan readback tersunting.
-- Digest W7 di samping digest W0. Keduanya sama.
+- Digest W7 di samping digest W0, keduanya atas `k`, `opc`, dan `amf` saja. Keduanya sama.
 - Tidak ada pemulihan lewat pengembalian dump basis data pada kasus ini.
 
 ### W8 — Regresi
@@ -287,12 +300,12 @@ Hanya status **PASS** yang masuk hitungan. BLOCKED dan FAIL bukan PASS.
 
 W8 tidak termasuk syarat GO di atas. Kegagalan W8 yang membuat dashboard berhenti atau EPC restart tetap blocking fase 1 dan dilaporkan bersama keputusan, karena gerbang rilis fase 1 di [TEST-PLAN-gate-A-F.md](TEST-PLAN-gate-A-F.md) mencakup dashboard hidup dan `/api/core/status`.
 
-Belum ada hasil pada tanggal dokumen ini. Jangan mengisi GO sebelum bukti W0–W7 ada.
+Baseline iperf3 W0 sudah tercatat (10 Nov 2026, 17:38 WIB). W1–W8 belum dijalankan. Jangan mengisi GO sebelum bukti W0–W7 lengkap.
 
 ## 5. Aturan keselamatan
 
 - Yang diubah hanya IMSI uji `` `<IMSI-UE-SRS>` `` lewat akun `` `<akun-student-uji>` ``.
-- Data keamanan (Ki/OPc) diisi Lab Ops di luar dashboard. Uji web tidak menulis ulang sub-dokumen itu. Hash W0, W4, dan W7 harus sama.
+- Data keamanan (Ki/OPc) diisi Lab Ops di luar dashboard. Uji web tidak menulis ulang sub-dokumen itu. Hash W0, W4, dan W7 dihitung hanya atas `k`, `opc`, dan `amf` (`sqn` dikecualikan) dan harus sama.
 - Cadangan Mongo sebelum uji disimpan di luar repo. Pemulihan profil pada smoke ini dilakukan lewat web (W7).
 - Jangan menjalankan `mongorestore --drop`.
 - Jangan mengubah indeks Mongo secara manual.
@@ -302,4 +315,4 @@ Belum ada hasil pada tanggal dokumen ini. Jangan mengisi GO sebelum bukti W0–W
 
 ## 6. Jejak
 
-Disusun mengikuti keputusan Netdrive 10 Nov 2026, 17:21 WIB. Ditautkan dari cakupan fase 1 di [TEST-PLAN-gate-A-F.md](TEST-PLAN-gate-A-F.md). Uji belum dijalankan. Keputusan GO/NO-GO menunggu bukti dan keputusan Netdrive. Dokumen ini tidak di-merge sebagai pernyataan lulus.
+Disusun mengikuti keputusan Netdrive 10 Nov 2026, 17:21 WIB. Hash sub-dokumen keamanan (hanya `k`, `opc`, dan `amf`) serta angka baseline iperf3 W0 mengikuti temuan Lab Ops 10 Nov 2026, 17:38 WIB. Ditautkan dari cakupan fase 1 di [TEST-PLAN-gate-A-F.md](TEST-PLAN-gate-A-F.md). W1–W8 belum dijalankan. Keputusan GO/NO-GO menunggu bukti dan keputusan Netdrive. Dokumen ini tidak di-merge sebagai pernyataan lulus.
