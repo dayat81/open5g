@@ -21,6 +21,7 @@ RUN if [ -n "$PIP_FIND_LINKS" ]; then \
 
 COPY src ./src
 COPY migrations ./migrations
+COPY scripts ./scripts
 
 ENV PYTHONPATH=/app/src \
     OPEN5G_BIND_HOST=0.0.0.0 \

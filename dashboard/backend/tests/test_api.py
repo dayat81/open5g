@@ -1,9 +1,12 @@
 """HTTP authorization and apply behavior against PostgreSQL."""
 
+import copy
 import json
 import os
 import secrets
 from pathlib import Path
+
+from bson import BSON
 
 import psycopg
 import pytest
@@ -161,6 +164,7 @@ def test_session_cookie_is_httponly_and_csrf_is_readable(env):
     csrf = next(item for item in cookies if item.startswith("open5g_csrf="))
     assert "HttpOnly" in session
     assert "HttpOnly" not in csrf
+    assert "samesite=lax" in session.lower()
     assert "Secure" not in session
     missing = env["student"].post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": sample_content()})
     # student caller includes csrf; a fresh client without the header is checked below
@@ -788,3 +792,207 @@ def test_rollback_restores_mongo_when_postgres_update_loses(env, monkeypatch):
     assert row["state"] == "compensated"
     assert row["desired_version"] == 2
     assert profile["desired_version"] == 1
+
+
+def _secret_key_paths(value, prefix=""):
+    found = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).lower() in {"security", "k", "opc", "ki"}:
+                found.append(f"{prefix}{key}")
+            found.extend(_secret_key_paths(item, f"{prefix}{key}."))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found.extend(_secret_key_paths(item, f"{prefix}{index}."))
+    return found
+
+
+def _canon(value):
+    if isinstance(value, dict):
+        return {str(key): _canon(value[key]) for key in sorted(value, key=str)}
+    if isinstance(value, list):
+        return [_canon(item) for item in value]
+    return value
+
+
+def _mongo_snapshot(mongo):
+    document = copy.deepcopy(mongo["open5gs"]["subscribers"].find_one({"imsi": "001010000000001"}))
+    document.pop("_id", None)
+    return document
+
+
+def _without_allowlisted_qos(document):
+    clone = copy.deepcopy(document)
+    clone.pop("_id", None)
+    clone.pop("open5g_dashboard", None)
+    for slice_doc in clone.get("slice") or []:
+        for session in slice_doc.get("session") or []:
+            if session.get("name") == "internet":
+                session.pop("qos", None)
+                session.pop("ambr", None)
+                session.pop("pcc_rule", None)
+    return clone
+
+
+def test_login_succeeds_and_wrong_password_or_missing_cookie_is_401(env):
+    fresh = TestClient(create_app(env["settings"]))
+    assert fresh.get("/api/auth/me").status_code == 401
+    bad = fresh.post("/api/auth/login", json={"email": "student-a@example.test", "password": "not-the-password"})
+    assert bad.status_code == 401
+    assert bad.json()["error"]["code"] == "invalid_login"
+    assert fresh.get("/api/auth/me").status_code == 401
+    ok = fresh.post(
+        "/api/auth/login",
+        json={"email": "student-a@example.test", "password": env["student_password"]},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["user"]["role"] == "student"
+    assert ok.json()["csrf_token"]
+    assert fresh.get("/api/auth/me").status_code == 200
+
+
+def test_logout_makes_the_old_session_401(env):
+    assert env["student"].client.get("/api/auth/me").status_code == 200
+    logged_out = env["student"].post("/api/auth/logout", {})
+    assert logged_out.status_code == 200, logged_out.text
+    assert env["student"].client.get("/api/auth/me").status_code == 401
+    assert env["student"].client.get("/api/profiles").status_code == 401
+
+
+def test_out_of_range_qos_is_rejected_without_writing_mongo(env):
+    mongomock = __import__("mongomock")
+    mongo = mongomock.MongoClient()
+    mongo["open5gs"]["subscribers"].insert_one(
+        {
+            "imsi": "001010000000001",
+            "security": {"k": "PLANTED-KI-VALUE-not-a-real-key", "opc": "PLANTED-OPC-VALUE-not-a-real-opc", "amf": "8000", "sqn": 7},
+            "slice": [
+                {
+                    "sst": 1,
+                    "default_indicator": True,
+                    "session": [
+                        {"name": "internet", "type": 3, "pcc_rule": []},
+                        {"name": "ims", "type": 3, "pcc_rule": [{"flow": [{"direction": 1, "description": "kept"}]}]},
+                    ],
+                }
+            ],
+        }
+    )
+    from open5g_dashboard.subscriber_port import MongoSubscriberPort
+
+    port = MongoSubscriberPort("mongodb://mongo.invalid/open5gs", "open5gs", "subscribers", 2000, client=mongo)
+    student = _login(TestClient(create_app(env["settings"], subscriber_port=port)), "student-a@example.test", env["student_password"])
+    before = _mongo_snapshot(mongo)
+
+    def unchanged():
+        assert _mongo_snapshot(mongo) == before
+
+    qci_ten = _safe_content()
+    qci_ten["qci"] = 10
+    rejected = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": qci_ten})
+    assert rejected.status_code == 422
+    unchanged()
+    arp_low = _safe_content()
+    arp_low["arp"] = {**arp_low["arp"], "priority": 0}
+    assert student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": arp_low}).status_code == 422
+    arp_high = _safe_content()
+    arp_high["arp"] = {**arp_high["arp"], "priority": 16}
+    assert student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": arp_high}).status_code == 422
+    negative = _safe_content()
+    negative["ambr_ul"] = {"value": -1, "unit": "mbps"}
+    assert student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": negative}).status_code == 422
+    bad_unit = _safe_content()
+    bad_unit["ambr_dl"] = {"value": 1, "unit": "tbps"}
+    assert student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": bad_unit}).status_code == 422
+    unchanged()
+
+    holder = {"id": "", "etag": ""}
+
+    def reject_saved(content, code):
+        if holder["id"]:
+            saved = student.put(f"/api/profiles/{holder['id']}", content, holder["etag"])
+            assert saved.status_code == 200, saved.text
+            profile_id = saved.json()["id"]
+            etag = saved.json()["version_etag"]
+        else:
+            created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": content})
+            assert created.status_code == 201, created.text
+            profile_id = created.json()["id"]
+            etag = created.json()["version_etag"]
+        holder["id"] = profile_id
+        holder["etag"] = etag
+        validated = student.client.post(
+            f"/api/profiles/{profile_id}/validate",
+            headers=student.headers(etag),
+        )
+        assert validated.status_code == 422, validated.text
+        assert validated.json()["error"]["code"] == code
+        unchanged()
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute("UPDATE profiles SET lifecycle = 'validated' WHERE id = %s", (profile_id,))
+        provisioned = student.post(
+            f"/api/profiles/{profile_id}/provision",
+            {},
+            etag=etag,
+        )
+        assert provisioned.status_code == 422, provisioned.text
+        assert provisioned.json()["error"]["code"] == code
+        unchanged()
+
+    qci_four = _safe_content()
+    qci_four["qci"] = 4
+    reject_saved(qci_four, "default_bearer_qci_forbidden")
+    zero_ambr = _safe_content()
+    zero_ambr["ambr_ul"] = {"value": 0, "unit": "mbps"}
+    zero_ambr["ambr_dl"] = {"value": 0, "unit": "mbps"}
+    reject_saved(zero_ambr, "ambr_not_positive")
+
+
+def test_provision_and_readback_keep_security_bytes_and_hide_secret_keys(env):
+    mongomock = __import__("mongomock")
+    mongo = mongomock.MongoClient()
+    security = {"k": "PLANTED-KI-VALUE-not-a-real-key", "opc": "PLANTED-OPC-VALUE-not-a-real-opc", "amf": "8000", "sqn": 11}
+    mongo["open5gs"]["subscribers"].insert_one(
+        {
+            "imsi": "001010000000001",
+            "security": security,
+            "slice": [
+                {
+                    "sst": 1,
+                    "default_indicator": True,
+                    "session": [
+                        {"name": "internet", "type": 3, "pcc_rule": []},
+                        {"name": "ims", "type": 3, "qos": {"index": 5}, "pcc_rule": []},
+                    ],
+                }
+            ],
+        }
+    )
+    from open5g_dashboard.subscriber_port import MongoSubscriberPort
+
+    port = MongoSubscriberPort("mongodb://mongo.invalid/open5gs", "open5gs", "subscribers", 2000, client=mongo)
+    student = _login(TestClient(create_app(env["settings"], subscriber_port=port)), "student-a@example.test", env["student_password"])
+    before = _mongo_snapshot(mongo)
+    created = student.post("/api/profiles", {"assignment_id": env["assignment"]["id"], "content": _safe_content()})
+    validated = student.client.post(
+        f"/api/profiles/{created.json()['id']}/validate",
+        headers=student.headers(created.json()["version_etag"]),
+    )
+    written = student.post(
+        f"/api/profiles/{created.json()['id']}/provision",
+        {},
+        etag=validated.json()["version_etag"],
+    )
+    assert written.status_code == 200, written.text
+    assert _secret_key_paths(written.json()) == []
+    readback = student.client.get(f"/api/assignments/{env['assignment']['id']}/subscriber")
+    assert readback.status_code == 200, readback.text
+    assert _secret_key_paths(readback.json()) == []
+    after = _mongo_snapshot(mongo)
+    assert BSON.encode(_canon(after["security"])) == BSON.encode(_canon(before["security"]))
+    assert _without_allowlisted_qos(after) == _without_allowlisted_qos(before)
+    internet = after["slice"][0]["session"][0]
+    assert internet["qos"]["index"] == 6
+    assert internet["ambr"]["downlink"]["value"] > 0
+    assert internet["pcc_rule"]
+    assert after["slice"][0]["session"][1] == before["slice"][0]["session"][1]

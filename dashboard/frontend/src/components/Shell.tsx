@@ -9,10 +9,12 @@ const LINKS = [
 export function Shell({
   active,
   mode,
+  account,
   children,
 }: {
   active: string;
   mode: "demo" | "api";
+  account?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -24,7 +26,7 @@ export function Shell({
         <div className="brand">Dashboard lab 5G · Open5GS EPC CUPS</div>
         <div className="meta">
           <span className="role-badge">Mode: {mode === "demo" ? "Demo" : "API"}</span>
-          <span className="pill warn">{mode === "demo" ? "Bukan sesi" : "Sesi mengikuti cookie API"}</span>
+          {account ?? <span className="pill warn">{mode === "demo" ? "Bukan sesi" : "Sesi mengikuti cookie API"}</span>}
         </div>
       </header>
       <nav className="nav" aria-label="Navigasi utama">

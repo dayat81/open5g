@@ -165,7 +165,11 @@ Buka `http://127.0.0.1:3000`. Jangan mem-publish port web ke alamat selain loopb
 
 ## 8. Smoke test
 
-Jendela ini hanya memakai akun uji dan IMSI uji. Bukan akun operasional dan bukan IMSI pelanggan. Prosedur ini tidak mengganti pagar di kode. Ganti port bila `DASHBOARD_WEB_PORT` bukan 3000. Satu subscriber uji yang sudah di-seed cukup.
+Jendela ini hanya memakai akun uji dan IMSI uji. Bukan akun operasional dan bukan IMSI pelanggan. Prosedur ini tidak mengganti pagar di kode. Ganti port bila `DASHBOARD_WEB_PORT` bukan 3000.
+
+Permintaan arsitek, wajib selama jendela uji: jangan membuat akun instructor, dan jangan menjalankan seed apa pun (Ansible atau cara lain). Subscriber uji harus sudah ada di Mongo sebelum jendela ini. Dashboard tidak membuat dokumen subscriber baru.
+
+Satu subscriber uji yang sudah ada cukup. Placeholder di bawah bukan rahasia dan bukan IMSI hidup.
 
 ```bash
 curl -fsS http://127.0.0.1:3000/health
@@ -173,7 +177,41 @@ curl -fsS http://127.0.0.1:3000/health
 
 Harapan: JSON `status` ok. `core` boleh `not_checked`.
 
-Login lewat UI atau cookie sesi yang sudah ada, lalu:
+Bootstrap satu admin dari dalam container API. Kata sandi tidak di-commit. Jangan membuat instructor.
+
+```bash
+docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile dashboard exec \
+  -e OPEN5G_BOOTSTRAP_EMAIL=admin@example.test \
+  -e OPEN5G_BOOTSTRAP_PASSWORD='<12-characters-minimum>' \
+  dashboard-api python /app/scripts/create_user.py
+```
+
+Perintah itu mencetak id admin. Buka `http://127.0.0.1:3000/login` lewat tunnel dan masuk dengan email serta kata sandi itu.
+
+Admin lalu membuat grup, satu student uji, dan assignment untuk IMSI uji lewat API origin yang sama. Ganti placeholder. Jangan memakai IMSI pelanggan.
+
+```bash
+curl -fsS -c cookies.txt -H 'content-type: application/json' \
+  -d '{"email":"admin@example.test","password":"<12-characters-minimum>"}' \
+  http://127.0.0.1:3000/api/auth/login
+# Simpan csrf_token dari badan JSON. Cookie sesi ada di cookies.txt.
+
+curl -fsS -b cookies.txt -H 'content-type: application/json' -H 'x-csrf-token: <csrf>' \
+  -d '{"name":"kelas-uji"}' \
+  http://127.0.0.1:3000/api/admin/groups
+
+curl -fsS -b cookies.txt -H 'content-type: application/json' -H 'x-csrf-token: <csrf>' \
+  -d '{"email":"student@example.test","display_name":"Student uji","role":"student","group_id":"<group-id>","password":"<12-characters-minimum>"}' \
+  http://127.0.0.1:3000/api/admin/users
+
+curl -fsS -b cookies.txt -H 'content-type: application/json' -H 'x-csrf-token: <csrf>' \
+  -d '{"imsi":"<IMSI-UJI>","owner_user_id":"<student-id>","group_id":"<group-id>"}' \
+  http://127.0.0.1:3000/api/admin/assignments
+```
+
+Keluar dari admin (tombol Keluar, atau `POST /api/auth/logout` dengan CSRF). Student masuk lewat form di `/login`. Buka `/profil`, pilih assignment IMSI uji, simpan draf, validasi, lalu tulis subscriber. Tombol Fase 2 tetap nonaktif.
+
+Lalu:
 
 ```bash
 curl -fsS -b cookies.txt http://127.0.0.1:3000/api/core/status

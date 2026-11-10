@@ -118,6 +118,7 @@ button.btn.primary { background: var(--primary); border-color: var(--primary); c
 button.btn.primary:hover { background: var(--primary-hover); }
 button.btn.secondary { background: var(--surface-default); }
 button.btn.ghost { border-color: transparent; box-shadow: none; background: transparent; color: var(--text-secondary); }
+button.btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .apply-note { font-size: 10px; color: var(--text-secondary); border: 1px solid var(--primary-border); border-radius: var(--radius-sm); padding: var(--space-2); background: var(--primary-soft); flex: 1; min-width: 240px; }
 .stack { display: flex; flex-direction: column; gap: var(--space-2); }
 .state-card { border: 1px solid var(--border-default); border-left: 3px solid var(--unknown); border-radius: var(--radius-sm); padding: var(--space-2); background: var(--surface-default); }

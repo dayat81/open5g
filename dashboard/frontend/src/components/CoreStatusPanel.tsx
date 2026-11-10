@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { messageForApiError } from "@/lib/errors";
 
 type Target = {
   name: string;
@@ -33,6 +34,7 @@ export function CoreStatusPanel({ mode, apiBase }: { mode: "demo" | "api"; apiBa
   );
   const [gx, setGx] = useState("mati");
   const [problem, setProblem] = useState<string | null>(null);
+  const [needsLogin, setNeedsLogin] = useState(false);
 
   useEffect(() => {
     if (mode !== "api" || !apiBase) {
@@ -44,12 +46,21 @@ export function CoreStatusPanel({ mode, apiBase }: { mode: "demo" | "api"; apiBa
     fetch(`${root}/api/core/status`, { credentials: "include", signal: controller.signal })
       .then(async (response) => {
         const body = (await response.json()) as StatusBody;
+        if (response.status === 401) {
+          setNeedsLogin(true);
+          setProblem(messageForApiError({ status: 401, code: "unauthenticated" }).text);
+          setSummary("unauthenticated");
+          setTargets([]);
+          return;
+        }
         if (!response.ok) {
+          setNeedsLogin(false);
           setProblem(body.error?.message ?? `HTTP ${response.status}`);
           setSummary("down");
           setTargets([]);
           return;
         }
+        setNeedsLogin(false);
         setTargets(body.targets ?? []);
         setSummary(body.status ?? "unknown");
         setNote(body.note ?? "");
@@ -74,6 +85,7 @@ export function CoreStatusPanel({ mode, apiBase }: { mode: "demo" | "api"; apiBa
         Ringkasan: <span className="mono">{summary}</span>
         {problem ? ` · ${problem}` : ""} · Gx RAR {gx}
       </p>
+      {needsLogin ? <a href="/login">Masuk</a> : null}
       <ul className="nf-list">
         {targets.map((target) => (
           <li key={target.name} data-testid={`nf-${target.name}`}>

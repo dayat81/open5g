@@ -37,7 +37,7 @@ from open5g_dashboard.domain import (
 from open5g_dashboard.policy_port import build_policy_port
 from open5g_dashboard.settings import Settings
 from open5g_dashboard.subscriber_port import SubscriberConflict, SubscriberUnavailable, build_subscriber_port, drop_secrets
-from open5g_dashboard.open5gs_schema import drift_fields
+from open5g_dashboard.open5gs_schema import drift_fields, editor_range_error
 from open5g_dashboard.telemetry import build_metrics_reader, combine_status
 
 # Scaffold parameters, not a reviewed production KDF policy.
@@ -87,8 +87,9 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
         return Assignment(str(row["id"]), row["imsi"], str(row["owner_user_id"]), str(row["group_id"]))
 
     def public_user(row) -> dict[str, Any]:
+        user_id = row["user_id"] if "user_id" in row else row["id"]
         return {
-            "id": str(row["id"] if "id" in row and "user_id" not in row else row.get("user_id", row["id"])),
+            "id": str(user_id),
             "email": row["email"],
             "display_name": row["display_name"],
             "role": row["role"],
@@ -541,8 +542,9 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
                 return fail(409, "version_conflict", "version_etag does not match the stored profile")
             try:
                 parse_profile_from_stored(profile["content"])
+                editor_range_error(profile["content"])
             except ProfileError as exc:
-                return fail(422, exc.code, exc.message)
+                return fail(422, exc.code, exc.message, details=exc.details)
             updated = db.set_lifecycle(conn, profile_id, profile["version_etag"], "validated")
             return public_profile(updated)
 
@@ -648,6 +650,7 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
         try:
             model = parse_profile_from_stored(content)
             apply_caps(model, caps(conn))
+            editor_range_error(content)
         except ProfileError as exc:
             audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", exc.code, {})
             db.insert_sync(conn, str(profile["id"]), desired_version, "rejected", {"code": exc.code})

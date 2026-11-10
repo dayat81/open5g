@@ -143,15 +143,33 @@ def _bps_of(node: dict[str, Any] | None) -> int:
     return int(encoded["value"]) * (1000 ** int(encoded["unit"]))
 
 
-def enforce_role_qos(role: str, content: dict[str, Any]) -> None:
-    """Session QoS is the default bearer. Open5GS default bearer QCI must be non-GBR."""
-    qci = int(content["qci"])
-    priority = int(content["arp"]["priority"])
-    if qci not in STUDENT_QCI:
+def editor_range_error(content: dict[str, Any]) -> None:
+    """Reject QoS the editor must not store. Does not write a subscriber."""
+    qci = content.get("qci")
+    if isinstance(qci, bool) or not isinstance(qci, int) or qci not in STUDENT_QCI:
         raise ProfileError(
             "default_bearer_qci_forbidden",
             "Default bearer QCI must be non-GBR (5-9) for every role",
         )
+    arp = content.get("arp") if isinstance(content.get("arp"), dict) else {}
+    priority = arp.get("priority")
+    if isinstance(priority, bool) or not isinstance(priority, int) or not 1 <= priority <= 15:
+        raise ProfileError("invalid_arp", "ARP priority must stay between 1 and 15")
+    for key in ("ambr_ul", "ambr_dl"):
+        node = content.get(key)
+        if not isinstance(node, dict):
+            raise ProfileError("ambr_not_positive", "AMBR uplink and downlink must be greater than zero")
+        unit = node.get("unit")
+        if unit is not None and unit not in UNIT_NAME_TO_CODE:
+            raise ProfileError("bitrate_unit_unsupported", "Bitrate unit is not one Open5GS stores")
+        if _bps_of(node) <= 0:
+            raise ProfileError("ambr_not_positive", "AMBR uplink and downlink must be greater than zero")
+
+
+def enforce_role_qos(role: str, content: dict[str, Any]) -> None:
+    """Session QoS is the default bearer. Open5GS default bearer QCI must be non-GBR."""
+    editor_range_error(content)
+    priority = int(content["arp"]["priority"])
     if role == "student" and priority < STUDENT_MIN_ARP:
         raise ProfileError(
             "role_qos_forbidden",

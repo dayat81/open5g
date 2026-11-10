@@ -2,7 +2,7 @@ import Image from "next/image";
 import { CoreStatusPanel } from "./CoreStatusPanel";
 import { DemoBanner } from "./DemoBanner";
 import { EvidenceBadge } from "./EvidenceBadge";
-import { Shell } from "./Shell";
+import { SessionFrame } from "./SessionFrame";
 
 const NODES = [
   ["ue.svg", "UE"],
@@ -15,7 +15,7 @@ const NODES = [
 
 export function OverviewScreen({ mode = "demo", apiBase }: { mode?: "demo" | "api"; apiBase?: string }) {
   return (
-    <Shell active="/" mode={mode}>
+    <SessionFrame active="/" mode={mode} apiBase={apiBase}>
       {mode === "demo" ? <DemoBanner /> : null}
       <h1>Overview lab + slice / APN</h1>
       <p className="sub">
@@ -73,6 +73,6 @@ export function OverviewScreen({ mode = "demo", apiBase }: { mode?: "demo" | "ap
         <EvidenceBadge state="unknown" />
         <EvidenceBadge state="rejected" />
       </section>
-    </Shell>
+    </SessionFrame>
   );
 }

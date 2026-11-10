@@ -1,9 +1,9 @@
 import { DemoBanner } from "./DemoBanner";
-import { Shell } from "./Shell";
+import { SessionFrame } from "./SessionFrame";
 
-export function AuditScreen({ mode = "demo" }: { mode?: "demo" | "api" }) {
+export function AuditScreen({ mode = "demo", apiBase }: { mode?: "demo" | "api"; apiBase?: string }) {
   return (
-    <Shell active="/audit" mode={mode}>
+    <SessionFrame active="/audit" mode={mode} apiBase={apiBase}>
       {mode === "demo" ? <DemoBanner /> : null}
       <h1>Audit dan status apply</h1>
       <p className="sub">Baris di bawah adalah contoh struktur, bukan jejak dari core.</p>
@@ -36,6 +36,6 @@ export function AuditScreen({ mode = "demo" }: { mode?: "demo" | "api" }) {
         </tbody>
       </table>
       <p className="note">Jejak sungguhan dibaca dari API setelah sesi ada. Layar ini tidak menulis audit.</p>
-    </Shell>
+    </SessionFrame>
   );
 }
