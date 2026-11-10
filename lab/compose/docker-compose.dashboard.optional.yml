@@ -42,10 +42,11 @@ services:
       PORT: "3000"
     ports:
       - "${DASHBOARD_WEB_BIND:-127.0.0.1}:${DASHBOARD_WEB_PORT:-3000}:3000"
-    networks: [dashboard]
+    networks: [web, dashboard]
 networks:
   dashboard:
     internal: true
+  web: {}
   mgmt:
     external: true
     name: lab5g-dev_mgmt

@@ -69,7 +69,8 @@ Isi minimal:
 - `OPEN5G_SESSION_PEPPER` — minimal 32 karakter, unik
 - `POSTGRES_PASSWORD` dan password yang sama di `OPEN5G_DATABASE_URL`
 - `OPEN5G_ENABLE_GX_RAR=0`
-- `OPEN5G_MONGO_URI=mongodb://mongo:27017/open5gs` hanya setelah backup di langkah 5. Kosongkan dulu bila tulis subscriber belum diizinkan pada jendela ini.
+- `OPEN5G_MONGO_URI=mongodb://mongo:27017/open5gs` hanya setelah backup dan uji pulih di langkah 5 lulus. Kosongkan dulu sampai langkah itu selesai.
+- Jendela uji hanya memakai akun uji dan IMSI uji. Jangan memakai IMSI pelanggan atau akun operasional.
 - `OPEN5G_BIND_HOST=0.0.0.0` dan `OPEN5G_BIND_PORT=8000` (hanya di dalam container; port ini tidak dipublish)
 
 Opsional di shell, bukan di file yang di-commit:
@@ -103,13 +104,32 @@ docker exec l5gd-mongo rm -f /tmp/subscribers.archive
 
 Arsip itu berisi data subscriber, termasuk material autentikasi. Simpan di luar git, izin terbatas, dan jangan salin ke chat. Pola `subscriber-dump/` sudah di-ignore.
 
-Koleksi lab yang sudah di-seed Open5GS memakai indeks unik `imsi_1`. Dashboard tidak membuat dan tidak mengubah indeks. Jika status API memperingatkan `no_unique_imsi_index`, Lab Ops yang menjalankan ini sekali:
+Sebelum `OPEN5G_MONGO_URI` diisi, uji arsip itu ke namespace lain. Jangan menyentuh koleksi `open5gs.subscribers`.
 
 ```bash
-docker exec l5gd-mongo mongosh open5gs --eval 'db.subscribers.createIndex({imsi:1},{unique:true,name:"imsi_1"})'
+docker cp ./subscribers-before-dashboard.archive l5gd-mongo:/tmp/subscribers.archive
+docker exec l5gd-mongo mongorestore --archive=/tmp/subscribers.archive --nsFrom='open5gs.*' --nsTo='open5gs_restore_check.*'
+docker exec l5gd-mongo mongosh --quiet --eval 'const src = db.getSiblingDB("open5gs").subscribers.countDocuments({}); const dst = db.getSiblingDB("open5gs_restore_check").subscribers.countDocuments({}); if (src !== dst) { print("STOP count " + src + " != " + dst); quit(2); } print("count ok " + src);'
+docker exec l5gd-mongo mongosh --quiet --eval 'db.getSiblingDB("open5gs_restore_check").dropDatabase()'
+docker exec l5gd-mongo rm -f /tmp/subscribers.archive
 ```
 
-Jangan membuat indeks kedua dengan nama lain pada field yang sama. MongoDB 7 menolaknya dengan IndexOptionsConflict (kode 85).
+Berhenti jika jumlah dokumen tidak sama. Jangan lanjut ke isi URI.
+
+Indeks unik pada `imsi` tidak boleh diasumsikan bernama `imsi_1`. Cek dulu, dan jangan buat indeks bila sudah ada.
+
+```bash
+docker exec l5gd-mongo mongosh open5gs --quiet --eval 'const dups = db.subscribers.aggregate([{$group:{_id:"$imsi",n:{$sum:1}}},{$match:{n:{$gt:1}}},{$count:"duplicates"}]).toArray(); if (dups.length && dups[0].duplicates > 0) { print("STOP duplicate imsi"); quit(2); } print("no duplicate imsi");'
+docker exec l5gd-mongo mongosh open5gs --quiet --eval 'const indexes = db.subscribers.getIndexes(); const uniqueImsi = indexes.some((idx) => idx.unique && idx.key && Object.keys(idx.key).length === 1 && Object.prototype.hasOwnProperty.call(idx.key, "imsi")); print(uniqueImsi ? "unique imsi index present" : "unique imsi index absent"); printjson(indexes.map((idx) => idx.name));'
+```
+
+Berhenti jika ada IMSI duplikat. `createIndex` hanya bila pemeriksaan kedua mencetak `unique imsi index absent`, dan hanya setelah pemeriksaan duplikat lulus:
+
+```bash
+docker exec l5gd-mongo mongosh open5gs --eval 'db.subscribers.createIndex({imsi:1},{unique:true})'
+```
+
+Jangan membuat indeks kedua pada field yang sama dengan nama lain. MongoDB 7 menolaknya dengan IndexOptionsConflict (kode 85). Dashboard tidak membuat indeks.
 
 ## 6. Naikkan dashboard
 
@@ -119,7 +139,13 @@ Dari root repositori di guest:
 docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile dashboard up -d
 ```
 
-Perintah ini tidak mengubah proyek Compose inti `lab5g-dev`. Service dashboard bergabung ke jaringan eksternal `lab5g-dev_mgmt` hanya untuk API, supaya bisa mencapai `mongo`. Web hanya di jaringan `dashboard`.
+Perintah ini tidak mengubah proyek Compose inti `lab5g-dev`.
+
+Jaringan:
+
+- `dashboard` internal. Postgres dan API ada di sini. API tidak dipublish.
+- `mgmt` adalah jaringan eksternal `lab5g-dev_mgmt`. Hanya API yang bergabung, supaya mencapai service `mongo`.
+- `web` tidak internal. Hanya `dashboard-web` yang ada di sini, plus jaringan `dashboard` agar proxy ke API. Port host `127.0.0.1:3000` menempel di jaringan `web`. Jaringan internal saja tidak meneruskan binding port itu ke host.
 
 Kalau API langsung keluar, baca log. Penyebab yang diharapkan bila env belum diganti: penolakan placeholder.
 
@@ -139,7 +165,7 @@ Buka `http://127.0.0.1:3000`. Jangan mem-publish port web ke alamat selain loopb
 
 ## 8. Smoke test
 
-Ganti port bila `DASHBOARD_WEB_PORT` bukan 3000. Jangan memakai IMSI pelanggan sungguhan. Satu subscriber uji yang sudah di-seed cukup.
+Jendela ini hanya memakai akun uji dan IMSI uji. Bukan akun operasional dan bukan IMSI pelanggan. Prosedur ini tidak mengganti pagar di kode. Ganti port bila `DASHBOARD_WEB_PORT` bukan 3000. Satu subscriber uji yang sudah di-seed cukup.
 
 ```bash
 curl -fsS http://127.0.0.1:3000/health
@@ -192,16 +218,20 @@ docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile da
 
 ## 10. Rollback deploy
 
+Jangan menjalankan `mongorestore --drop` pada koleksi `open5gs.subscribers`.
+
 1. `down` seperti di atas.
-2. Bila smoke test sudah menulis subscriber uji, pulihkan arsip langkah 5:
+2. Bila smoke test sudah menulis subscriber, pulihkan hanya IMSI uji yang disentuh dashboard. Salin dokumen itu dari arsip ke namespace cek, lalu timpa satu dokumen di koleksi hidup. Ulangi untuk setiap IMSI uji. Jangan menyentuh IMSI lain.
 
 ```bash
 docker cp ./subscribers-before-dashboard.archive l5gd-mongo:/tmp/subscribers.archive
-docker exec l5gd-mongo mongorestore --archive=/tmp/subscribers.archive --nsInclude=open5gs.subscribers --drop
+docker exec l5gd-mongo mongorestore --archive=/tmp/subscribers.archive --nsFrom='open5gs.*' --nsTo='open5gs_restore_check.*'
+docker exec l5gd-mongo mongosh --quiet --eval 'const imsi = "<IMSI-UJI>"; const src = db.getSiblingDB("open5gs_restore_check").subscribers.findOne({imsi}); if (!src) { print("STOP missing " + imsi); quit(2); } delete src._id; db.getSiblingDB("open5gs").subscribers.replaceOne({imsi}, src);'
+docker exec l5gd-mongo mongosh --quiet --eval 'db.getSiblingDB("open5gs_restore_check").dropDatabase()'
 docker exec l5gd-mongo rm -f /tmp/subscribers.archive
 ```
 
-`--drop` hanya menyentuh koleksi di dalam arsip (`open5gs.subscribers`). Jangan menjalankan ini tanpa arsip langkah 5.
+`replaceOne` itu mengganti seluruh dokumen IMSI uji, termasuk `security`. SQN yang lebih lama dapat membuat autentikasi UE uji gagal sampai resync. Untuk jendela ini, IMSI yang dipulihkan harus IMSI uji saja.
 
 3. Hapus image lokal bila perlu: `docker image rm open5g-dashboard-api:local open5g-dashboard-web:local`.
 4. Core Open5GS, RAN, dan jaringan `lab5g-dev_mgmt` tetap seperti sebelum dashboard naik.
