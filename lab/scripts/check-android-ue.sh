@@ -43,7 +43,7 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
   ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
-  ANDROID_UE_SGWU_S1U_ADDR ANDROID_UE_SGWU_S5_ADDR; do
+  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -282,7 +282,20 @@ grep -q 'sshd -T -C' lab/scripts/android-ue-tunnel.sh
 grep -q 'ssh.socket' lab/scripts/android-ue-tunnel.sh
 grep -q 'permitlisten=' lab/scripts/android-ue-tunnel.sh
 grep -q 'without the tunnel options' lab/scripts/android-ue-tunnel.sh
-grep -q '127.0.0.1:5555' lab/scripts/android-ue-route.sh
+grep -q 'nsenter -t' lab/scripts/android-ue-up.sh
+grep -q 'ip route get' lab/scripts/android-ue-up.sh
+grep -q 'ping -c 3 -I tun_srsue' lab/scripts/android-ue-up.sh
+grep -q 'ANDROID_UE_SGWU_GTPU_ROUTE' lab/scripts/android-ue-up.sh
+grep -q 'ip6tables-nft' lab/scripts/android-ue-route.sh
+grep -q 'disable_ipv6' lab/scripts/android-ue-route.sh
+if grep -n -E '^[[:space:]]*ports:' lab/compose/docker-compose.android-ue.optional.yml lab/scripts/gen-android-ue.sh; then
+  echo "android-ue still publishes a port; uu is an internal network" >&2
+  exit 1
+fi
+if grep -n -E 'ADB_HOST_PORT|:[0-9]*:(5554|5555|5900|6080)' lab/compose/docker-compose.android-ue.optional.yml lab/scripts/gen-android-ue.sh; then
+  echo "android-ue still publishes ADB or VNC to the host" >&2
+  exit 1
+fi
 extra_flags=$(awk -F= '$1 == "ANDROID_UE_EXTRA_FLAGS" { sub(/^[^=]*=/, ""); print; exit }' lab/compose/android-ue.env.example)
 case "$extra_flags" in
   *partition-size=*)
@@ -321,7 +334,7 @@ if android_ue_upf_rule_decide "0: from all lookup local" "192.0.2.50/32" "$upf_f
 fi
 rm -rf "$upf_dir"
 
-echo "memory, pool, and ip6 preflight"
+echo "memory and pool"
 if [ "$(android_ue_mib 4096m)" != "4096" ] || [ "$(android_ue_mib 2048)" != "2048" ]; then
   echo "memory size parser failed" >&2
   exit 1
@@ -344,14 +357,6 @@ if android_ue_addr_in_pool 192.0.2.10 198.51.100.0/24; then
   echo "an address outside the pool was accepted" >&2
   exit 1
 fi
-mod_ok=$(mktemp)
-mod_missing=$(mktemp)
-printf '%s\n' 'ip6_tables 1 0' 'ip6table_filter 1 0' >"$mod_ok"
-printf '%s\n' 'ip_tables 1 0' >"$mod_missing"
-ANDROID_UE_MODULES_FILE=$mod_ok android_ue_ip6_preflight
-ip6_msg=$(ANDROID_UE_MODULES_FILE=$mod_missing ANDROID_UE_MODPROBE_N_OK=1 android_ue_ip6_preflight 2>&1 || true)
-printf '%s\n' "$ip6_msg" | grep -q 'does not load kernel modules'
-rm -f "$mod_ok" "$mod_missing"
 
 echo "resolver is TCP-only"
 default_core=$(lab/scripts/render-corefile.sh)

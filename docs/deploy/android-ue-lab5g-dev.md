@@ -21,8 +21,7 @@ Stop here until each line is true. The design doc lists the same blockers for Ne
 
 - Explicit approval to use lab5g-dev. The core is already up from its own compose file (`name: lab5g-dev`). This runbook does not start it and does not edit `lab/config/examples/open5gs/`.
 - `/dev/kvm` exists in the guest (nested virtualization). `ls -l /dev/kvm`.
-- `ip6_tables` and `ip6table_filter` are already loaded (`lsmod`). The srsRAN image uses legacy ip6tables, and the host does not load them by itself. `android-ue-up.sh` checks with `lsmod` and `modprobe -n` and stops if they are missing. It does not load them. Load them by hand before up: `sudo modprobe ip6_tables ip6table_filter`.
-- `ANDROID_UE_MEM_LIMIT` is at least `ANDROID_UE_MEMORY` plus 1536 MiB. The default is `4096m` for `ANDROID_UE_MEMORY=2048`. A 2560 MiB limit OOM-kills api-33. `up` refuses a smaller limit.
+- `ANDROID_UE_MEM_LIMIT` defaults to `4096m`. It must be at least `ANDROID_UE_MEMORY` plus 1536 MiB. A 2560 MiB limit OOM-kills api-33. `up` refuses a smaller limit.
 - Images are already loaded: `gradiant/srsran-4g:25_10`, `halimqarroum/docker-android:api-33`, and a local cgnat image that contains `nft`, `ip`, `awk`, and `sh`. No pulls.
 - `adb` and `scrcpy` are installed on the guest from the mirror.
 - One new test IMSI is inserted with `lab/scripts/android-ue-seed.sh`. That script stops if the IMSI is already in Mongo. It does not replace an existing subscriber. Do not run it during the dashboard PR #7 test window. Ki and OPc stay in the gitignored env. Do not reuse the stock srsUE's IMSI. Do not `drop` the subscriber collection.
@@ -43,7 +42,7 @@ cp lab/compose/android-ue.env.example lab/compose/android-ue.env
 chmod 600 lab/compose/android-ue.env
 ```
 
-Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the new test subscriber. Set `ANDROID_UE_PGW_DNS` to the DNS address the SMF/PGW gives that UE. It must not be `127.0.0.11`. Set `ANDROID_UE_EGRESS_NETWORK` to the network created above. Set `ANDROID_UE_SGWU_S1U_ADDR` to the SGW-U S1-U address and `ANDROID_UE_SGWU_S5_ADDR` to the SGW-U S5 address. Leave `ANDROID_UE_CGNAT_IMAGE` as a placeholder until the cgnat step, then set it to the mirrored image name. Leave `ANDROID_UE_ALLOW_SECOND=0` and `ANDROID_UE_INSTALL_UPF_ROUTE=0`. Keep `ANDROID_UE_EXTRA_FLAGS` as `-no-metrics -no-audio -partition-size 2048`. The api-33 emulator rejects `-partition-size=2048`.
+Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the new test subscriber. Set `ANDROID_UE_PGW_DNS` to the DNS address the SMF/PGW gives that UE. It must not be `127.0.0.11`. Set `ANDROID_UE_EGRESS_NETWORK` to the network created above. Set `ANDROID_UE_SGWU_GTPU_ROUTE` to the SGW-U GTP-U address that `lab-routes.sh` installs on the stock eNB, and `ANDROID_UE_SGI_PROBE` to the SGi address used for the ping below. Leave `ANDROID_UE_CGNAT_IMAGE` as a placeholder until the cgnat step, then set it to the mirrored image name. Leave `ANDROID_UE_ALLOW_SECOND=0` and `ANDROID_UE_INSTALL_UPF_ROUTE=0`. Keep `ANDROID_UE_EXTRA_FLAGS` as `-no-metrics -no-audio -partition-size 2048`. The api-33 emulator rejects `-partition-size=2048`.
 
 ```bash
 sudo bash lab/scripts/android-ue-seed.sh --env-file lab/compose/android-ue.env --user ue1
@@ -75,20 +74,25 @@ sudo bash lab/scripts/android-ue-up.sh \
   --user ue1
 ```
 
-The script checks `/dev/kvm`, the ip6 modules, and the memory headroom, rejects `REPLACE_` USIM values, and starts only `ue1`, `enb1`, the route sidecar, and `android1`. It does not start `cgnat` and it does not touch the UPF. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address, installs the default route and the OUTPUT drop, redirects TCP 5555 to `127.0.0.1:5555`, then exits. The emulator starts only after that exit is 0.
+The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not touch the UPF. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. If legacy `ip6tables` has no filter table, it tries `ip6tables-nft`, and otherwise disables IPv6 in the UE netns. It does not load kernel modules.
 
-`up` then adds a `/32` route on `enb1` for `ANDROID_UE_SGWU_S5_ADDR` via the interface that holds the eNB S1-U address. Stock `lab-routes.sh` installs that route only on `l5gd-enb`. Without it, GTP-U replies sourced from the SGW-U S5 address fail reverse-path filtering, so attach can succeed while a ping from the UE netns to the SGi server does not. `up` pings the SGW-U S1-U address from `enb1` and the SGi server from `ue1`. Both must succeed.
+The eNB container has no `NET_ADMIN`. After the route sidecar exits, `up` uses `nsenter` from the host, the same way `lab-routes.sh` does for `l5gd-enb`. It finds the interface that holds `UE1_ENB_S1U` and installs `ANDROID_UE_SGWU_GTPU_ROUTE/32` on that interface. `ip route get` must show that device. `up` then runs `ping -c 3 -I tun_srsue <ANDROID_UE_SGI_PROBE>` from the UE netns. A failed ping stops `up` before `android1` starts. That ping is only meaningful before `--install-upf-route`. After that flag, the test UE is steered to cgnat, which drops the lab subnet, so a ping to the lab SGi server fails on purpose.
 
-It then waits until `adb connect 127.0.0.1:15551` can read `sys.boot_completed=1` (`ANDROID_UE_BOOT_TIMEOUT`, default 600 seconds). On timeout it prints `ss -ltnp` for that port, `ss -ltnp` inside the UE netns, and the last emulator logs. The publish `127.0.0.1:15551:5555` is on `ue1`, because `android1` uses `network_mode: service:ue1` and Compose ignores ports on that service. HQarroum's ADB port is 5555. The emulator itself listens on `127.0.0.1:5555`, and the image's socat binds only `eth0`, so the route sidecar redirects published traffic to that loopback port.
-
-After `up` returns:
+`uu` is an internal network, so Docker does not publish ports from it. Do not use `127.0.0.1:15551`. On the guest:
 
 ```bash
-adb connect 127.0.0.1:15551
-scrcpy -s 127.0.0.1:15551
+adb connect <UE1_UU>:5555
+scrcpy -s <UE1_UU>:5555
 ```
 
-The port is the guest loopback. From a laptop, tunnel it over SSH. Do not publish it on the libvirt bridge.
+From the laptop, use the normal lab key, not the tunnel key:
+
+```bash
+ssh -N -J agen -L 15551:<UE1_UU>:5555 guest
+adb connect 127.0.0.1:15551
+```
+
+Do not publish ADB or VNC on the libvirt bridge or the LAN. Do not attach a non-internal network to the UE. The image's socat already listens on the uu address, port 5555.
 
 ## Verification
 
@@ -106,7 +110,7 @@ Use the IMSI from the env file. Do not paste UE logs into a ticket; the image en
    The first prints `dev tun_srsue`. The second does not. Then from the emulator, ping the SGi server by literal address (`SGI_SERVER` in the env file):
 
    ```bash
-   adb -s 127.0.0.1:15551 shell ping -c 3 <SGI_SERVER>
+   adb -s <UE1_UU>:5555 shell ping -c 3 <SGI_SERVER>
    ```
 
    `adb shell ip route` shows the emulator's SLIRP route. That is expected. The packet leaves QEMU and hits the netns default route.
@@ -117,7 +121,7 @@ Use the IMSI from the env file. Do not paste UE logs into a ticket; the image en
      iperf3 -c <SGI_SERVER> -t 3
    ```
 
-   One TCP flow to the SGi server does not need CGNAT. Browsing does. The OUTPUT filter allows it because the route to that address is `tun_srsue`.
+   One TCP flow to the SGi server does not need CGNAT. Browsing does. The OUTPUT filter allows it because the route to that address is `tun_srsue`. Run this ping and iperf before `--install-upf-route`. After that flag, cgnat drops the lab subnet, so the same ping fails on purpose.
 5. **Public address behind the SOCKS tunnel.** Skip this until the CGNAT section below has been run. The echo host must show the laptop's public address. Write that result as `<LAPTOP_PUBLIC_IP>` in notes. Do not put the real address in the PR.
 
 A failed ZMQ wait or a route timeout means the UE did not attach. Read `sudo docker logs l5gd-ue1` and `sudo docker logs l5gd-enb1` on the guest, fix the subscriber or the addresses, and start again. After a detach, stop the UE and then the eNB before starting them again. The down script does that order.
@@ -173,10 +177,10 @@ Use an echo host Netdrive named. Mask the laptop address in anything that is com
    sudo tcpdump -ni tun_srsue port 53
    ```
 
-   From the emulator, resolve a name (`adb -s 127.0.0.1:15551 shell ping -c 1 example.com`). tcpdump must show the query on `tun_srsue`. Then stop the ssh tunnel and repeat both of these. Both must fail:
+   From the emulator, resolve a name (`adb -s <UE1_UU>:5555 shell ping -c 1 example.com`). tcpdump must show the query on `tun_srsue`. Then stop the ssh tunnel and repeat both of these. Both must fail:
 
    ```bash
-   adb -s 127.0.0.1:15551 shell ping -c 1 example.com
+   adb -s <UE1_UU>:5555 shell ping -c 1 example.com
    sudo docker run --rm --network container:l5gd-ue1 nicolaka/netshoot \
      curl -4 --max-time 10 http://<echo>/
    ```

@@ -43,8 +43,6 @@ services:
     networks:
       uu:
         ipv4_address: ${UE1_UU}
-    ports:
-      - "127.0.0.1:${UE1_ADB_HOST_PORT:?UE1_ADB_HOST_PORT}:5555"
 
   enb1:
     image: ${ANDROID_UE_SRS_IMAGE}
@@ -164,8 +162,6 @@ services:
     networks:
       uu:
         ipv4_address: ${UE2_UU}
-    ports:
-      - "127.0.0.1:${UE2_ADB_HOST_PORT:?UE2_ADB_HOST_PORT}:5555"
 
   enb2:
     image: ${ANDROID_UE_SRS_IMAGE}

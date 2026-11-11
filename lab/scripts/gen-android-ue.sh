@@ -84,8 +84,6 @@ emit_user() {
     networks:
       uu:
         ipv4_address: \${UE${n}_UU}
-    ports:
-      - "127.0.0.1:\${UE${n}_ADB_HOST_PORT:?UE${n}_ADB_HOST_PORT}:5555"
 
   enb${n}:
     image: \${ANDROID_UE_SRS_IMAGE}

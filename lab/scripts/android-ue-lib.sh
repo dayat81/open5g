@@ -115,33 +115,6 @@ sys.exit(0 if left // shift == right // shift else 1)
 PY
 }
 
-android_ue_ip6_preflight() {
-  local modules_file=${ANDROID_UE_MODULES_FILE:-/proc/modules}
-  local have_tables=0 have_filter=0 probe_ok=0
-  if [ -r "$modules_file" ] && grep -q '^ip6_tables ' "$modules_file"; then
-    have_tables=1
-  fi
-  if [ -r "$modules_file" ] && grep -q '^ip6table_filter ' "$modules_file"; then
-    have_filter=1
-  fi
-  if [ "$have_tables" -eq 1 ] && [ "$have_filter" -eq 1 ]; then
-    return 0
-  fi
-  if [ -n "${ANDROID_UE_MODPROBE_N_OK:-}" ]; then
-    probe_ok=$ANDROID_UE_MODPROBE_N_OK
-  elif command -v modprobe >/dev/null 2>&1 \
-    && modprobe -n ip6_tables >/dev/null 2>&1 \
-    && modprobe -n ip6table_filter >/dev/null 2>&1; then
-    probe_ok=1
-  fi
-  if [ "$probe_ok" -eq 1 ]; then
-    echo "android-ue: ip6_tables and ip6table_filter are not loaded. The srsRAN image uses legacy ip6tables. Load them before up: modprobe ip6_tables ip6table_filter. This script does not load kernel modules." >&2
-  else
-    echo "android-ue: ip6_tables and ip6table_filter are not available. Legacy ip6tables in the UE netns cannot start." >&2
-  fi
-  return 1
-}
-
 android_ue_reject_placeholder() {
   local name=$1
   local value=$2
