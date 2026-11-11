@@ -475,4 +475,148 @@ if grep -E -n '[0-9A-Fa-f]{32}' "$rendered" "$socks_rendered"; then
   echo "rendered compose contains a 32-hex USIM value" >&2
   exit 1
 fi
+
+echo "cgnat volume mounts"
+python3 - <<'PY'
+import pathlib
+import sys
+path = pathlib.Path("lab/compose/docker-compose.android-ue.optional.yml")
+text = path.read_text(encoding="utf-8")
+services = {}
+current = None
+in_volumes = False
+for raw in text.splitlines():
+    if raw.startswith("  ") and not raw.startswith("   ") and raw.rstrip().endswith(":"):
+        current = raw.strip()[:-1]
+        services[current] = []
+        in_volumes = False
+        continue
+    if current is None:
+        continue
+    if raw.startswith("    volumes:"):
+        in_volumes = True
+        continue
+    if in_volumes and raw.startswith("      - "):
+        services[current].append(raw.strip()[2:].strip().strip('"'))
+        continue
+    if in_volumes and raw.startswith("    ") and not raw.startswith("      "):
+        in_volumes = False
+problems = []
+for name, vols in services.items():
+    dirs = []
+    files = []
+    for spec in vols:
+        parts = spec.split(":")
+        if len(parts) < 2:
+            continue
+        # source may be ${VAR:-default}/file, so the target is the last path-like field before ro
+        mode = parts[-1] if parts[-1] in {"ro", "rw"} else ""
+        target = parts[-2] if mode else parts[-1]
+        source = ":".join(parts[:-2] if mode else parts[:-1])
+        if source.endswith(".template") or source.endswith(".sh") or source.endswith("Corefile"):
+            files.append(target)
+        else:
+            dirs.append(target.rstrip("/"))
+    for target in files:
+        for directory in dirs:
+            if target == directory or target.startswith(directory + "/"):
+                problems.append(f"{name}: {target} is inside read-only directory mount {directory}")
+if problems:
+    sys.stderr.write("\n".join(problems) + "\n")
+    sys.exit(1)
+PY
+
+if docker info >/dev/null 2>&1; then
+  docker_cmd=(docker)
+elif sudo docker info >/dev/null 2>&1; then
+  docker_cmd=(sudo docker)
+else
+  echo "docker daemon is not available; mount create was not run" >&2
+  exit 1
+fi
+mount_image=${ANDROID_UE_MOUNT_IMAGE:-alpine:3.20}
+if ! "${docker_cmd[@]}" image inspect "$mount_image" >/dev/null 2>&1; then
+  "${docker_cmd[@]}" pull "$mount_image"
+fi
+mount_env=$(mktemp)
+mount_override=$(mktemp)
+if [ "${docker_cmd[0]}" = sudo ]; then
+  mount_compose=(sudo "${compose[@]}")
+else
+  mount_compose=("${compose[@]}")
+fi
+cleanup_mount() {
+  "${mount_compose[@]}" -p android-ue-mountcheck -f lab/compose/docker-compose.android-ue.optional.yml \
+    -f "$mount_override" --env-file "$mount_env" --profile android-ue --profile socks-egress \
+    rm -sf cgnat egress >/dev/null 2>&1 || true
+  "${docker_cmd[@]}" network rm android-ue-mount-sgi android-ue-mount-egress >/dev/null 2>&1 || true
+  rm -f "$mount_env" "$mount_override"
+  rm -rf "$tmp"
+}
+trap cleanup_mount EXIT
+python3 - "$example" "$mount_env" "$mount_image" <<'PY'
+import sys
+src, dest, image = sys.argv[1:]
+overrides = {
+    "ANDROID_UE_CGNAT_IMAGE": image,
+    "ANDROID_UE_TUN2SOCKS_IMAGE": image,
+    "ANDROID_UE_DNS_IMAGE": image,
+    "ANDROID_UE_SGI_NETWORK": "android-ue-mount-sgi",
+    "ANDROID_UE_EGRESS_NETWORK": "android-ue-mount-egress",
+    "CGNAT_SGI_ADDR": "192.0.2.30",
+    "CGNAT_EGRESS_ADDR": "198.51.100.40",
+    "ANDROID_UE_SOCKS_ADDR": "192.0.2.10:1080",
+    "ANDROID_UE_LAB_SUBNET": "192.0.2.0/24",
+}
+lines = []
+seen = set()
+for raw in open(src, encoding="utf-8"):
+    text = raw.strip()
+    if not text or text.startswith("#") or "=" not in text:
+        continue
+    key = text.split("=", 1)[0]
+    if key in overrides:
+        lines.append(f"{key}={overrides[key]}")
+        seen.add(key)
+    else:
+        lines.append(text)
+for key, value in overrides.items():
+    if key not in seen:
+        lines.append(f"{key}={value}")
+open(dest, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PY
+cat >"$mount_override" <<'EOF'
+services:
+  cgnat:
+    container_name: android-ue-mount-cgnat
+    entrypoint: ["/bin/sh", "-c", "test -f /opt/cgnat/android-ue-cgnat.sh && test -f /opt/cgnat/render-cgnat.sh && test -f /opt/cgnat/android-ue-add-ue.sh && test -f /etc/cgnat/cgnat.nft.template"]
+  egress:
+    container_name: android-ue-mount-egress
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c", "test -f /opt/cgnat/android-ue-egress.sh"]
+EOF
+"${docker_cmd[@]}" network create --subnet 192.0.2.0/24 android-ue-mount-sgi >/dev/null
+"${docker_cmd[@]}" network create --internal --subnet 198.51.100.0/24 android-ue-mount-egress >/dev/null
+# The probe entrypoint only checks that the mounts exist. nft and tun2socks are not started.
+if ! "${mount_compose[@]}" -p android-ue-mountcheck \
+  -f lab/compose/docker-compose.android-ue.optional.yml \
+  -f "$mount_override" \
+  --env-file "$mount_env" \
+  --profile android-ue \
+  --profile socks-egress \
+  run --rm --no-deps cgnat; then
+  echo "cgnat did not start far enough to see its mounted files" >&2
+  exit 1
+fi
+if ! "${mount_compose[@]}" -p android-ue-mountcheck \
+  -f lab/compose/docker-compose.android-ue.optional.yml \
+  -f "$mount_override" \
+  --env-file "$mount_env" \
+  --profile android-ue \
+  --profile socks-egress \
+  run --rm --no-deps egress; then
+  echo "egress did not start far enough to see its mounted script" >&2
+  exit 1
+fi
+echo "cgnat and egress mounts started"
 echo "android-ue checks passed"

@@ -254,7 +254,7 @@ services:
     sysctls:
       net.ipv4.ip_forward: "1"
       net.ipv4.conf.all.route_localnet: "1"
-    entrypoint: ["/bin/sh", "/etc/cgnat/android-ue-cgnat.sh"]
+    entrypoint: ["/bin/sh", "/opt/cgnat/android-ue-cgnat.sh"]
     environment:
       UE_POOL: ${UE_POOL:?UE_POOL}
       UPF_SGI_ADDR: ${UPF_SGI_ADDR:?UPF_SGI_ADDR}
@@ -264,9 +264,9 @@ services:
       ANDROID_UE_SOCKS_ADDR: ${ANDROID_UE_SOCKS_ADDR:?ANDROID_UE_SOCKS_ADDR}
     volumes:
       - ../config/cgnat:/etc/cgnat:ro
-      - ../scripts/render-cgnat.sh:/etc/cgnat/render-cgnat.sh:ro
-      - ../scripts/android-ue-cgnat.sh:/etc/cgnat/android-ue-cgnat.sh:ro
-      - ../scripts/android-ue-add-ue.sh:/etc/cgnat/android-ue-add-ue.sh:ro
+      - ../scripts/render-cgnat.sh:/opt/cgnat/render-cgnat.sh:ro
+      - ../scripts/android-ue-cgnat.sh:/opt/cgnat/android-ue-cgnat.sh:ro
+      - ../scripts/android-ue-add-ue.sh:/opt/cgnat/android-ue-add-ue.sh:ro
     networks:
       sgi:
         ipv4_address: ${CGNAT_SGI_ADDR}
@@ -284,11 +284,11 @@ services:
     cap_add: [NET_ADMIN]
     devices:
       - "/dev/net/tun:/dev/net/tun"
-    entrypoint: ["/bin/sh", "/etc/cgnat/android-ue-egress.sh"]
+    entrypoint: ["/bin/sh", "/opt/cgnat/android-ue-egress.sh"]
     environment:
       ANDROID_UE_SOCKS_ADDR: ${ANDROID_UE_SOCKS_ADDR}
     volumes:
-      - ../scripts/android-ue-egress.sh:/etc/cgnat/android-ue-egress.sh:ro
+      - ../scripts/android-ue-egress.sh:/opt/cgnat/android-ue-egress.sh:ro
     depends_on:
       cgnat:
         condition: service_started

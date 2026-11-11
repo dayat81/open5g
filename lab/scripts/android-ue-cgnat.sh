@@ -51,7 +51,7 @@ export UE_POOL="$UE_POOL"
 export LAB_SUBNET="$ANDROID_UE_LAB_SUBNET"
 export SOCKS_ADDR="$socks_host"
 export CT_LIMIT="$CGNAT_CT_LIMIT"
-/bin/sh /etc/cgnat/render-cgnat.sh "$template" >"$rendered"
+/bin/sh /opt/cgnat/render-cgnat.sh "$template" >"$rendered"
 
 if [ -w /proc/sys/net/ipv4/ip_forward ]; then
   printf '1\n' > /proc/sys/net/ipv4/ip_forward

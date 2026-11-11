@@ -166,7 +166,7 @@ sudo bash lab/scripts/android-ue-up.sh \
   --install-upf-route
 ```
 
-`--with-socks-egress` starts `cgnat`, then `egress` (tun2socks), then `egress-dns`. Both sidecars use `network_mode: service:cgnat`. In that netns the only default route is `dev tun0`. A host route to `<GW_IP>` exists so tun2socks can reach the tunnel. It is not a second default route. nft drops anything else that does not leave via tun0.
+`--with-socks-egress` starts `cgnat`, then `egress` (tun2socks), then `egress-dns`. The nft template stays at `/etc/cgnat`. The cgnat and egress scripts are mounted at `/opt/cgnat`, not inside that read-only config directory. Both sidecars use `network_mode: service:cgnat`. In that netns the only default route is `dev tun0`. A host route to `<GW_IP>` exists so tun2socks can reach the tunnel. It is not a second default route. nft drops anything else that does not leave via tun0.
 
 Set `UE_POOL` to `<UE1_ADDR>/32` before this command. The script installs `ip rule from <UE1_ADDR>/32 lookup 1080` on the UPF and a default route only in that table. The main default route is not changed, so other UEs are not sent to the laptop. A second run does not add another rule. State is `/var/lib/open5g-android-ue/upf-rule.txt`. HSS, PCRF, and SMF configuration are not changed. The static address is the `ue.addr` written by the seed script.
 
