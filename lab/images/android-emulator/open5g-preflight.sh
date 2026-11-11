@@ -1,97 +1,107 @@
 #!/bin/bash
 # Open5G preflight. Run in the emulator entrypoint before QEMU starts.
-# Upstream docker-android does not ship this file.
+# This container has no NET_ADMIN. The script only reads the netns.
+# The route sidecar creates dummy0, brings it up, and adds the ULA.
 set -euo pipefail
 
 echo "android-emulator: AI_ADDRCONFIG preflight"
 
-ula=${ANDROID_UE_IPV6_ULA:-fd00::1/128}
-case "$ula" in
-  *:*/128) ;;
-  *)
-    echo "android-emulator: ANDROID_UE_IPV6_ULA must be an IPv6 address with /128" >&2
-    exit 1
-    ;;
-esac
-case "$ula" in
-  *REPLACE*|*CHANGEME*)
-    echo "android-emulator: ANDROID_UE_IPV6_ULA is still a placeholder" >&2
-    exit 1
-    ;;
-esac
-addr=${ula%/*}
-ip link add dummy0 type dummy >/dev/null 2>&1 || true
-if ! ip link show dummy0 >/dev/null 2>&1; then
-  echo "android-emulator: cannot create dummy0. The ULA anchor is required for getaddrinfo AI_ADDRCONFIG." >&2
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "android-emulator: python3 is missing. The image patch must install it." >&2
   exit 1
 fi
-ip link set dummy0 up
-sys=/proc/sys/net/ipv6/conf/dummy0/disable_ipv6
-if [ -w "$sys" ]; then
-  printf '0\n' >"$sys"
+if ! [ -c /dev/kvm ]; then
+  echo "android-emulator: /dev/kvm is not a character device. The emulator needs the host device." >&2
+  exit 1
 fi
-if ! ip -6 addr show dev dummy0 | grep -q "inet6 ${addr}/128"; then
-  ip -6 addr add "$ula" dev dummy0 nodad
+
+ula=${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
+python3 - "$ula" <<'PY'
+import ipaddress
+import sys
+text = sys.argv[1]
+if "/" not in text:
+    sys.exit("android-emulator: ANDROID_UE_IPV6_ULA must be an fc00::/7 address with /128")
+addr, prefix = text.split("/", 1)
+if prefix != "128":
+    sys.exit("android-emulator: ANDROID_UE_IPV6_ULA must use prefix /128")
+try:
+    ip = ipaddress.IPv6Address(addr)
+except ipaddress.AddressValueError as exc:
+    sys.exit("android-emulator: ANDROID_UE_IPV6_ULA is not an IPv6 address: %s" % exc)
+if ip not in ipaddress.IPv6Network("fc00::/7"):
+    sys.exit("android-emulator: ANDROID_UE_IPV6_ULA must be inside fc00::/7")
+PY
+
+if ! ip link show dummy0 >/dev/null 2>&1; then
+  echo "android-emulator: dummy0 is missing. The route sidecar must create the ULA anchor before the emulator starts." >&2
+  exit 1
 fi
-while read -r route; do
-  [ -n "$route" ] || continue
-  # shellcheck disable=SC2086
-  ip -6 route del $route
-done < <(ip -6 route show dev dummy0 || true)
+flags=$(cat /sys/class/net/dummy0/flags)
+if [ $((flags & 1)) -ne 1 ]; then
+  echo "android-emulator: dummy0 is not UP. The route sidecar must bring it up." >&2
+  exit 1
+fi
+for key in lo dummy0; do
+  val=$(cat "/proc/sys/net/ipv6/conf/${key}/disable_ipv6" 2>/dev/null || echo missing)
+  if [ "$val" != "0" ]; then
+    echo "android-emulator: disable_ipv6 on ${key} is ${val}. The route sidecar must leave it at 0." >&2
+    exit 1
+  fi
+done
+if ip -6 route show dev dummy0 | grep -q .; then
+  echo "android-emulator: dummy0 still has a main-table route. The route sidecar must remove it." >&2
+  ip -6 route show dev dummy0 >&2 || true
+  exit 1
+fi
+if ! ip -6 route show | grep -q 'unreachable default'; then
+  echo "android-emulator: the unreachable IPv6 default route is missing. The route sidecar must install it." >&2
+  exit 1
+fi
 if ip -6 route show default | grep -v unreachable | grep -q .; then
-  echo "android-emulator: IPv6 anchor must not add a usable default route" >&2
+  echo "android-emulator: a usable IPv6 default route is present" >&2
   ip -6 route show >&2 || true
   exit 1
 fi
-
-python3 -c 'import socket, sys
-try:
-    socket.getaddrinfo("::1", 5554, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG)
-except socket.gaierror as exc:
-    print("android-emulator: getaddrinfo ::1 with AI_ADDRCONFIG failed: %s" % exc, file=sys.stderr)
-    sys.exit(1)
-print("android-emulator: getaddrinfo ::1 with AI_ADDRCONFIG succeeded")
-'
-
 if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
   echo "android-emulator: ::1 is missing on lo" >&2
   exit 1
 fi
 
-python3 - <<'PY'
+python3 - "$ula" <<'PY'
+import ipaddress
 import pathlib
+import socket
 import sys
 
-def usable(flags, name):
-    flags_i = int(flags, 16)
-    if flags_i & 0x40 or flags_i & 0x08:
-        return False
-    flagfile = pathlib.Path("/sys/class/net") / name / "flags"
-    if not flagfile.exists():
-        return False
-    return bool(int(flagfile.read_text(encoding="utf-8").strip(), 16) & 0x1)
-
+want = ipaddress.IPv6Address(sys.argv[1].split("/", 1)[0])
 text = pathlib.Path("/proc/net/if_inet6").read_text(encoding="utf-8")
-ok = False
+found = False
 for line in text.splitlines():
     parts = line.split()
     if len(parts) < 6:
         continue
-    addr, _idx, _plen, _scope, flags, name = parts[:6]
-    if name == "lo":
+    raw, _idx, plen, _scope, flags, name = parts[:6]
+    if name != "dummy0" or plen != "80":
         continue
-    prefix = addr[:2].lower()
-    if prefix in ("fd", "fc") and name == "dummy0" and usable(flags, name):
-        print("android-emulator: ULA anchor on dummy0")
-        ok = True
-        break
-    if addr.lower().startswith("fe80") and usable(flags, name):
-        print("android-emulator: usable fe80 on %s" % name)
-        ok = True
-        break
-if not ok:
-    print("android-emulator: no ULA on dummy0 and no UP non-tentative fe80", file=sys.stderr)
-    sys.exit(1)
+    addr = ipaddress.IPv6Address(int(raw, 16))
+    if addr != want:
+        continue
+    if int(flags, 16) & 0x48:
+        sys.exit("android-emulator: ULA on dummy0 is tentative or dadfailed. The route sidecar must add it with nodad.")
+    flagfile = pathlib.Path("/sys/class/net/dummy0/flags")
+    if not int(flagfile.read_text(encoding="utf-8").strip(), 16) & 0x1:
+        sys.exit("android-emulator: dummy0 is not UP. The route sidecar must bring it up.")
+    found = True
+    break
+if not found:
+    sys.exit("android-emulator: dummy0 has no non-tentative %s. The route sidecar must install that ULA before the emulator starts." % want)
+
+try:
+    socket.getaddrinfo("::1", 5554, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG)
+except socket.gaierror as exc:
+    sys.exit("android-emulator: getaddrinfo ::1 with AI_ADDRCONFIG failed: %s" % exc)
+print("android-emulator: ULA %s on dummy0; getaddrinfo ::1 with AI_ADDRCONFIG succeeded" % want)
 PY
 
 echo "android-emulator: accel-check"

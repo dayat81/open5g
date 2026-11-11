@@ -90,8 +90,8 @@ android_ue_require_ipv6() {
     mkdir -p "${sysroot}/${name}"
     nsenter -t "$pid" -n cat "/sys/class/net/${name}/flags" >"${sysroot}/${name}/flags" 2>/dev/null || printf '0\n' >"${sysroot}/${name}/flags"
   done <"$proc"
-  if ! android_ue_nonloop_v6_ok "$proc" "$sysroot"; then
-    echo "android-ue: ue${n} has no ULA on dummy0 and no UP non-tentative fe80" >&2
+  if ! android_ue_ula_proc_ok "$proc" "$sysroot"; then
+    echo "android-ue: ue${n} dummy0 has no UP non-tentative ULA. fe80 does not replace it." >&2
     rm -rf "$proc" "$sysroot"
     exit 1
   fi
@@ -135,7 +135,35 @@ android_ue_require_ipv6() {
       fi
     done
   done
-  echo "android-ue: ue${n} has ::1, a non-loopback IPv6 anchor, and IPv6 is fail-closed"
+  echo "android-ue: ue${n} has ::1, a dummy0 ULA, and IPv6 is fail-closed"
+}
+
+android_ue_install_ip6_filter() {
+  local n=$1
+  local pid rendered
+  if [ "${ANDROID_UE_IPV6_NO_FILTER_OK:-0}" = "1" ]; then
+    echo "android-ue: ANDROID_UE_IPV6_NO_FILTER_OK=1, not installing the IPv6 filter"
+    return 0
+  fi
+  if ! command -v nft >/dev/null 2>&1; then
+    echo "android-ue: nft is missing on the host. Refusing to continue without an IPv6 filter." >&2
+    exit 1
+  fi
+  pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}")
+  rendered=$(mktemp)
+  android_ue_render_ip6_nft >"$rendered"
+  nsenter -t "$pid" -n nft delete table ip6 android_ue >/dev/null 2>&1 || true
+  if ! nsenter -t "$pid" -n nft -f "$rendered"; then
+    echo "android-ue: nft IPv6 filter failed in the ue${n} netns. The srsRAN image ip6tables is not used." >&2
+    rm -f "$rendered"
+    exit 1
+  fi
+  rm -f "$rendered"
+  if ! nsenter -t "$pid" -n nft list table ip6 android_ue | grep -q 'hook input'; then
+    echo "android-ue: nft table ip6 android_ue is missing after install" >&2
+    exit 1
+  fi
+  echo "android-ue: IPv6 filter installed with nft in the ue${n} netns"
 }
 
 android_ue_boot_diag() {
@@ -420,6 +448,7 @@ android_ue_compose "$root" "$env_file" up -d \
   "ue${n}" "enb${n}" "ue${n}-route"
 android_ue_wait_route "$n"
 android_ue_require_ipv6 "$n"
+android_ue_install_ip6_filter "$n"
 android_ue_install_gtpu_route "$n"
 android_ue_probe_sgi "$n"
 android_ue_compose "$root" "$env_file" up -d "android${n}"

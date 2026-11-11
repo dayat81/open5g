@@ -142,7 +142,29 @@ android_ue_fe80_proc_ok() {
   return 1
 }
 
-# ULA on dummy0, or a usable fe80. eth0 may have disable_ipv6=1 and tun may have no fe80.
+# fc00::/7 with prefix /128. ::1, fe80, and global unicast are rejected.
+android_ue_ula_cidr_ok() {
+  local ula=$1
+  local addr head
+  case "$ula" in
+    */128) ;;
+    *) return 1 ;;
+  esac
+  addr=${ula%/*}
+  case "$addr" in
+    ::*) return 1 ;;
+    *:*) ;;
+    *) return 1 ;;
+  esac
+  head=$(printf '%s' "${addr%%:*}" | tr '[:upper:]' '[:lower:]')
+  printf '%s\n' "$head" | grep -Eq '^(fc|fd)[0-9a-f]{0,2}$' || return 1
+  printf '%s\n' "$addr" | grep -Eq '^[0-9A-Fa-f:]+$' || return 1
+  case "$addr" in
+    *:::*) return 1 ;;
+  esac
+}
+
+# A non-tentative ULA on an UP dummy0. fe80 does not satisfy this check.
 android_ue_ula_proc_ok() {
   local procfile=$1
   local sysroot=$2
@@ -170,19 +192,32 @@ android_ue_ula_proc_ok() {
 }
 
 android_ue_nonloop_v6_ok() {
-  if android_ue_ula_proc_ok "$@"; then
-    return 0
-  fi
-  android_ue_fe80_proc_ok "$@"
+  android_ue_ula_proc_ok "$@"
 }
 
 android_ue_android_image_ok() {
   local image=$1
   case "$image" in
     open5g-android-emulator:local) return 0 ;;
-    *@sha256:[0-9A-Fa-f]*) return 0 ;;
-    *) return 1 ;;
   esac
+  printf '%s\n' "$image" | grep -Eq '@sha256:[0-9A-Fa-f]{64}$'
+}
+
+# Host nft rules for the UE netns. lo is accepted, so ::1 on lo stays open.
+# policy drop covers every other interface. No extra ::1 match.
+android_ue_render_ip6_nft() {
+  cat <<'EOF'
+table ip6 android_ue {
+	chain input {
+		type filter hook input priority 0; policy drop;
+		iif "lo" accept
+	}
+	chain output {
+		type filter hook output priority 0; policy drop;
+		oif "lo" accept
+	}
+}
+EOF
 }
 
 android_ue_kvm_gid_ok() {

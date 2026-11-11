@@ -37,7 +37,7 @@ diff -ruN a/Dockerfile b/Dockerfile
 -ENTRYPOINT ["/opt/start-emulator.sh"]
 \ No newline at end of file
 +ENTRYPOINT ["/opt/start-emulator.sh"]
-+HEALTHCHECK --start-period=600s --interval=30s --timeout=10s --retries=3 CMD adb shell getprop sys.boot_completed | tr -d '\r' | grep -qx 1
++HEALTHCHECK --start-period=900s --interval=30s --timeout=10s --retries=3 CMD adb shell getprop sys.boot_completed | tr -d '\r' | grep -qx 1
 diff -ruN a/scripts/emulator-monitoring.sh b/scripts/emulator-monitoring.sh
 --- a/scripts/emulator-monitoring.sh	2026-11-11 09:53:58.937633148 +0000
 +++ b/scripts/emulator-monitoring.sh	2026-11-11 09:57:36.777534749 +0000
@@ -73,6 +73,16 @@ diff -ruN a/scripts/install-sdk.sh b/scripts/install-sdk.sh
 diff -ruN a/scripts/start-emulator.sh b/scripts/start-emulator.sh
 --- a/scripts/start-emulator.sh	2026-11-11 09:53:58.937633148 +0000
 +++ b/scripts/start-emulator.sh	2026-11-11 09:57:36.777534749 +0000
+@@ -13,7 +13,7 @@
+ OPT_SKIP_AUTH=${SKIP_AUTH:-true}
+ AUTH_FLAG=
+-# Start ADB server by listening on all interfaces.
++# Open5G: loopback only. -a would listen on every interface.
+ echo "Starting the ADB server ..."
+-adb -a -P 5037 server nodaemon &
++adb -P 5037 server nodaemon &
+ 
+ # Detect ip and forward ADB ports from the container's network
 @@ -55,6 +55,8 @@
    export GPU_MODE="swiftshader_indirect"
  fi

@@ -4,24 +4,18 @@
 # and drop other new output so the emulator cannot bypass the EPC.
 set -euo pipefail
 
-# INPUT policy DROP. lo and ::1 stay open for the modem chardev.
-# Every other interface is dropped, including one that appears later.
-android_ue_render_ip6_input() {
+# IPv4 INPUT. lo and established flows stay open. New packets from tun_srsue
+# are dropped. uu (5554/5555) is not named here, so those listeners stay reachable.
+android_ue_render_ip4_input() {
   cat <<'EOF'
-*filter
-:INPUT DROP [0:0]
-:ANDROID_UE_IN6 - [0:0]
--A INPUT -j ANDROID_UE_IN6
--A ANDROID_UE_IN6 -i lo -j ACCEPT
--A ANDROID_UE_IN6 -s ::1 -j ACCEPT
--A ANDROID_UE_IN6 -d ::1 -j ACCEPT
--A ANDROID_UE_IN6 ! -i lo -j DROP
-COMMIT
+-A ANDROID_UE_IN4 -i lo -j ACCEPT
+-A ANDROID_UE_IN4 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+-A ANDROID_UE_IN4 -i tun_srsue -j DROP
 EOF
 }
 
-if [ "${1:-}" = "--render-ip6-input" ]; then
-  android_ue_render_ip6_input
+if [ "${1:-}" = "--render-ip4-input" ]; then
+  android_ue_render_ip4_input
   exit 0
 fi
 
@@ -73,10 +67,20 @@ install_guard() {
 }
 
 install_guard 4 iptables ANDROID_UE_GUARD
-if ps -eo comm= 2>/dev/null | awk '$1 == "emulator" { found = 1 } END { exit found ? 0 : 1 }'; then
-  echo "android-ue-route: emulator is already running; not changing IPv6" >&2
-  exit 0
-fi
+android_ue_route_install_input4() {
+  local bin=iptables
+  local chain=ANDROID_UE_IN4
+  if ! "$bin" -N "$chain" 2>/dev/null; then
+    "$bin" -F "$chain"
+  fi
+  if ! "$bin" -C INPUT -j "$chain" 2>/dev/null; then
+    "$bin" -I INPUT 1 -j "$chain"
+  fi
+  "$bin" -A "$chain" -i lo -j ACCEPT
+  "$bin" -A "$chain" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  "$bin" -A "$chain" -i "$tun" -j DROP
+}
+android_ue_route_install_input4
 # disable_ipv6=0 on all, default, lo, and dummy0. Docker may leave eth0 at 1.
 # accept_ra, autoconf, and forwarding are 0 on each non-lo interface,
 # because all/default do not apply to interfaces that already exist.
@@ -100,28 +104,61 @@ android_ue_route_ipv6_lock() {
     done
   done
 }
-android_ue_route_anchor() {
-  local ula addr sys route
-  ula=${ANDROID_UE_IPV6_ULA:-fd00::1/128}
-  case "$ula" in
-    *:*/128) ;;
-    *)
-      echo "android-ue-route: ANDROID_UE_IPV6_ULA must be an IPv6 address with /128" >&2
-      exit 1
-      ;;
-  esac
+android_ue_route_ula_ok() {
+  local ula=$1
+  local addr head
   case "$ula" in
     *REPLACE*|*CHANGEME*)
       echo "android-ue-route: ANDROID_UE_IPV6_ULA is still a placeholder" >&2
-      exit 1
+      return 1
       ;;
   esac
+  case "$ula" in
+    */128) ;;
+    *)
+      echo "android-ue-route: ANDROID_UE_IPV6_ULA must use prefix /128" >&2
+      return 1
+      ;;
+  esac
+  addr=${ula%/*}
+  case "$addr" in
+    ::*)
+      echo "android-ue-route: ANDROID_UE_IPV6_ULA must be inside fc00::/7" >&2
+      return 1
+      ;;
+    *:*) ;;
+    *)
+      echo "android-ue-route: ANDROID_UE_IPV6_ULA must be an IPv6 address" >&2
+      return 1
+      ;;
+  esac
+  head=$(printf '%s' "${addr%%:*}" | tr '[:upper:]' '[:lower:]')
+  if ! printf '%s\n' "$head" | grep -Eq '^(fc|fd)[0-9a-f]{0,2}$'; then
+    echo "android-ue-route: ANDROID_UE_IPV6_ULA must be inside fc00::/7" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$addr" | grep -Eq '^[0-9A-Fa-f:]+$'; then
+    echo "android-ue-route: ANDROID_UE_IPV6_ULA has illegal characters" >&2
+    return 1
+  fi
+  case "$addr" in
+    *:::*)
+      echo "android-ue-route: ANDROID_UE_IPV6_ULA is not a valid IPv6 address" >&2
+      return 1
+      ;;
+  esac
+}
+android_ue_route_anchor() {
+  local ula addr sys route
+  ula=${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
+  android_ue_route_ula_ok "$ula"
   addr=${ula%/*}
   ip link add dummy0 type dummy >/dev/null 2>&1 || true
   if ! ip link show dummy0 >/dev/null 2>&1; then
     echo "android-ue-route: cannot create dummy0. The ULA anchor is required." >&2
     exit 1
   fi
+  ip link set dummy0 addrgenmode none
   ip link set dummy0 up
   sys=/proc/sys/net/ipv6/conf/dummy0/disable_ipv6
   if [ -w "$sys" ]; then
@@ -130,25 +167,12 @@ android_ue_route_anchor() {
   if ! ip -6 addr show dev dummy0 | grep -q "inet6 ${addr}/128"; then
     ip -6 addr add "$ula" dev dummy0 nodad
   fi
+  ip -6 route del "${addr}/128" dev dummy0 || true
   while read -r route; do
     [ -n "$route" ] || continue
     # shellcheck disable=SC2086
-    ip -6 route del $route
+    ip -6 route del $route dev dummy0 || true
   done < <(ip -6 route show dev dummy0 || true)
-}
-android_ue_route_install_input6() {
-  local bin=$1
-  if ! "$bin" -N ANDROID_UE_IN6 2>/dev/null; then
-    "$bin" -F ANDROID_UE_IN6
-  fi
-  if ! "$bin" -C INPUT -j ANDROID_UE_IN6 2>/dev/null; then
-    "$bin" -I INPUT 1 -j ANDROID_UE_IN6
-  fi
-  "$bin" -A ANDROID_UE_IN6 -i lo -j ACCEPT
-  "$bin" -A ANDROID_UE_IN6 -s ::1 -j ACCEPT
-  "$bin" -A ANDROID_UE_IN6 -d ::1 -j ACCEPT
-  "$bin" -A ANDROID_UE_IN6 ! -i lo -j DROP
-  "$bin" -P INPUT DROP
 }
 android_ue_route_anchor
 android_ue_route_ipv6_lock
@@ -158,18 +182,6 @@ while read -r route; do
   ip -6 route del $route
 done < <(ip -6 route show default || true)
 ip -6 route replace unreachable default metric 1
-if command -v ip6tables >/dev/null 2>&1 && ip6tables -L >/dev/null 2>&1; then
-  install_guard 6 ip6tables ANDROID_UE_GUARD6
-  android_ue_route_install_input6 ip6tables
-elif command -v ip6tables-nft >/dev/null 2>&1 && ip6tables-nft -L >/dev/null 2>&1; then
-  install_guard 6 ip6tables-nft ANDROID_UE_GUARD6
-  android_ue_route_install_input6 ip6tables-nft
-elif [ "${ANDROID_UE_IPV6_NO_FILTER_OK:-0}" = "1" ]; then
-  echo "android-ue-route: ip6tables is missing and ANDROID_UE_IPV6_NO_FILTER_OK=1. The unreachable default route remains." >&2
-else
-  echo "android-ue-route: ip6tables and ip6tables-nft are missing. Refusing to continue. Set ANDROID_UE_IPV6_NO_FILTER_OK=1 only for a netns check." >&2
-  exit 1
-fi
 if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
   echo "android-ue-route: ::1 is missing on lo" >&2
   exit 1
@@ -195,9 +207,6 @@ android_ue_route_nonloop_ok() {
     if [ "$name" = "dummy0" ] && { [ "$prefix" = "fd" ] || [ "$prefix" = "fc" ]; }; then
       return 0
     fi
-    case "$addr" in
-      fe80*|FE80*) return 0 ;;
-    esac
   done < /proc/net/if_inet6
   return 1
 }
@@ -209,7 +218,7 @@ while [ "$SECONDS" -le "$deadline" ]; do
   sleep 1
 done
 if ! android_ue_route_nonloop_ok; then
-  echo "android-ue-route: no ULA on dummy0 and no UP non-tentative fe80" >&2
+  echo "android-ue-route: dummy0 has no UP non-tentative ULA. fe80 does not replace it." >&2
   ip -6 addr show >&2 || true
   exit 1
 fi

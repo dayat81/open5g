@@ -138,7 +138,7 @@ emit_user() {
       ANDROID_UE_ENB_UU: \${UE${n}_ENB_UU}
       ANDROID_UE_TUN: tun_srsue
       ANDROID_UE_ATTACH_TIMEOUT: \${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
-      ANDROID_UE_IPV6_ULA: \${ANDROID_UE_IPV6_ULA:-fd00::1/128}
+      ANDROID_UE_IPV6_ULA: \${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
     volumes:
       - ../scripts/android-ue-route.sh:/opt/android-ue/android-ue-route.sh:ro
     depends_on:
@@ -165,7 +165,7 @@ emit_user() {
       DISABLE_ANIMATION: \${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
       EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server \${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
       BOOT_TIMEOUT: \${ANDROID_UE_BOOT_TIMEOUT:-600}
-      ANDROID_UE_IPV6_ULA: \${ANDROID_UE_IPV6_ULA:-fd00::1/128}
+      ANDROID_UE_IPV6_ULA: \${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
     depends_on:
       ue${n}-route:
         condition: service_completed_successfully

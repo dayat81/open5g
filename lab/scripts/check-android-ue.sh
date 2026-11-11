@@ -307,7 +307,7 @@ if [ -z "$wait_at" ] || [ -z "$lo_at" ] || [ -z "$gtpu_at" ] || [ -z "$probe_at"
   exit 1
 fi
 grep -q 'unreachable default' lab/scripts/android-ue-route.sh
-grep -q 'ANDROID_UE_IPV6_NO_FILTER_OK' lab/scripts/android-ue-route.sh
+grep -q 'ANDROID_UE_IPV6_NO_FILTER_OK' lab/scripts/android-ue-up.sh
 grep -q '16#48' lab/scripts/android-ue-route.sh
 grep -q 'ANDROID_UE_BOOT_GATE' lab/scripts/android-ue-up.sh
 grep -q 'accept_ra' lab/scripts/android-ue-route.sh
@@ -322,10 +322,8 @@ if ! grep -q -F "printf '0" lab/scripts/android-ue-route.sh; then
 fi
 grep -q 'forwarding' lab/scripts/android-ue-route.sh
 grep -q 'accept_ra autoconf forwarding' lab/scripts/android-ue-route.sh
-emu_at=$(grep -n -F 'emulator is already running' lab/scripts/android-ue-route.sh | head -n 1 | cut -d: -f1)
-lock_at=$(grep -n -x 'android_ue_route_ipv6_lock' lab/scripts/android-ue-route.sh | head -n 1 | cut -d: -f1)
-if [ -z "$emu_at" ] || [ -z "$lock_at" ] || [ "$emu_at" -ge "$lock_at" ]; then
-  echo "IPv6 lock is not after the emulator-already-running guard" >&2
+if grep -q 'ps -eo comm=' lab/scripts/android-ue-route.sh; then
+  echo "route script still looks for the emulator with ps" >&2
   exit 1
 fi
 again_at=$(grep -n -F 'refusing to run the route sidecar again' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
@@ -337,26 +335,56 @@ fi
 # shellcheck disable=SC2016
 grep -q 'disable_ipv6 on ${key}' lab/scripts/android-ue-up.sh
 grep -q 'accept_ra autoconf forwarding' lab/scripts/android-ue-up.sh
-grep -q 'ANDROID_UE_IPV6_NO_FILTER_OK:-0' lab/scripts/android-ue-route.sh
+grep -q 'ANDROID_UE_IPV6_NO_FILTER_OK:-0' lab/scripts/android-ue-up.sh
+# shellcheck disable=SC2016
+grep -q 'nsenter -t "$pid" -n nft -f' lab/scripts/android-ue-up.sh
 grep -q 'dummy0 type dummy' lab/scripts/android-ue-route.sh
 grep -q 'nodad' lab/scripts/android-ue-route.sh
-grep -q 'ANDROID_UE_IN6' lab/scripts/android-ue-route.sh
-grep -q -- '-P INPUT DROP' lab/scripts/android-ue-route.sh
+grep -q 'ANDROID_UE_IN4' lab/scripts/android-ue-route.sh
+# shellcheck disable=SC2016
+grep -q 'route del "${addr}/128" dev dummy0 || true' lab/scripts/android-ue-route.sh
+if grep -q 'ip6tables' lab/scripts/android-ue-route.sh; then
+  echo "route script still depends on ip6tables" >&2
+  exit 1
+fi
 
 echo "cgnat sysctl"
 sh lab/scripts/android-ue-cgnat.sh --sysctl-self-test
 
-echo "ipv6 input filter"
-rules=$(bash lab/scripts/android-ue-route.sh --render-ip6-input)
-printf '%s\n' "$rules" | grep -q ':INPUT DROP'
-printf '%s\n' "$rules" | grep -q -- '-i lo -j ACCEPT'
-printf '%s\n' "$rules" | grep -q -- '-d ::1 -j ACCEPT'
-printf '%s\n' "$rules" | grep -q -- '-s ::1 -j ACCEPT'
-printf '%s\n' "$rules" | grep -q -- '! -i lo -j DROP'
-if printf '%s\n' "$rules" | grep -E -- '-j ACCEPT' | grep -v -E -- '-i lo|-s ::1|-d ::1'; then
-  echo "INPUT v6 accepts something other than lo and ::1" >&2
+echo "ipv4 input filter"
+v4rules=$(bash lab/scripts/android-ue-route.sh --render-ip4-input)
+printf '%s\n' "$v4rules" | grep -q -- '-i lo -j ACCEPT'
+printf '%s\n' "$v4rules" | grep -q -- '-m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT'
+printf '%s\n' "$v4rules" | grep -q -- '-i tun_srsue -j DROP'
+if printf '%s\n' "$v4rules" | grep -E -- '-j DROP' | grep -v 'tun_srsue'; then
+  echo "IPv4 INPUT drops an interface other than tun_srsue" >&2
   exit 1
 fi
+
+echo "ipv6 nft filter"
+# shellcheck source=android-ue-lib.sh
+. lab/scripts/android-ue-lib.sh
+nft_rules=$(android_ue_render_ip6_nft)
+printf '%s\n' "$nft_rules" | grep -q 'hook input'
+printf '%s\n' "$nft_rules" | grep -q 'policy drop'
+printf '%s\n' "$nft_rules" | grep -q 'iif "lo" accept'
+printf '%s\n' "$nft_rules" | grep -q 'oif "lo" accept'
+if printf '%s\n' "$nft_rules" | grep -q '::1'; then
+  echo "IPv6 nft filter still has a redundant ::1 rule" >&2
+  exit 1
+fi
+nft_file=$(mktemp)
+printf '%s\n' "$nft_rules" >"$nft_file"
+if ! nft -c -f "$nft_file" 2>/dev/null && ! sudo nft -c -f "$nft_file"; then
+  echo "rendered IPv6 nft filter failed nft -c" >&2
+  exit 1
+fi
+rm -f "$nft_file"
+if android_ue_ula_cidr_ok '::1/128' || android_ue_ula_cidr_ok 'fe80::1/128' || android_ue_ula_cidr_ok '2001:db8::1/128' || android_ue_ula_cidr_ok 'fdc2:fd97:24a4::1/64'; then
+  echo "ULA check accepted an address outside fc00::/7 /128" >&2
+  exit 1
+fi
+android_ue_ula_cidr_ok 'fdc2:fd97:24a4::1/128'
 
 echo "emulator image patch"
 image_root=lab/images/android-emulator
@@ -368,13 +396,19 @@ grep -q 'f569246983ee994aed06517bf8e06a3f10547b6d' "$image_root/NOTICE"
 grep -q '2026-05-07' "$image_root/NOTICE"
 grep -q 'sha256:83f4a7fc27df94dcc7b8de04d14cbbba8da14406f921e966969c3b09000aa507' "$image_root/patches/0001-open5g-boot.patch"
 grep -q 'bd1aa17c7ef10066949c88dc6c9c8d536be27f992a1f3b5a584f9bd2ba5646a0' "$image_root/patches/0001-open5g-boot.patch"
-grep -q 'HEALTHCHECK --start-period=600s' "$image_root/patches/0001-open5g-boot.patch"
+grep -q 'HEALTHCHECK --start-period=900s' "$image_root/patches/0001-open5g-boot.patch"
+grep -q 'python3 iproute2' "$image_root/patches/0001-open5g-boot.patch"
 # shellcheck disable=SC2016
 grep -q 'TIMEOUT=${BOOT_TIMEOUT:-600}' "$image_root/patches/0001-open5g-boot.patch"
 grep -q '^-COPY keys/\*' "$image_root/patches/0001-open5g-boot.patch"
 grep -q 'AI_ADDRCONFIG' "$image_root/open5g-preflight.sh"
-grep -q 'fd00::1/128' "$image_root/open5g-preflight.sh"
-grep -q 'nodad' "$image_root/open5g-preflight.sh"
+grep -q 'fdc2:fd97:24a4::1/128' "$image_root/open5g-preflight.sh"
+grep -q 'fc00::/7' "$image_root/open5g-preflight.sh"
+grep -q 'route sidecar' "$image_root/open5g-preflight.sh"
+if grep -E -q 'ip link (add|set)|ip -6 addr add|route del' "$image_root/open5g-preflight.sh"; then
+  echo "preflight still mutates the netns" >&2
+  exit 1
+fi
 if grep -q 'ANDROID_UE_IPV6_ANCHOR' "$image_root/open5g-preflight.sh" lab/scripts/android-ue-route.sh lab/scripts/gen-android-ue.sh; then
   echo "IPv6 anchor is still an opt-in flag" >&2
   exit 1
@@ -386,6 +420,11 @@ if grep -q 'COPY keys' "$patched/Dockerfile"; then
   echo "patched Dockerfile still copies ADB keys" >&2
   exit 1
 fi
+if grep -q 'adb -a' "$patched/scripts/start-emulator.sh"; then
+  echo "patched emulator still starts adb on every interface" >&2
+  exit 1
+fi
+grep -q 'adb -P 5037 server nodaemon' "$patched/scripts/start-emulator.sh"
 pre_line=$(grep -n -F '/opt/open5g-preflight.sh' "$patched/scripts/start-emulator.sh" | head -n 1 | cut -d: -f1)
 emu_line=$(awk '/^emulator / { print NR; exit }' "$patched/scripts/start-emulator.sh")
 if [ -z "$pre_line" ] || [ -z "$emu_line" ] || [ "$pre_line" -ge "$emu_line" ]; then
@@ -404,7 +443,6 @@ if grep -q 'ANDROID_UE_UPF_S1U_SUBNET' docs/deploy/android-ue-lab5g-dev.md docs/
   echo "ANDROID_UE_UPF_S1U_SUBNET is still documented" >&2
   exit 1
 fi
-grep -q 'ip6tables-nft' lab/scripts/android-ue-route.sh
 if grep -n -E '^[[:space:]]*ports:' lab/compose/docker-compose.android-ue.optional.yml lab/scripts/gen-android-ue.sh; then
   echo "android-ue still publishes a port; uu is an internal network" >&2
   exit 1
@@ -519,8 +557,8 @@ if android_ue_nonloop_v6_ok "$v6_lab/if_inet6" "$v6_lab/sys"; then
 fi
 fe_addr=$(printf 'fe80%028x' 1)
 printf '%s 02 40 20 80 eth0\n' "$fe_addr" >"$v6_lab/if_inet6"
-if ! android_ue_nonloop_v6_ok "$v6_lab/if_inet6" "$v6_lab/sys"; then
-  echo "fe80 alternative was rejected" >&2
+if android_ue_nonloop_v6_ok "$v6_lab/if_inet6" "$v6_lab/sys"; then
+  echo "fe80 alone was accepted as the IPv6 anchor" >&2
   exit 1
 fi
 printf '%s 03 80 00 40 dummy0\n' "$ula_addr" >"$v6_lab/if_inet6"
@@ -534,7 +572,11 @@ if android_ue_android_image_ok 'halimqarroum/docker-android:api-33'; then
   exit 1
 fi
 android_ue_android_image_ok 'open5g-android-emulator:local'
-android_ue_android_image_ok 'example.invalid/android@sha256:0123456789abcdef'
+if android_ue_android_image_ok 'example.invalid/android@sha256:0123456789abcdef'; then
+  echo "a short image digest was accepted" >&2
+  exit 1
+fi
+android_ue_android_image_ok 'example.invalid/android@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 if android_ue_kvm_gid_ok 0 0 || android_ue_kvm_gid_ok abc 44; then
   echo "KVM gid check accepted a bad value" >&2
   exit 1
@@ -692,13 +734,52 @@ mount_image=${ANDROID_UE_MOUNT_IMAGE:-alpine:3.20}
 if ! "${docker_cmd[@]}" image inspect "$mount_image" >/dev/null 2>&1; then
   "${docker_cmd[@]}" pull "$mount_image"
 fi
-ip6_rules=$(bash lab/scripts/android-ue-route.sh --render-ip6-input)
-if ! printf '%s\n' "$ip6_rules" | "${docker_cmd[@]}" run --rm -i --cap-add NET_ADMIN "$mount_image" \
-  sh -c 'apk add --no-cache iptables >/dev/null && ip6tables-restore --test'; then
-  echo "rendered INPUT v6 rules failed ip6tables-restore --test" >&2
+preflight_image=open5g-android-ue-preflight:local
+if ! "${docker_cmd[@]}" image inspect "$preflight_image" >/dev/null 2>&1; then
+  "${docker_cmd[@]}" build -t "$preflight_image" - <<'EOF'
+FROM alpine:3.20
+RUN apk add --no-cache bash iproute2 python3
+RUN printf '%s\n' '#!/bin/sh' 'exit 0' > /usr/bin/emulator && chmod 0755 /usr/bin/emulator
+EOF
+fi
+"${docker_cmd[@]}" rm -f android-ue-preflight-ns >/dev/null 2>&1 || true
+if ! "${docker_cmd[@]}" run -d --name android-ue-preflight-ns --network none --cap-add NET_ADMIN \
+  --sysctl net.ipv6.conf.all.disable_ipv6=0 \
+  --sysctl net.ipv6.conf.default.disable_ipv6=0 \
+  --sysctl net.ipv6.conf.lo.disable_ipv6=0 \
+  "$preflight_image" sleep 60 >/dev/null; then
+  echo "preflight netns holder did not start" >&2
   exit 1
 fi
-echo "ip6tables-restore --test accepted the INPUT v6 rules"
+if ! "${docker_cmd[@]}" exec android-ue-preflight-ns sh -c '
+  set -eu
+  ip link add dummy0 type veth peer name dummy0peer
+  ip link set dummy0 addrgenmode none
+  ip link set dummy0 up
+  ip link set dummy0peer up
+  ip -6 addr show dev lo | grep -q "inet6 ::1" || ip -6 addr add ::1/128 dev lo
+  grep -qx 0 /proc/sys/net/ipv6/conf/dummy0/disable_ipv6
+  ip -6 addr add fdc2:fd97:24a4::1/128 dev dummy0 nodad
+  ip -6 route del fdc2:fd97:24a4::1/128 dev dummy0 >/dev/null 2>&1 || true
+  ip -6 route del fe80::/64 dev dummy0 >/dev/null 2>&1 || true
+  ip -6 route replace unreachable default metric 1
+'; then
+  "${docker_cmd[@]}" logs android-ue-preflight-ns >&2 || true
+  "${docker_cmd[@]}" rm -f android-ue-preflight-ns >/dev/null 2>&1 || true
+  echo "could not prepare dummy0 in the preflight netns" >&2
+  exit 1
+fi
+if ! "${docker_cmd[@]}" run --rm --network container:android-ue-preflight-ns --cap-drop ALL \
+  -v "$PWD/lab/images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro" \
+  -v /dev/zero:/dev/kvm:ro \
+  -e ANDROID_UE_IPV6_ULA=fdc2:fd97:24a4::1/128 \
+  "$preflight_image" bash /opt/open5g-preflight.sh; then
+  "${docker_cmd[@]}" rm -f android-ue-preflight-ns >/dev/null 2>&1 || true
+  echo "preflight failed in a container without NET_ADMIN" >&2
+  exit 1
+fi
+"${docker_cmd[@]}" rm -f android-ue-preflight-ns >/dev/null
+echo "preflight passed without NET_ADMIN"
 mount_env=$(mktemp)
 mount_override=$(mktemp)
 if [ "${docker_cmd[0]}" = sudo ]; then

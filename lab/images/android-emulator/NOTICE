@@ -11,4 +11,8 @@ ADB keys are created at runtime or mounted from outside git.
 Open5G changes are patches/0001-open5g-boot.patch and open5g-preflight.sh.
 build.sh copies upstream/, applies the patch, and builds the image from this
 repository. The patch pins the base image and the Android command-line tools
-checksum, removes the ADB key copy, and runs the preflight before QEMU.
+checksum, removes the ADB key copy, listens for adb on loopback only, and
+runs a read-only preflight before QEMU.
+
+Do not push the built image to a public registry. The SDK install accepts
+the Android SDK and Google licenses inside the image.
