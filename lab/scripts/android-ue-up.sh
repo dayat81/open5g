@@ -150,6 +150,11 @@ if [ "$with_socks" -eq 1 ]; then
     exit 1
   fi
   export ANDROID_UE_SOCKS_PROFILE=1
+  gw=${socks_addr%%:*}
+  if ! bash "$script_dir/android-ue-tunnel.sh" check-listen --gw "$gw"; then
+    echo "android-ue: port 1080 is not listening only on ${gw}" >&2
+    exit 1
+  fi
 fi
 
 if [ "$install_upf_route" -eq 1 ] && [ "$with_socks" -eq 1 ]; then
@@ -197,6 +202,12 @@ if [ "$with_socks" -eq 1 ]; then
     echo "android-ue: tun0 is not the default route in the cgnat netns" >&2
     exit 1
   fi
+  dns_upstream=$(get ANDROID_UE_DNS_UPSTREAM)
+  if [ -z "$dns_upstream" ]; then
+    dns_upstream=1.1.1.1
+  fi
+  ANDROID_UE_DNS_UPSTREAM="$dns_upstream" \
+    bash "$script_dir/render-corefile.sh" >"$state/Corefile"
   android_ue_compose "$root" "$env_file" up -d egress-dns
   echo "android-ue: SOCKS egress is up. The egress docker network stays internal."
 fi

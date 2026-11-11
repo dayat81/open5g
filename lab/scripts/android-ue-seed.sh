@@ -11,6 +11,7 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 env_file=""
 user=ue1
 print_js=0
+print_exec=0
 
 usage() {
   echo "usage: android-ue-seed.sh --env-file FILE [--user ue1|ue2] [--print-js]" >&2
@@ -30,6 +31,7 @@ while [ "$#" -gt 0 ]; do
       user=$1
       ;;
     --print-js) print_js=1 ;;
+    --print-exec) print_exec=1 ;;
     *) usage ;;
   esac
   shift
@@ -67,8 +69,16 @@ print('inserted');
 JS
 }
 
+seed_exec_args() {
+  printf '%s\n' "docker exec -e ANDROID_UE_SEED_IMSI -e ANDROID_UE_SEED_KI -e ANDROID_UE_SEED_OPC -e ANDROID_UE_SEED_APN -e ANDROID_UE_SEED_ADDR"
+}
+
 if [ "$print_js" -eq 1 ]; then
   seed_js
+  exit 0
+fi
+if [ "$print_exec" -eq 1 ]; then
+  seed_exec_args
   exit 0
 fi
 
@@ -104,10 +114,16 @@ if ! printf '%s\n' "$imsi" | grep -Eq '^[0-9]{15}$'; then
   exit 1
 fi
 mongo=${ANDROID_UE_MONGO_CONTAINER:-l5gd-mongo}
+export ANDROID_UE_SEED_IMSI="$imsi"
+export ANDROID_UE_SEED_KI="$ki"
+export ANDROID_UE_SEED_OPC="$opc"
+export ANDROID_UE_SEED_APN="$apn"
+export ANDROID_UE_SEED_ADDR="$addr"
+# Inherit the values. Do not put Ki or OPc after -e, where ps can see them.
 docker exec \
-  -e ANDROID_UE_SEED_IMSI="$imsi" \
-  -e ANDROID_UE_SEED_KI="$ki" \
-  -e ANDROID_UE_SEED_OPC="$opc" \
-  -e ANDROID_UE_SEED_APN="$apn" \
-  -e ANDROID_UE_SEED_ADDR="$addr" \
+  -e ANDROID_UE_SEED_IMSI \
+  -e ANDROID_UE_SEED_KI \
+  -e ANDROID_UE_SEED_OPC \
+  -e ANDROID_UE_SEED_APN \
+  -e ANDROID_UE_SEED_ADDR \
   "$mongo" mongosh --quiet open5gs --eval "$(seed_js)"

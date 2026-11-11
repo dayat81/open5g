@@ -77,10 +77,72 @@ android_ue_listener_pids() {
 }
 
 android_ue_input_rules() {
+  local cgnat_ip=$1
+  printf '%s\n' "-p tcp --dport 1080 ! -s ${cgnat_ip} -j DROP"
+}
+
+android_ue_parse_gatewayports() {
+  awk 'tolower($1) == "gatewayports" { print tolower($2); exit }'
+}
+
+android_ue_gatewayports_is_ok() {
+  local value
+  value=$(android_ue_parse_gatewayports)
+  [ "$value" = "clientspecified" ]
+}
+
+android_ue_check_listen_lines() {
   local gw=$1
-  local cgnat_ip=$2
-  printf '%s\n' "-p tcp -d ${gw} --dport 1080 -s ${cgnat_ip} -j ACCEPT"
-  printf '%s\n' "-p tcp -d ${gw} --dport 1080 -j DROP"
+  local line addrport addr port found=0 bad=0
+  while IFS= read -r line; do
+    addrport=$(printf '%s\n' "$line" | awk '{ print $4 }')
+    [ -n "$addrport" ] || continue
+    port=${addrport##*:}
+    addr=${addrport%:*}
+    if [ "$port" != "1080" ]; then
+      continue
+    fi
+    found=1
+    case "$addr" in
+      "$gw"|"[$gw]") ;;
+      *) bad=1 ;;
+    esac
+  done
+  if [ "$found" -eq 0 ] || [ "$bad" -eq 1 ]; then
+    return 1
+  fi
+}
+
+android_ue_install_dropin() {
+  local etc_root=$1
+  local state=$2
+  local dir dest
+  dir="${etc_root}/etc/ssh/sshd_config.d"
+  dest="${dir}/00-open5g-android-ue.conf"
+  mkdir -p "$dir" "$state"
+  if [ -f "$dest" ]; then
+    cp "$dest" "$state/gatewayports-dropin.bak"
+  else
+    printf 'absent\n' >"$state/gatewayports-dropin.bak"
+  fi
+  printf 'GatewayPorts clientspecified\n' >"$dest"
+}
+
+android_ue_restore_dropin() {
+  local etc_root=$1
+  local state=$2
+  local dest bak
+  dest="${etc_root}/etc/ssh/sshd_config.d/00-open5g-android-ue.conf"
+  bak="${state}/gatewayports-dropin.bak"
+  if [ ! -f "$bak" ]; then
+    return 0
+  fi
+  if [ "$(head -n 1 "$bak")" = "absent" ]; then
+    rm -f "$dest"
+  else
+    cp "$bak" "$dest"
+  fi
+  rm -f "$bak"
 }
 
 android_ue_write_iptables_persist() {
@@ -162,9 +224,34 @@ android_ue_tunnel_self_test() {
   fi
 
   local rules pid
-  rules=$(android_ue_input_rules 192.0.2.10 192.0.2.20)
-  printf '%s\n' "$rules" | grep -q -- '-p tcp -d 192.0.2.10 --dport 1080 -s 192.0.2.20 -j ACCEPT'
-  printf '%s\n' "$rules" | grep -q -- '-p tcp -d 192.0.2.10 --dport 1080 -j DROP'
+  rules=$(android_ue_input_rules 192.0.2.20)
+  printf '%s\n' "$rules" | grep -q -- '-p tcp --dport 1080 ! -s 192.0.2.20 -j DROP'
+  if printf '%s\n' "$rules" | grep -q ' -d '; then
+    echo "tunnel self-test: port 1080 drop still matches a destination address" >&2
+    exit 1
+  fi
+  if printf 'gatewayports clientspecified\n' | android_ue_gatewayports_is_ok; then
+    :
+  else
+    echo "tunnel self-test: clientspecified fixture was rejected" >&2
+    exit 1
+  fi
+  if printf 'gatewayports yes\n' | android_ue_gatewayports_is_ok; then
+    echo "tunnel self-test: gatewayports yes was accepted" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' 'LISTEN 0 128 192.0.2.10:1080 0.0.0.0:*' | android_ue_check_listen_lines 192.0.2.10; then
+    echo "tunnel self-test: listener on the gateway address was rejected" >&2
+    exit 1
+  fi
+  if printf '%s\n' 'LISTEN 0 128 0.0.0.0:1080 0.0.0.0:*' | android_ue_check_listen_lines 192.0.2.10; then
+    echo "tunnel self-test: listener on 0.0.0.0 was accepted" >&2
+    exit 1
+  fi
+  if printf '%s\n' 'LISTEN 0 128 *:1080 *:*' | android_ue_check_listen_lines 192.0.2.10; then
+    echo "tunnel self-test: listener on every address was accepted" >&2
+    exit 1
+  fi
   pid=$(printf '%s\n' 'users:(("sshd",pid=4242,fd=3))' | android_ue_listener_pids)
   if [ "$pid" != "4242" ]; then
     echo "tunnel self-test: listener pid was not parsed" >&2
@@ -202,6 +289,30 @@ usage() {
 cmd=${1:-}
 if [ "$cmd" = "self-test" ]; then
   android_ue_tunnel_self_test
+  exit 0
+fi
+if [ "$cmd" = "check-listen" ]; then
+  shift || usage
+  gw=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --gw)
+        shift
+        [ "$#" -gt 0 ] || usage
+        gw=$1
+        ;;
+      *) usage ;;
+    esac
+    shift
+  done
+  if [ -z "$gw" ]; then
+    usage
+  fi
+  if ! ss -H -ltn | android_ue_check_listen_lines "$gw"; then
+    echo "android-ue-tunnel: port 1080 is not listening only on ${gw}" >&2
+    exit 1
+  fi
+  echo "android-ue-tunnel: port 1080 is listening only on ${gw}"
   exit 0
 fi
 shift || usage
@@ -250,11 +361,19 @@ reload_sshd() {
     echo "reload sshd"
     return 0
   fi
-  sshd -t -f "$sshd_config"
+  sshd -t
   if command -v systemctl >/dev/null 2>&1; then
     systemctl reload ssh
   else
     service ssh reload
+  fi
+}
+
+android_ue_sshd_t() {
+  if [ -n "${ANDROID_UE_SSHD_T_BIN:-}" ]; then
+    "$ANDROID_UE_SSHD_T_BIN"
+  else
+    sshd -T
   fi
 }
 
@@ -301,13 +420,12 @@ if [ "$cmd" = "prepare" ]; then
     exit 1
   fi
   mkdir -p "$state"
-  if [ -f "$state/gatewayports.bak" ]; then
-    echo "android-ue-tunnel: ${state}/gatewayports.bak already exists; not backing up over it" >&2
+  if [ -f "$state/gatewayports-dropin.bak" ]; then
+    echo "android-ue-tunnel: ${state}/gatewayports-dropin.bak already exists; not backing up over it" >&2
     exit 1
   fi
-  android_ue_backup_gatewayports "$sshd_config" "$state/gatewayports.bak"
-  android_ue_set_gatewayports "$sshd_config"
-  android_ue_input_rules "$gw" "$cgnat_ip" >"$state/input-1080.rules"
+  android_ue_install_dropin "${ANDROID_UE_ETC_ROOT:-}" "$state"
+  android_ue_input_rules "$cgnat_ip" >"$state/input-1080.rules"
   if [ "$dry_run" -eq 0 ]; then
     pos=1
     while IFS= read -r spec; do
@@ -328,14 +446,31 @@ if [ "$cmd" = "prepare" ]; then
   fi
   : >"$state/tunnel-prepared"
   reload_sshd
-  echo "android-ue-tunnel: GatewayPorts clientspecified, previous value saved, INPUT 1080 persisted for the cgnat address"
+  if [ "$dry_run" -eq 1 ]; then
+    echo "sshd -T gatewayports check"
+  else
+    effective=$(android_ue_sshd_t | android_ue_parse_gatewayports || true)
+    if [ "$effective" != "clientspecified" ]; then
+      android_ue_restore_dropin "${ANDROID_UE_ETC_ROOT:-}" "$state"
+      reload_sshd || true
+      echo "android-ue-tunnel: effective GatewayPorts is '${effective:-empty}', not clientspecified" >&2
+      exit 1
+    fi
+  fi
+  echo "android-ue-tunnel: GatewayPorts clientspecified is effective, INPUT 1080 persisted"
   exit 0
 fi
 
-if [ ! -f "$state/tunnel-prepared" ] && [ ! -f "$state/gatewayports.bak" ]; then
+if [ ! -f "$state/tunnel-prepared" ] && [ ! -f "$state/gatewayports.bak" ] && [ ! -f "$state/gatewayports-dropin.bak" ]; then
   echo "android-ue-tunnel: no tunnel state in ${state}"
   exit 0
 fi
+android_ue_restore_dropin "${ANDROID_UE_ETC_ROOT:-}" "$state"
+if [ -f "$state/gatewayports.bak" ]; then
+  android_ue_restore_gatewayports "$sshd_config" "$state/gatewayports.bak"
+  rm -f "$state/gatewayports.bak"
+fi
+reload_sshd
 kill_listeners || true
 if [ -f "$state/input-1080.rules" ]; then
   while IFS= read -r spec; do
@@ -360,10 +495,5 @@ else
   fi
   android_ue_remove_iptables_persist "${ANDROID_UE_ETC_ROOT:-}" "$state"
 fi
-if [ -f "$state/gatewayports.bak" ]; then
-  android_ue_restore_gatewayports "$sshd_config" "$state/gatewayports.bak"
-  rm -f "$state/gatewayports.bak"
-  reload_sshd
-fi
 rm -f "$state/tunnel-prepared"
-echo "android-ue-tunnel: listener stopped, INPUT 1080 removed, GatewayPorts restored"
+echo "android-ue-tunnel: GatewayPorts restored, listener stopped, INPUT 1080 removed"

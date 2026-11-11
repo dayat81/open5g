@@ -21,6 +21,7 @@ sh_scripts=(
   lab/scripts/android-ue-cgnat.sh
   lab/scripts/android-ue-egress.sh
   lab/scripts/android-ue-add-ue.sh
+  lab/scripts/render-corefile.sh
 )
 
 echo "shellcheck"
@@ -61,7 +62,8 @@ scan_paths=(
   lab/scripts/android-ue-cgnat.sh
   lab/scripts/android-ue-egress.sh
   lab/scripts/android-ue-add-ue.sh
-  lab/config/cgnat/Corefile
+  lab/config/cgnat/Corefile.template
+  lab/scripts/render-corefile.sh
   lab/scripts/android-ue-enb.sh
   lab/scripts/android-ue-route.sh
   lab/scripts/android-ue-lib.sh
@@ -205,10 +207,12 @@ if ! grep -q 'meter ue_bw_in' "$tmp/cgnat.nft"; then
 fi
 
 echo "emulator DNS"
-dns_line=$(grep -n '127.0.0.11' lab/scripts/android-ue-route.sh | head -n 1 | cut -d: -f1)
-lo_line=$(grep -n -- '-o lo -j ACCEPT' lab/scripts/android-ue-route.sh | head -n 1 | cut -d: -f1)
-if [ -z "$dns_line" ] || [ -z "$lo_line" ] || [ "$dns_line" -ge "$lo_line" ]; then
-  echo "Docker DNS port 53 is not rejected before loopback accept" >&2
+if grep -q '127.0.0.11' lab/scripts/android-ue-route.sh; then
+  echo "UE guard still matches 127.0.0.11 after Docker rewrites the DNS port" >&2
+  exit 1
+fi
+if ! grep -q -- '-dns-server' lab/compose/docker-compose.android-ue.optional.yml; then
+  echo "emulator is missing -dns-server" >&2
   exit 1
 fi
 
@@ -221,6 +225,18 @@ if printf '%s\n' "$js" | grep -Eq 'replaceOne|upsert'; then
   echo "seed program would overwrite an existing subscriber" >&2
   exit 1
 fi
+if grep -E -q -- '-e ANDROID_UE_SEED_(KI|OPC)=' lab/scripts/android-ue-seed.sh; then
+  echo "seed puts Ki or OPc on the docker exec command line" >&2
+  exit 1
+fi
+exec_line=$(ANDROID_UE_SEED_KI=not-in-argv-marker ANDROID_UE_SEED_OPC=also-not-in-argv lab/scripts/android-ue-seed.sh --print-exec)
+case "$exec_line" in
+  *not-in-argv-marker*|*also-not-in-argv*)
+    echo "seed exec line contains a secret value" >&2
+    exit 1
+    ;;
+esac
+printf '%s\n' "$exec_line" | grep -q -- '-e ANDROID_UE_SEED_KI'
 
 echo "tunnel rollback"
 lab/scripts/android-ue-tunnel.sh self-test
@@ -250,19 +266,21 @@ fi
 rm -rf "$upf_dir"
 
 echo "resolver is TCP-only"
-corefile=lab/config/cgnat/Corefile
-grep -q 'force_tcp' "$corefile"
-grep -q 'tcp://' "$corefile"
-if grep -q 'udp://' "$corefile"; then
+default_core=$(lab/scripts/render-corefile.sh)
+printf '%s\n' "$default_core" | grep -q 'force_tcp'
+printf '%s\n' "$default_core" | grep -q 'tcp://1.1.1.1'
+if printf '%s\n' "$default_core" | grep -q 'udp://'; then
   echo "resolver config has a UDP upstream" >&2
   exit 1
 fi
-if grep -Eq '^[[:space:]]*log([[:space:]]|$)' "$corefile"; then
+if printf '%s\n' "$default_core" | grep -Eq '^[[:space:]]*log([[:space:]]|$)'; then
   echo "resolver config logs queries" >&2
   exit 1
 fi
-if grep -Eq 'forward \. ([^t]|t[^c]|tc[^p])' "$corefile"; then
-  echo "resolver forward is not tcp://" >&2
+custom_core=$(ANDROID_UE_DNS_UPSTREAM=192.0.2.53 lab/scripts/render-corefile.sh)
+printf '%s\n' "$custom_core" | grep -q 'tcp://192.0.2.53'
+if printf '%s\n' "$custom_core" | grep -q 'tcp://1.1.1.1'; then
+  echo "resolver upstream is still hardcoded" >&2
   exit 1
 fi
 

@@ -77,7 +77,7 @@ The Android guest does not see `tun_srsue`. QEMU user-mode networking (SLIRP) in
 
 The uu network is the core compose network marked `internal: true`, so even a packet that escaped the OUTPUT filter still cannot be routed to the internet by Docker. The filter is there so a later non-internal network on this netns would not become a bypass. The emulator is not given `NET_ADMIN` or `/dev/net/tun`, so it cannot undo the route.
 
-The emulator does not use Docker's embedded resolver at `127.0.0.11`. Compose sets `dns:` on the UE service, and the emulator is started with `-dns-server` set to `ANDROID_UE_PGW_DNS`, the address the SMF/PGW gives the UE. The UE guard rejects UDP and TCP port 53 to `127.0.0.11` before it accepts loopback. A query has to leave on `tun_srsue`.
+The emulator does not use Docker's embedded resolver at `127.0.0.11`. Compose sets `dns:` on the UE service, and the emulator is started with `-dns-server` set to `ANDROID_UE_PGW_DNS`, the address the SMF/PGW gives the UE. That is what keeps the query off Docker's resolver: Docker rewrites `127.0.0.11:53` in nat OUTPUT before the filter guard runs, so a reject of destination port 53 never sees those packets. A query that uses the PGW resolver has to leave on `tun_srsue`.
 
 Policy routing (`ip rule`) was the other option. It is the wrong default here: one netns and one default route is the thing an operator can read. A second table would only be needed if srsUE itself had to keep a different default, and it does not.
 
@@ -89,7 +89,7 @@ The approved internet path is CGNAT plus a SOCKS tunnel to the operator laptop. 
 
 After tun0 exists, the only default route in that netns is `dev tun0`. A host route to the SOCKS address lets tun2socks reach the tunnel. nft drops every other packet that does not leave via tun0.
 
-`lab/config/cgnat/cgnat.nft.template` is the policy. It accepts new forwards only from `UE_POOL`, drops bogons plus `ANDROID_UE_LAB_SUBNET`, allows TCP 80 and 443 only, DNATs UDP and TCP 53 to `127.0.0.1:53`, and rejects other UDP. Each UE address is limited to about 10 Mbit/s (`1250 kbytes/second`) and `CGNAT_CT_LIMIT` connections (200 in the example). Logs are a rate-limited prefix. DNS queries are not logged. The Corefile is `forward . tcp://1.1.1.1 { force_tcp }` with no log plugin.
+`lab/config/cgnat/cgnat.nft.template` is the policy. It accepts new forwards only from `UE_POOL`, drops bogons plus `ANDROID_UE_LAB_SUBNET`, allows TCP 80 and 443 only, DNATs UDP and TCP 53 to `127.0.0.1:53`, and rejects other UDP. Each UE address is limited to about 10 Mbit/s (`1250 kbytes/second`) and `CGNAT_CT_LIMIT` connections (200 in the example). Logs are a rate-limited prefix. DNS queries are not logged. The Corefile is rendered from `ANDROID_UE_DNS_UPSTREAM` (default `1.1.1.1`) as `forward . tcp://<upstream> { force_tcp }` with no log plugin.
 
 The UPF default route toward cgnat is still opt-in (`--install-upf-route` and `ANDROID_UE_INSTALL_UPF_ROUTE=1`), only together with the SOCKS flag, and only for that test window. The previous route is saved and restored by `android-ue-down.sh`. HSS, PCRF, and SMF configuration are not changed. The SGi server stays on the connected route.
 

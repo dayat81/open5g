@@ -247,7 +247,7 @@ EOF
     cap_add: [NET_BIND_SERVICE]
     command: ["-conf", "/etc/cgnat/Corefile"]
     volumes:
-      - ../config/cgnat/Corefile:/etc/cgnat/Corefile:ro
+      - ${ANDROID_UE_STATE_DIR:-/var/lib/open5g-android-ue}/Corefile:/etc/cgnat/Corefile:ro
     depends_on:
       egress:
         condition: service_started

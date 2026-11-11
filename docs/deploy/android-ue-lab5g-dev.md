@@ -112,7 +112,7 @@ sudo docker network inspect -f '{{.Internal}}' <ANDROID_UE_EGRESS_NETWORK>
 
 That prints `true`. The up script refuses `--with-socks-egress` otherwise.
 
-Prepare the guest before the tunnel. This backs up the current `GatewayPorts` value, sets `clientspecified`, and installs the INPUT rules. `<GW_IP>` and `<CGNAT_IP>` come from the gitignored env (`ANDROID_UE_SOCKS_ADDR` and `CGNAT_SGI_ADDR`). Do not commit them.
+Prepare the guest before the tunnel. This writes `/etc/ssh/sshd_config.d/00-open5g-android-ue.conf` (backing up that file first), reloads sshd, and checks `sshd -T` until the effective value is `clientspecified`. It also installs `iptables -I INPUT -p tcp --dport 1080 ! -s <CGNAT_IP> -j DROP` with no destination address, and a systemd unit that puts the rule back after reboot. `<GW_IP>` and `<CGNAT_IP>` come from the gitignored env (`ANDROID_UE_SOCKS_ADDR` and `CGNAT_SGI_ADDR`). Do not commit them.
 
 ```bash
 sudo bash lab/scripts/android-ue-tunnel.sh prepare --env-file lab/compose/android-ue.env
@@ -120,13 +120,15 @@ sudo bash lab/scripts/android-ue-tunnel.sh prepare --env-file lab/compose/androi
 
 The state directory is `/var/lib/open5g-android-ue` unless `ANDROID_UE_STATE_DIR` is set. Do not use `/tmp` for it. A second prepare refuses to overwrite the backup.
 
-From WSL, open the reverse dynamic forward. The laptop ssh client is the SOCKS peer. Nothing else on the guest should listen on 1080.
+From WSL, open the reverse dynamic forward. The laptop ssh client is the SOCKS peer. Open `ssh -R` only while the laptop is not on the office VPN.
 
 ```bash
-ssh -N -J agen -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -R <GW_IP>:1080 guest
+ssh -N -J agen -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -R <GW_IP>:1080 guest
 ```
 
-In `android-ue.env`, set `ANDROID_UE_SOCKS_ADDR` to `<GW_IP>:1080`, `ANDROID_UE_LAB_SUBNET` to the lab prefix, and the tun2socks and DNS image names to the mirror. The DNS image must serve `lab/config/cgnat/Corefile` (`forward . tcp://1.1.1.1 { force_tcp }`). Set `ANDROID_UE_INSTALL_UPF_ROUTE=1` only for this window.
+`android-ue-up.sh --with-socks-egress` then checks `ss -ltn` and stops if port 1080 is listening on anything other than `<GW_IP>`.
+
+In `android-ue.env`, set `ANDROID_UE_SOCKS_ADDR` to `<GW_IP>:1080`, `ANDROID_UE_LAB_SUBNET` to the lab prefix, and the tun2socks and DNS image names to the mirror. The DNS image reads the Corefile rendered into `/var/lib/open5g-android-ue/Corefile`. `ANDROID_UE_DNS_UPSTREAM` defaults to `1.1.1.1` and is always used over TCP. Set `ANDROID_UE_INSTALL_UPF_ROUTE=1` only for this window.
 
 ```bash
 sudo bash lab/scripts/android-ue-up.sh \
@@ -155,7 +157,8 @@ Use an echo host Netdrive named. Mask the laptop address in anything that is com
 
    ```bash
    adb -s 127.0.0.1:15551 shell ping -c 1 example.com
-   sudo docker exec l5gd-ue1 curl -4 --max-time 10 http://<echo>/
+   sudo docker run --rm --network container:l5gd-ue1 nicolaka/netshoot \
+     curl -4 --max-time 10 http://<echo>/
    ```
 
    Start the ssh command again. The query shows on `tun_srsue` again, and curl prints `<LAPTOP_PUBLIC_IP>`. Port 53 to `127.0.0.11` is rejected in the UE netns, so Docker's embedded resolver is not a second path.
@@ -183,7 +186,7 @@ Not in this overlay: QCI 8, autossh, full UDP, IPv6, a GNU Radio multi-UE broker
 sudo bash lab/scripts/android-ue-down.sh --env-file lab/compose/android-ue.env
 ```
 
-This kills the guest sshd listener on port 1080, deletes the INPUT rules, removes `open5g-android-ue-iptables.service` so a reboot does not put them back, restores `GatewayPorts` from the backup taken by `prepare`, deletes the UPF `/32` policy rule, then stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted.
+This restores the ssh drop-in and reloads sshd first, then kills the guest listener on port 1080, deletes the INPUT rule, and removes `open5g-android-ue-iptables.service` so a reboot does not put it back. It then deletes the UPF `/32` policy rule and stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted.
 
 Set `ANDROID_UE_INSTALL_UPF_ROUTE` back to `0`.
 

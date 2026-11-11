@@ -42,10 +42,6 @@ install_guard() {
   if ! "$bin" -C OUTPUT -j "$chain" 2>/dev/null; then
     "$bin" -I OUTPUT 1 -j "$chain"
   fi
-  if [ "$family" = 4 ]; then
-    "$bin" -A "$chain" -d 127.0.0.11 -p udp --dport 53 -j REJECT
-    "$bin" -A "$chain" -d 127.0.0.11 -p tcp --dport 53 -j REJECT
-  fi
   "$bin" -A "$chain" -o lo -j ACCEPT
   if [ "$family" = 4 ]; then
     "$bin" -A "$chain" -d "$enb" -p tcp -j ACCEPT
