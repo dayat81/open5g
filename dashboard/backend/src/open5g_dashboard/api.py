@@ -1,4 +1,4 @@
-"""HTTP scaffold. Stock apply calls the rejecting adapter only."""
+"""HTTP API. Immediate Gx apply stays rejected. Subscriber writes go through the store port."""
 
 from __future__ import annotations
 
@@ -33,10 +33,13 @@ from open5g_dashboard.domain import (
     parse_profile,
     reattach_notice_id,
     redact,
-    stock_immediate_apply,
     stock_reattach,
 )
+from open5g_dashboard.policy_port import build_policy_port
 from open5g_dashboard.settings import Settings
+from open5g_dashboard.subscriber_port import SubscriberConflict, SubscriberUnavailable, build_subscriber_port, drop_secrets
+from open5g_dashboard.open5gs_schema import drift_fields, editor_range_error
+from open5g_dashboard.telemetry import build_metrics_reader, combine_status
 
 # Scaffold parameters, not a reviewed production KDF policy.
 HASHER = PasswordHasher(time_cost=1, memory_cost=8192, parallelism=1)
@@ -45,9 +48,28 @@ IMSI_RE = re.compile(r"^[0-9]{15}$")
 SCOPE_KEYS = {"owner_user_id", "group_id", "imsi", "owner", "group"}
 
 
-def create_app(settings: Settings) -> FastAPI:
+def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, policy_port=None) -> FastAPI:
     app = FastAPI(title="open5g dashboard scaffold", version="0.1.0")
     app.state.settings = settings
+    if subscriber_port is None:
+        subscriber_port = build_subscriber_port(settings)
+    if metrics_reader is None:
+        metrics_reader = build_metrics_reader(settings)
+    if policy_port is None:
+        policy_port = build_policy_port(settings)
+    app.state.subscriber_port = subscriber_port
+    app.state.metrics_reader = metrics_reader
+    app.state.policy_port = policy_port
+    if settings.cors_origins:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_origins),
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT"],
+            allow_headers=["content-type", "if-match", "x-csrf-token", "idempotency-key"],
+        )
 
     def connect_db():
         return connect(settings.database_url, row_factory=dict_row)
@@ -66,8 +88,9 @@ def create_app(settings: Settings) -> FastAPI:
         return Assignment(str(row["id"]), row["imsi"], str(row["owner_user_id"]), str(row["group_id"]))
 
     def public_user(row) -> dict[str, Any]:
+        user_id = row["user_id"] if "user_id" in row else row["id"]
         return {
-            "id": str(row["id"] if "id" in row and "user_id" not in row else row.get("user_id", row["id"])),
+            "id": str(user_id),
             "email": row["email"],
             "display_name": row["display_name"],
             "role": row["role"],
@@ -523,8 +546,9 @@ def create_app(settings: Settings) -> FastAPI:
                 return fail(409, "version_conflict", "version_etag does not match the stored profile")
             try:
                 parse_profile_from_stored(profile["content"])
+                editor_range_error(profile["content"])
             except ProfileError as exc:
-                return fail(422, exc.code, exc.message)
+                return fail(422, exc.code, exc.message, details=exc.details)
             updated = db.set_lifecycle(conn, profile_id, profile["version_etag"], "validated")
             return public_profile(updated)
 
@@ -571,7 +595,7 @@ def create_app(settings: Settings) -> FastAPI:
                 f"apply.{profile_id}.{profile['version_etag']}.{body.get('client_note', '')}".encode()
             ).hexdigest()
             operations = diff_operations(profile["applied_content"], profile["content"])
-            result = stock_immediate_apply(operations, profile["desired_version"])
+            result = policy_port.apply(operations, profile["desired_version"])
             return open_job(conn, actor, profile, key, request_hash, result)
 
     @app.post("/api/profiles/{profile_id}/reattach-notice")
@@ -611,6 +635,75 @@ def create_app(settings: Settings) -> FastAPI:
             request_hash = hashlib.sha256(f"reattach.{profile_id}.{expected}".encode()).hexdigest()
             return open_job(conn, actor, profile, key, request_hash, result)
 
+    def nf_warnings() -> list[str]:
+        try:
+            snapshot = metrics_reader.collect()
+        except Exception:
+            return ["nf_status_unavailable"]
+        warnings: list[str] = []
+        targets = {str(item.get("name")): item.get("status") for item in snapshot.get("targets", [])}
+        if snapshot.get("status") == "not_configured":
+            warnings.append("nf_status_not_configured")
+        if targets.get("smf") == "down":
+            warnings.append("smf_down")
+        if any(name.startswith("upf") and status == "down" for name, status in targets.items()):
+            warnings.append("upf_down")
+        return warnings
+
+    def write_subscriber(conn, actor, profile, imsi: str, content: dict, action: str, desired_version: int):
+        try:
+            model = parse_profile_from_stored(content)
+            apply_caps(model, caps(conn))
+            editor_range_error(content)
+        except ProfileError as exc:
+            audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", exc.code, {})
+            db.insert_sync(conn, str(profile["id"]), desired_version, "rejected", {"code": exc.code})
+            conn.commit()
+            return fail(422, exc.code, exc.message, details=exc.details)
+        sync_id = db.insert_sync(conn, str(profile["id"]), desired_version, "pending", {"action": action})
+        conn.commit()
+        try:
+            result = subscriber_port.provision(
+                imsi,
+                content,
+                role=actor.role,
+                apn_allowlist=settings.apn_allowlist,
+            )
+        except ProfileError as exc:
+            db.finish_sync(conn, sync_id, "rejected", None)
+            conn.commit()
+            audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", exc.code, {})
+            return fail(422, exc.code, exc.message, details=exc.details)
+        except SubscriberConflict:
+            db.finish_sync(conn, sync_id, "conflict", None)
+            conn.commit()
+            audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", "subscriber_conflict", {})
+            return fail(409, "subscriber_conflict", "Subscriber document changed before the write was applied")
+        except SubscriberUnavailable as exc:
+            db.finish_sync(conn, sync_id, "unavailable", None)
+            conn.commit()
+            audit(conn, actor, str(profile["owner_user_id"]), str(profile["group_id"]), action, f"profile:{profile['id']}", "denied", exc.code, {})
+            return fail(503, exc.code, exc.message)
+        result["postgres_lifecycle_unchanged"] = action != "subscriber_rollback"
+        result["live_gx_rar"] = False
+        result["warnings"] = nf_warnings()
+        result["sync_id"] = sync_id
+        result["desired_version"] = desired_version
+        db.finish_sync(conn, sync_id, "written", result.get("generation"))
+        conn.commit()
+        audit(
+            conn,
+            actor,
+            str(profile["owner_user_id"]),
+            str(profile["group_id"]),
+            action,
+            f"profile:{profile['id']}",
+            "allowed",
+            "subscriber_document_only",
+            {"notes": result.get("notes", []), "generation": result.get("generation"), "desired_version": desired_version},
+        )
+        return drop_secrets(result)
+
     @app.post("/api/profiles/{profile_id}/rollback")
     async def rollback(profile_id: str, request: Request):
         body = await request.json()
@@ -619,7 +712,7 @@ def create_app(settings: Settings) -> FastAPI:
             if error:
                 return error
             actor = actor_from(session)
-            profile, _assignment, denied = load_profile_for(conn, actor, profile_id, "edit")
+            profile, assignment_row, denied = load_profile_for(conn, actor, profile_id, "edit")
             if denied:
                 return denied
             if request.headers.get("if-match") != profile["version_etag"]:
@@ -630,25 +723,64 @@ def create_app(settings: Settings) -> FastAPI:
             historical = db.version_row(conn, profile_id, int(body.get("to_version", 0)))
             if historical is None:
                 return fail(404, "version_not_found", "That profile version does not exist")
-            version = profile["desired_version"] + 1
+            request_hash = hashlib.sha256(f"rollback.{profile_id}.{body.get('to_version')}".encode()).hexdigest()
+            existing = db.job_by_key(conn, actor.id, key)
+            if existing is not None:
+                if existing["request_hash"] != request_hash:
+                    return fail(409, "idempotency_conflict", "This Idempotency-Key was already used for a different request")
+                replay = public_job(conn, existing, replay=True)
+                replay["traffic_undone"] = False
+                replay["subscriber_document"] = {"status": "not_rewritten", "live_gx_rar": False}
+                replay["note"] = "Idempotent replay does not write to MongoDB again."
+                return JSONResponse(replay)
             stored = historical["content"]
+            version = profile["desired_version"] + 1
             etag = make_etag(version, stored)
-            updated = db.update_profile_content(conn, profile_id, profile["version_etag"], version, etag, stored)
+            if subscriber_port.configured:
+                written = write_subscriber(
+                    conn,
+                    actor,
+                    profile,
+                    assignment_row["imsi"],
+                    stored,
+                    "subscriber_rollback",
+                    version,
+                )
+                if isinstance(written, JSONResponse):
+                    return written
+                updated = db.update_profile_content(conn, profile_id, profile["version_etag"], version, etag, stored)
+                if updated is None:
+                    previous = written.get("previous_session")
+                    if previous:
+                        try:
+                            subscriber_port.restore_session(assignment_row["imsi"], previous)
+                            db.finish_sync(conn, written["sync_id"], "compensated", None)
+                            conn.commit()
+                        except (SubscriberUnavailable, SubscriberConflict):
+                            db.finish_sync(conn, written["sync_id"], "unavailable", None)
+                            conn.commit()
+                    return fail(409, "version_conflict", "version_etag does not match the stored profile")
+            else:
+                written = {"status": "not_configured", "live_gx_rar": False}
+                updated = db.update_profile_content(conn, profile_id, profile["version_etag"], version, etag, stored)
+                if updated is None:
+                    return fail(409, "version_conflict", "version_etag does not match the stored profile")
             db.insert_version(conn, updated, actor.id, "rollback")
             operations = diff_operations(updated["applied_content"], updated["content"])
-            result = stock_immediate_apply(operations, updated["desired_version"])
-            request_hash = hashlib.sha256(f"rollback.{profile_id}.{body.get('to_version')}.{etag}".encode()).hexdigest()
+            result = policy_port.apply(operations, updated["desired_version"])
             job_response = open_job(conn, actor, updated, key, request_hash, result)
-            payload = job_response.body
             import json
-            parsed = json.loads(payload)
+            parsed = json.loads(job_response.body)
+            if parsed.get("error", {}).get("code") == "idempotency_conflict":
+                return job_response
             return JSONResponse(
                 status_code=job_response.status_code,
                 content={
                     "profile": public_profile(updated),
                     "job": parsed,
                     "traffic_undone": False,
-                    "note": "Rollback stores a new desired version. It does not undo traffic already sent.",
+                    "subscriber_document": written if not isinstance(written, JSONResponse) else {"status": "not_rewritten"},
+                    "note": "Rollback stores a new desired version. It does not undo traffic already sent or push a live Gx RAR.",
                 },
             )
 
@@ -688,6 +820,126 @@ def create_app(settings: Settings) -> FastAPI:
                 return fail(403, "core_control_forbidden", "Students and instructors have no core controls")
             audit(conn, actor, None, None, "core_restart", "core", "denied", "core_control_not_implemented", {})
             return fail(501, "core_control_not_implemented", "This scaffold does not restart a core")
+
+    def assignment_imsi(conn, assignment_id: str):
+        row = db.assignment_by_id(conn, assignment_id)
+        if row is None:
+            return None, fail(404, "assignment_not_found", "Assignment was not found")
+        return row, None
+
+    @app.get("/api/core/status")
+    def core_status(request: Request):
+        with connect_db() as conn:
+            session, error = require_user(conn, request, mutating=False)
+            if error:
+                return error
+        try:
+            scraped = metrics_reader.collect()
+        except Exception:
+            scraped = {
+                "configured": True,
+                "status": "down",
+                "partial": False,
+                "data_origin": "none",
+                "targets": [],
+                "note": "NF status collection failed closed for this request.",
+            }
+        try:
+            probe = subscriber_port.probe()
+        except Exception:
+            probe = {"name": "mongo-subscriber", "status": "down", "error": "MongoDB request failed", "http_status": None}
+        body = combine_status(scraped, probe)
+        observed = datetime.now(timezone.utc).isoformat()
+        for target in body.get("targets", []):
+            target["observed_at"] = observed
+        body["observed_at"] = observed
+        body["gx_rar_enabled"] = settings.enable_gx_rar
+        body["gx_rar_effective"] = False
+        body["gx_rar_reason"] = (
+            "Live Gx RAR is off. The PCRF admin-RAR patch is draft and the stock image cannot push an active session."
+        )
+        actor = actor_from(session)
+        described = subscriber_port.describe()
+        if actor.role == "admin":
+            body["subscriber_store"] = described
+        else:
+            body["subscriber_store"] = {"configured": described.get("configured", False)}
+        body["docker_socket"] = "not_used"
+        upf_targets = [item for item in body.get("targets", []) if str(item.get("name", "")).startswith("upf")]
+        body["multiple_upf_supported"] = len(upf_targets) > 1
+        mongo_probe = next((item for item in body.get("targets", []) if item.get("name") == "mongo-subscriber"), {})
+        if mongo_probe.get("warning") == "no_unique_imsi_index":
+            body["index_warning"] = "no_unique_imsi_index"
+        return body
+
+    @app.get("/api/assignments/{assignment_id}/subscriber")
+    def read_subscriber(assignment_id: str, request: Request):
+        with connect_db() as conn:
+            session, error = require_user(conn, request, mutating=False)
+            if error:
+                return error
+            row, missing = assignment_imsi(conn, assignment_id)
+            if missing:
+                return missing
+            denied = decide(conn, actor_from(session), row, "read", f"subscriber:{assignment_id}")
+            if denied:
+                return denied
+            imsi = row["imsi"]
+            try:
+                projected = drop_secrets(subscriber_port.read(imsi))
+            except SubscriberUnavailable as exc:
+                if exc.code == "subscriber_store_not_configured":
+                    projected = drop_secrets(subscriber_port.read(imsi))
+                else:
+                    return {
+                        "status": "down",
+                        "found": False,
+                        "configured": True,
+                        "imsi": imsi,
+                        "credentials_present": False,
+                        "attach_ready": False,
+                        "security_returned": False,
+                        "sessions": [],
+                        "session_count": 0,
+                        "live_gx_rar": False,
+                        "error": {"code": exc.code, "message": exc.message},
+                    }
+            profile = db.profile_for_assignment(conn, str(row["id"]))
+            if profile is None or not isinstance(projected, dict):
+                return projected
+            fields = drift_fields(profile["content"], projected.get("sessions") or [])
+            projected["drift"] = bool(fields)
+            projected["drift_fields"] = fields
+            return projected
+
+    @app.post("/api/profiles/{profile_id}/provision")
+    def provision_profile(profile_id: str, request: Request):
+        with connect_db() as conn:
+            session, error = require_user(conn, request, mutating=True)
+            if error:
+                return error
+            actor = actor_from(session)
+            profile, assignment_row, denied = load_profile_for(conn, actor, profile_id, "apply")
+            if denied:
+                return denied
+            if request.headers.get("if-match") != profile["version_etag"]:
+                return fail(409, "version_conflict", "version_etag does not match the stored profile")
+            if profile["lifecycle"] != "validated":
+                return fail(409, "not_validated", "Validate the draft before provisioning the subscriber document")
+            written = write_subscriber(
+                conn,
+                actor,
+                profile,
+                assignment_row["imsi"],
+                profile["content"],
+                "subscriber_provision",
+                int(profile["desired_version"]),
+            )
+            if isinstance(written, JSONResponse):
+                return written
+            current = db.profile_by_id(conn, profile_id)
+            written["lifecycle"] = None if current is None else current["lifecycle"]
+            return written
 
     @app.get("/api/metrics/drilldown")
     def drilldown(request: Request):
@@ -732,7 +984,7 @@ def create_app(settings: Settings) -> FastAPI:
     return app
 
 
-def parse_profile_from_stored(stored: dict) -> None:
+def parse_profile_from_stored(stored: dict):
     """Re-validate a stored snapshot by rebuilding the authored input."""
     def bitrate(value: dict) -> dict:
         return {"value": value["value"], "unit": value["unit"]}
@@ -758,7 +1010,7 @@ def parse_profile_from_stored(stored: dict) -> None:
             "unit": stored["usage"]["unit"],
             "window_seconds": stored["usage"]["window_seconds"],
         }
-    parse_profile(
+    return parse_profile(
         {
             "apn": stored["apn"],
             "logical_slice_template": stored["logical_slice_template"],
@@ -774,10 +1026,17 @@ def parse_profile_from_stored(stored: dict) -> None:
             "usage": usage,
             "acknowledge_ambiguity": stored["acknowledge_ambiguity"],
         }
-    )
+    )[0]
 
 
 def main() -> None:
     import uvicorn
+    from psycopg import connect
+    from psycopg.rows import dict_row
 
-    uvicorn.run(create_app(Settings.from_env()), host="127.0.0.1", port=8000)
+    from open5g_dashboard.db import apply_migrations
+
+    settings = Settings.from_env()
+    with connect(settings.database_url, row_factory=dict_row) as conn:
+        apply_migrations(conn)
+    uvicorn.run(create_app(settings), host=settings.bind_host, port=settings.bind_port)

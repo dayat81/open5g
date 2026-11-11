@@ -5,6 +5,7 @@ const screenOrigin = process.env.OPEN5G_EMULATOR_SCREEN_ORIGIN?.replace(/\/$/, "
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  output: "standalone",
   async rewrites() {
     if (!apiProxy) {
       return [];

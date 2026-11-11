@@ -20,14 +20,25 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       OPEN5G_TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/open5g_test
+      OPEN5G_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+      OPEN5G_REQUIRE_REAL_MONGO: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install -r dashboard/backend/requirements.lock
+      - run: python -m pip install -r dashboard/backend/requirements.lock -r dashboard/backend/requirements-dev.lock
       - run: pytest -rs
         working-directory: dashboard/backend
 
@@ -50,3 +61,17 @@ jobs:
         working-directory: dashboard/frontend
       - run: npm run build
         working-directory: dashboard/frontend
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f dashboard/backend/Dockerfile -t open5g-dashboard-api:local dashboard/backend
+      - name: Build web image
+        run: docker build -f dashboard/frontend/Dockerfile -t open5g-dashboard-web:local dashboard/frontend
+      - name: Check optional Compose with standalone v2.29.7
+        run: |
+          curl -fsSL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64"
+          chmod +x /tmp/docker-compose
+          /tmp/docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile dashboard config --quiet

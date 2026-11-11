@@ -505,3 +505,30 @@ def expired_emulator_sessions(conn, idle_cutoff, absolute_cutoff):
         """,
         (idle_cutoff, absolute_cutoff),
     ).fetchall()
+
+
+def profile_for_assignment(conn, assignment_id: str):
+    return conn.execute("SELECT * FROM profiles WHERE assignment_id = %s", (assignment_id,)).fetchone()
+
+
+def insert_sync(conn, profile_id: str, desired_version: int, state: str, detail: dict) -> str:
+    row = conn.execute(
+        """
+        INSERT INTO subscriber_sync (profile_id, desired_version, state, detail)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id
+        """,
+        (profile_id, desired_version, state, Json(detail)),
+    ).fetchone()
+    return str(row["id"])
+
+
+def finish_sync(conn, sync_id: str, state: str, generation: int | None) -> None:
+    conn.execute(
+        """
+        UPDATE subscriber_sync
+        SET state = %s, mongo_generation = %s, observed_at = now()
+        WHERE id = %s
+        """,
+        (state, generation, sync_id),
+    )
