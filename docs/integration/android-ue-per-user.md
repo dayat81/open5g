@@ -85,13 +85,13 @@ Policy routing (`ip rule`) was the other option. It is the wrong default here: o
 
 The approved internet path is CGNAT plus a SOCKS tunnel to the operator laptop. It stays off until `android-ue-up.sh --with-socks-egress`. The egress docker network stays `--internal`.
 
-`l5gd-cgnat` sits on SGi. `l5gd-egress` (tun2socks) and `l5gd-egress-dns` (CoreDNS) use `network_mode: service:cgnat`, so they share that netns. Images are `ANDROID_UE_TUN2SOCKS_IMAGE` and `ANDROID_UE_DNS_IMAGE`. Both are `REPLACE_` placeholders until Lab Ops names the mirror. `ANDROID_UE_SOCKS_ADDR` is `<GW_IP>:1080`, also a placeholder.
+`l5gd-cgnat` sits on SGi. `l5gd-egress` (tun2socks) and `l5gd-egress-dns` (CoreDNS) use `network_mode: service:cgnat`, so they share that netns. Images are `ANDROID_UE_TUN2SOCKS_IMAGE` and `ANDROID_UE_DNS_IMAGE`. Both are `REPLACE_` placeholders until Lab Ops names the mirror. `ANDROID_UE_SOCKS_ADDR` is `<GW_IP>:1080`, also a placeholder. `CGNAT_EGRESS_ADDR` is cgnat's static address on the egress network. The guest accepts TCP 1080 only from that address on the egress bridge, then drops every other packet to 1080.
 
 After tun0 exists, the only default route in that netns is `dev tun0`. A host route to the SOCKS address lets tun2socks reach the tunnel. nft drops every other packet that does not leave via tun0.
 
 `lab/config/cgnat/cgnat.nft.template` is the policy. It accepts new forwards only from `UE_POOL`, drops bogons plus `ANDROID_UE_LAB_SUBNET`, allows TCP 80 and 443 only, DNATs UDP and TCP 53 to `127.0.0.1:53`, and rejects other UDP. Each UE address is limited to about 10 Mbit/s (`1250 kbytes/second`) and `CGNAT_CT_LIMIT` connections (200 in the example). Logs are a rate-limited prefix. DNS queries are not logged. The Corefile is rendered from `ANDROID_UE_DNS_UPSTREAM` (default `1.1.1.1`) as `forward . tcp://<upstream> { force_tcp }` with no log plugin.
 
-The UPF default route toward cgnat is still opt-in (`--install-upf-route` and `ANDROID_UE_INSTALL_UPF_ROUTE=1`), only together with the SOCKS flag, and only for that test window. The previous route is saved and restored by `android-ue-down.sh`. HSS, PCRF, and SMF configuration are not changed. The SGi server stays on the connected route.
+The UPF default route toward cgnat is still opt-in (`--install-upf-route` and `ANDROID_UE_INSTALL_UPF_ROUTE=1`), only together with the SOCKS flag, and only for that test window. That flag adds `ip rule from <UE_ADDR>/32 lookup 1080` and a default route only in table 1080. The main default route is not saved or replaced. `android-ue-down.sh` deletes that policy rule and the table 1080 default. HSS, PCRF, and SMF configuration are not changed. The SGi server stays on the connected route.
 
 `infra/roles/internet_egress` is not what this flag turns on. The guest reaches the internet only through the ssh reverse forward from the laptop.
 

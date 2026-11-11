@@ -214,7 +214,8 @@ EOF
     networks:
       sgi:
         ipv4_address: ${CGNAT_SGI_ADDR}
-      egress: {}
+      egress:
+        ipv4_address: ${CGNAT_EGRESS_ADDR:?CGNAT_EGRESS_ADDR}
 
   egress:
     image: ${ANDROID_UE_TUN2SOCKS_IMAGE:?ANDROID_UE_TUN2SOCKS_IMAGE}

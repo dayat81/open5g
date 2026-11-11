@@ -13,6 +13,7 @@ scripts=(
   lab/scripts/android-ue-enb.sh
   lab/scripts/android-ue-route.sh
   lab/scripts/android-ue-seed.sh
+  lab/scripts/android-ue-set-addr.sh
   lab/scripts/android-ue-tunnel.sh
   lab/scripts/check-android-ue.sh
 )
@@ -40,7 +41,8 @@ example=lab/compose/android-ue.env.example
 for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_CGNAT_IMAGE ANDROID_UE_EGRESS_NETWORK ANDROID_UE_TUN2SOCKS_IMAGE \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
-  ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR; do
+  ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
+  ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -70,6 +72,7 @@ scan_paths=(
   lab/scripts/android-ue-up.sh
   lab/scripts/android-ue-down.sh
   lab/scripts/android-ue-seed.sh
+  lab/scripts/android-ue-set-addr.sh
   lab/scripts/android-ue-tunnel.sh
   lab/scripts/check-android-ue.sh
   docs/integration/android-ue-per-user.md
@@ -237,11 +240,44 @@ case "$exec_line" in
     ;;
 esac
 printf '%s\n' "$exec_line" | grep -q -- '-e ANDROID_UE_SEED_KI'
+if grep -q 'updateOne' lab/scripts/android-ue-seed.sh; then
+  echo "seed is no longer insert-only" >&2
+  exit 1
+fi
+
+echo "existing subscriber address"
+addr_js=$(lab/scripts/android-ue-set-addr.sh --print-js)
+printf '%s\n' "$addr_js" | grep -q 'updateOne'
+printf '%s\n' "$addr_js" | grep -F -q "\$set"
+printf '%s\n' "$addr_js" | grep -q 'arrayFilters'
+printf '%s\n' "$addr_js" | grep -q 'upsert: false'
+if printf '%s\n' "$addr_js" | grep -Eq 'insertOne|upsert: true'; then
+  echo "address update would insert a subscriber" >&2
+  exit 1
+fi
+unset_js=$(lab/scripts/android-ue-set-addr.sh --print-unset)
+printf '%s\n' "$unset_js" | grep -F -q "\$unset"
+printf '%s\n' "$unset_js" | grep -q 'upsert: false'
+addr_exec=$(ANDROID_UE_SEED_ADDR=not-in-argv-marker lab/scripts/android-ue-set-addr.sh --print-exec)
+case "$addr_exec" in
+  *not-in-argv-marker*)
+    echo "address update puts the address on the command line" >&2
+    exit 1
+    ;;
+esac
 
 echo "tunnel rollback"
 lab/scripts/android-ue-tunnel.sh self-test
 grep -q 'android-ue-tunnel.sh" rollback' lab/scripts/android-ue-down.sh
 grep -q 'sport = :1080' lab/scripts/android-ue-tunnel.sh
+grep -q 'CGNAT_EGRESS_ADDR' lab/scripts/android-ue-tunnel.sh
+grep -q 'sshd -T -C' lab/scripts/android-ue-tunnel.sh
+grep -q 'ssh.socket' lab/scripts/android-ue-tunnel.sh
+grep -q 'permitlisten=' lab/scripts/android-ue-tunnel.sh
+if grep -q 'CGNAT_SGI_ADDR' lab/scripts/android-ue-tunnel.sh; then
+  echo "port 1080 rules still use the SGi address" >&2
+  exit 1
+fi
 
 echo "UPF policy rule is idempotent"
 # shellcheck source=android-ue-lib.sh
@@ -348,6 +384,7 @@ socks_rendered=$tmp/rendered-socks.yml
 grep -E -q 'container_name: l5gd-egress$' "$socks_rendered"
 grep -q 'container_name: l5gd-egress-dns' "$socks_rendered"
 grep -q 'service:cgnat' "$socks_rendered"
+grep -q 'REPLACE_CGNAT_EGRESS_ADDR' "$socks_rendered"
 if grep -E -n '[0-9A-Fa-f]{32}' "$rendered" "$socks_rendered"; then
   echo "rendered compose contains a 32-hex USIM value" >&2
   exit 1

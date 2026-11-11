@@ -77,8 +77,105 @@ android_ue_listener_pids() {
 }
 
 android_ue_input_rules() {
-  local cgnat_ip=$1
-  printf '%s\n' "-p tcp --dport 1080 ! -s ${cgnat_ip} -j DROP"
+  local iface=$1
+  local egress_ip=$2
+  printf '%s\n' "-i ${iface} -p tcp -s ${egress_ip} --dport 1080 -j ACCEPT"
+  printf '%s\n' "-p tcp --dport 1080 -j DROP"
+}
+
+android_ue_tunnel_key_line() {
+  local gw=$1
+  local pubkey=$2
+  printf 'restrict,port-forwarding,permitlisten="%s:1080" %s\n' "$gw" "$pubkey"
+}
+
+android_ue_openssh_supports_permitlisten() {
+  local banner major minor
+  banner=$(cat)
+  major=$(printf '%s\n' "$banner" | sed -n 's/.*OpenSSH_\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1/p' | head -n 1)
+  minor=$(printf '%s\n' "$banner" | sed -n 's/.*OpenSSH_\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\2/p' | head -n 1)
+  if [ -z "$major" ] || [ -z "$minor" ]; then
+    return 2
+  fi
+  if [ "$major" -gt 7 ]; then
+    return 0
+  fi
+  if [ "$major" -eq 7 ] && [ "$minor" -ge 8 ]; then
+    return 0
+  fi
+  return 1
+}
+
+android_ue_install_authorized_key() {
+  local file=$1
+  local state=$2
+  local line=$3
+  local dir
+  dir=$(dirname -- "$file")
+  mkdir -p "$dir" "$state"
+  if [ -f "$file" ]; then
+    cp "$file" "$state/authorized_keys.bak"
+  else
+    printf 'absent\n' >"$state/authorized_keys.bak"
+    : >"$file"
+  fi
+  chmod 0700 "$dir"
+  chmod 0600 "$file"
+  if ! grep -Fqx "$line" "$file"; then
+    printf '%s\n' "$line" >>"$file"
+  fi
+  printf '%s\n' "$line" >"$state/authorized_keys.entry"
+  printf '%s\n' "$file" >"$state/authorized_keys.path"
+  chmod 0600 "$state/authorized_keys.entry" "$state/authorized_keys.path"
+}
+
+android_ue_egress_bridge() {
+  local name=$1
+  local named id
+  if [ -n "${ANDROID_UE_EGRESS_IF:-}" ]; then
+    printf '%s\n' "$ANDROID_UE_EGRESS_IF"
+    return 0
+  fi
+  named=$(docker network inspect -f '{{index .Options "com.docker.network.bridge.name"}}' "$name")
+  if [ -n "$named" ] && [ "$named" != "<no value>" ]; then
+    printf '%s\n' "$named"
+    return 0
+  fi
+  id=$(docker network inspect -f '{{.Id}}' "$name")
+  printf 'br-%s\n' "$(printf '%s\n' "$id" | cut -c1-12)"
+}
+
+android_ue_authorized_keys_path() {
+  local user=$1
+  local home
+  home=$(getent passwd "$user" | awk -F: '{ print $6; exit }')
+  if [ -z "$home" ]; then
+    echo "android-ue-tunnel: tunnel user is not on this host" >&2
+    return 1
+  fi
+  printf '%s\n' "${home}/.ssh/authorized_keys"
+}
+
+android_ue_remove_authorized_key() {
+  local state=$1
+  local file line tmp bak
+  if [ ! -f "$state/authorized_keys.path" ] || [ ! -f "$state/authorized_keys.entry" ]; then
+    return 0
+  fi
+  file=$(head -n 1 "$state/authorized_keys.path")
+  line=$(head -n 1 "$state/authorized_keys.entry")
+  bak="${state}/authorized_keys.bak"
+  if [ -f "$file" ]; then
+    tmp=$(mktemp)
+    grep -Fvx "$line" "$file" >"$tmp" || true
+    cat "$tmp" >"$file"
+    rm -f "$tmp"
+    chmod 0600 "$file"
+    if [ -f "$bak" ] && [ "$(head -n 1 "$bak")" = "absent" ] && [ ! -s "$file" ]; then
+      rm -f "$file"
+    fi
+  fi
+  rm -f "$state/authorized_keys.entry" "$state/authorized_keys.path" "$bak"
 }
 
 android_ue_parse_gatewayports() {
@@ -223,11 +320,49 @@ android_ue_tunnel_self_test() {
     exit 1
   fi
 
-  local rules pid
-  rules=$(android_ue_input_rules 192.0.2.20)
-  printf '%s\n' "$rules" | grep -q -- '-p tcp --dport 1080 ! -s 192.0.2.20 -j DROP'
-  if printf '%s\n' "$rules" | grep -q ' -d '; then
-    echo "tunnel self-test: port 1080 drop still matches a destination address" >&2
+  local rules pid drop keyfile
+  rules=$(android_ue_input_rules br-egress 192.0.2.40)
+  printf '%s\n' "$rules" | grep -q -- '-i br-egress -p tcp -s 192.0.2.40 --dport 1080 -j ACCEPT'
+  printf '%s\n' "$rules" | grep -q -- '-p tcp --dport 1080 -j DROP'
+  if printf '%s\n' "$rules" | grep -q '192.0.2.20'; then
+    echo "tunnel self-test: port 1080 rule used the SGi address" >&2
+    exit 1
+  fi
+  drop=$(printf '%s\n' "$rules" | grep -- '-j DROP')
+  case "$drop" in
+    *"-s "*|*" -d "*)
+      echo "tunnel self-test: port 1080 drop is narrower than every other source" >&2
+      exit 1
+      ;;
+  esac
+  if ! printf '%s\n' 'OpenSSH_7.8p1' | android_ue_openssh_supports_permitlisten; then
+    echo "tunnel self-test: OpenSSH 7.8 was rejected" >&2
+    exit 1
+  fi
+  if printf '%s\n' 'OpenSSH_7.7p1' | android_ue_openssh_supports_permitlisten; then
+    echo "tunnel self-test: OpenSSH 7.7 was accepted" >&2
+    exit 1
+  fi
+  mkdir -p "$dir/home/tunnel/.ssh" "$dir/state"
+  keyfile=$dir/home/tunnel/.ssh/authorized_keys
+  printf '%s\n' 'ssh-ed25519 AAAATEST existing' >"$keyfile"
+  android_ue_install_authorized_key "$keyfile" "$dir/state" \
+    "$(android_ue_tunnel_key_line 192.0.2.10 'ssh-ed25519 AAAATEST tunnel')"
+  if ! grep -q 'permitlisten="192.0.2.10:1080"' "$keyfile"; then
+    echo "tunnel self-test: tunnel key was not added" >&2
+    exit 1
+  fi
+  if ! grep -qx 'ssh-ed25519 AAAATEST existing' "$keyfile"; then
+    echo "tunnel self-test: existing authorized key was dropped" >&2
+    exit 1
+  fi
+  android_ue_remove_authorized_key "$dir/state"
+  if grep -q 'permitlisten=' "$keyfile"; then
+    echo "tunnel self-test: tunnel key was not removed" >&2
+    exit 1
+  fi
+  if ! grep -qx 'ssh-ed25519 AAAATEST existing' "$keyfile"; then
+    echo "tunnel self-test: rollback removed an unrelated key" >&2
     exit 1
   fi
   if printf 'gatewayports clientspecified\n' | android_ue_gatewayports_is_ok; then
@@ -363,17 +498,26 @@ reload_sshd() {
   fi
   sshd -t
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl reload ssh
+    if ! systemctl reload ssh; then
+      # Ubuntu 24.04 can have ssh.socket active while ssh.service is not.
+      if systemctl is-active --quiet ssh.socket; then
+        systemctl start ssh
+      else
+        echo "android-ue-tunnel: sshd reload failed" >&2
+        return 1
+      fi
+    fi
   else
     service ssh reload
   fi
 }
 
 android_ue_sshd_t() {
+  local user=$1
   if [ -n "${ANDROID_UE_SSHD_T_BIN:-}" ]; then
-    "$ANDROID_UE_SSHD_T_BIN"
+    "$ANDROID_UE_SSHD_T_BIN" "$user"
   else
-    sshd -T
+    sshd -T -C "user=${user}"
   fi
 }
 
@@ -407,25 +551,56 @@ if [ "$cmd" = "prepare" ]; then
   fi
   get() { android_ue_env_get "$env_file" "$1"; }
   socks=$(get ANDROID_UE_SOCKS_ADDR)
-  cgnat_ip=$(get CGNAT_SGI_ADDR)
+  egress_ip=$(get CGNAT_EGRESS_ADDR)
+  egress_net=$(get ANDROID_UE_EGRESS_NETWORK)
+  tunnel_user=$(get ANDROID_UE_TUNNEL_USER)
+  tunnel_key=$(get ANDROID_UE_TUNNEL_PUBKEY)
   android_ue_reject_placeholder ANDROID_UE_SOCKS_ADDR "$socks"
-  android_ue_reject_placeholder CGNAT_SGI_ADDR "$cgnat_ip"
+  android_ue_reject_placeholder CGNAT_EGRESS_ADDR "$egress_ip"
+  android_ue_reject_placeholder ANDROID_UE_EGRESS_NETWORK "$egress_net"
+  android_ue_reject_placeholder ANDROID_UE_TUNNEL_USER "$tunnel_user"
+  android_ue_reject_placeholder ANDROID_UE_TUNNEL_PUBKEY "$tunnel_key"
   gw=${socks%%:*}
   if ! printf '%s\n' "$gw" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "android-ue-tunnel: ANDROID_UE_SOCKS_ADDR must start with an IPv4 address" >&2
     exit 1
   fi
-  if ! printf '%s\n' "$cgnat_ip" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-    echo "android-ue-tunnel: CGNAT_SGI_ADDR must be an IPv4 address" >&2
+  if ! printf '%s\n' "$egress_ip" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "android-ue-tunnel: CGNAT_EGRESS_ADDR must be an IPv4 address" >&2
+    exit 1
+  fi
+  case "$tunnel_key" in
+    ssh-ed25519\ *|ssh-rsa\ *|ecdsa-sha2-nistp256\ *|ecdsa-sha2-nistp384\ *|ecdsa-sha2-nistp521\ *|sk-ssh-ed25519@openssh.com\ *|sk-ecdsa-sha2-nistp256@openssh.com\ *) ;;
+    *)
+      echo "android-ue-tunnel: ANDROID_UE_TUNNEL_PUBKEY must be one OpenSSH public key" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$dry_run" -eq 0 ]; then
+    banner=$(sshd -V 2>&1 || true)
+    if ! printf '%s\n' "$banner" | android_ue_openssh_supports_permitlisten; then
+      echo "android-ue-tunnel: permitlisten requires OpenSSH >= 7.8" >&2
+      exit 1
+    fi
+    egress_if=$(android_ue_egress_bridge "$egress_net")
+    keys_path=$(android_ue_authorized_keys_path "$tunnel_user")
+  else
+    egress_if=${ANDROID_UE_EGRESS_IF:-br-egress}
+    keys_path=${ANDROID_UE_AUTHORIZED_KEYS:-/tmp/android-ue-authorized_keys}
+  fi
+  if ! printf '%s\n' "$egress_if" | grep -Eq '^[A-Za-z0-9_.:-]{1,15}$'; then
+    echo "android-ue-tunnel: egress bridge name is not an interface name" >&2
     exit 1
   fi
   mkdir -p "$state"
-  if [ -f "$state/gatewayports-dropin.bak" ]; then
-    echo "android-ue-tunnel: ${state}/gatewayports-dropin.bak already exists; not backing up over it" >&2
+  if [ -f "$state/gatewayports-dropin.bak" ] || [ -f "$state/authorized_keys.bak" ]; then
+    echo "android-ue-tunnel: tunnel backup already exists; not backing up over it" >&2
     exit 1
   fi
   android_ue_install_dropin "${ANDROID_UE_ETC_ROOT:-}" "$state"
-  android_ue_input_rules "$cgnat_ip" >"$state/input-1080.rules"
+  android_ue_install_authorized_key "$keys_path" "$state" \
+    "$(android_ue_tunnel_key_line "$gw" "$tunnel_key")"
+  android_ue_input_rules "$egress_if" "$egress_ip" >"$state/input-1080.rules"
   if [ "$dry_run" -eq 0 ]; then
     pos=1
     while IFS= read -r spec; do
@@ -449,9 +624,10 @@ if [ "$cmd" = "prepare" ]; then
   if [ "$dry_run" -eq 1 ]; then
     echo "sshd -T gatewayports check"
   else
-    effective=$(android_ue_sshd_t | android_ue_parse_gatewayports || true)
+    effective=$(android_ue_sshd_t "$tunnel_user" | android_ue_parse_gatewayports || true)
     if [ "$effective" != "clientspecified" ]; then
       android_ue_restore_dropin "${ANDROID_UE_ETC_ROOT:-}" "$state"
+      android_ue_remove_authorized_key "$state"
       reload_sshd || true
       echo "android-ue-tunnel: effective GatewayPorts is '${effective:-empty}', not clientspecified" >&2
       exit 1
@@ -461,7 +637,7 @@ if [ "$cmd" = "prepare" ]; then
   exit 0
 fi
 
-if [ ! -f "$state/tunnel-prepared" ] && [ ! -f "$state/gatewayports.bak" ] && [ ! -f "$state/gatewayports-dropin.bak" ]; then
+if [ ! -f "$state/tunnel-prepared" ] && [ ! -f "$state/gatewayports.bak" ] && [ ! -f "$state/gatewayports-dropin.bak" ] && [ ! -f "$state/authorized_keys.bak" ]; then
   echo "android-ue-tunnel: no tunnel state in ${state}"
   exit 0
 fi
@@ -471,6 +647,7 @@ if [ -f "$state/gatewayports.bak" ]; then
   rm -f "$state/gatewayports.bak"
 fi
 reload_sshd
+android_ue_remove_authorized_key "$state"
 kill_listeners || true
 if [ -f "$state/input-1080.rules" ]; then
   while IFS= read -r spec; do

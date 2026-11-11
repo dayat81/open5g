@@ -47,7 +47,21 @@ Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the new test subscriber. 
 sudo bash lab/scripts/android-ue-seed.sh --env-file lab/compose/android-ue.env --user ue1
 ```
 
-`lab/compose/android-ue.env` is gitignored. Do not commit it.
+`lab/compose/android-ue.env` is gitignored. Do not commit it. The seed script inserts a new IMSI only. If that IMSI is already present, use the section below instead of deleting the document.
+
+## Existing test IMSI without ue.addr
+
+Leave `android-ue-seed.sh` insert-only. When the test IMSI is already in Mongo and has no `ue.addr`, export that one document and set only the address. The update is `updateOne` with `$set` on `slice.$[sl].session.$[se].ue.addr`, `arrayFilters` for `sst: 1` and the APN, filtered to that IMSI, and `upsert: false`.
+
+```bash
+sudo bash lab/scripts/android-ue-set-addr.sh --env-file lab/compose/android-ue.env --user ue1
+```
+
+The backup is `/var/lib/open5g-android-ue/subscriber-ue1.json`, mode 0600. Rollback unsets that field and does not delete the subscriber:
+
+```bash
+sudo bash lab/scripts/android-ue-set-addr.sh --env-file lab/compose/android-ue.env --user ue1 --rollback
+```
 
 ## One user
 
@@ -112,7 +126,7 @@ sudo docker network inspect -f '{{.Internal}}' <ANDROID_UE_EGRESS_NETWORK>
 
 That prints `true`. The up script refuses `--with-socks-egress` otherwise.
 
-Prepare the guest before the tunnel. This writes `/etc/ssh/sshd_config.d/00-open5g-android-ue.conf` (backing up that file first), reloads sshd, and checks `sshd -T` until the effective value is `clientspecified`. It also installs `iptables -I INPUT -p tcp --dport 1080 ! -s <CGNAT_IP> -j DROP` with no destination address, and a systemd unit that puts the rule back after reboot. `<GW_IP>` and `<CGNAT_IP>` come from the gitignored env (`ANDROID_UE_SOCKS_ADDR` and `CGNAT_SGI_ADDR`). Do not commit them.
+Prepare the guest before the tunnel. This writes `/etc/ssh/sshd_config.d/00-open5g-android-ue.conf` (backing up that file first), reloads sshd, and checks `sshd -T -C user=<tunnel user>` until the effective value is `clientspecified`. If `systemctl reload ssh` fails while `ssh.socket` is active, prepare starts `ssh`. It backs up `authorized_keys` and adds one line, `restrict,port-forwarding,permitlisten="<GW_IP>:1080"`, for `ANDROID_UE_TUNNEL_PUBKEY`. That option needs OpenSSH 7.8 or newer. The public key in the example is a placeholder. Do not commit a real key. It also installs two INPUT rules, with no destination address, and a systemd unit that puts them back after reboot: accept TCP 1080 on the egress bridge from `CGNAT_EGRESS_ADDR`, then drop every other packet to 1080. `<GW_IP>` comes from `ANDROID_UE_SOCKS_ADDR`. `CGNAT_EGRESS_ADDR` is cgnat's address on the egress network, not `CGNAT_SGI_ADDR`. Do not commit them.
 
 ```bash
 sudo bash lab/scripts/android-ue-tunnel.sh prepare --env-file lab/compose/android-ue.env
@@ -161,11 +175,11 @@ Use an echo host Netdrive named. Mask the laptop address in anything that is com
      curl -4 --max-time 10 http://<echo>/
    ```
 
-   Start the ssh command again. The query shows on `tun_srsue` again, and curl prints `<LAPTOP_PUBLIC_IP>`. Port 53 to `127.0.0.11` is rejected in the UE netns, so Docker's embedded resolver is not a second path.
+   Start the ssh command again. The query shows on `tun_srsue` again, and curl prints `<LAPTOP_PUBLIC_IP>`. The emulator uses `-dns-server` and compose `dns:` set to `ANDROID_UE_PGW_DNS`, so Docker's embedded resolver is not a second path.
 3. **Laptop LAN and localhost fail.** `curl -4 --max-time 5 http://<LAPTOP_LAN>/` fails. So does a destination in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or `127.0.0.0/8` that is not the UE's own stack. Write `<LAPTOP_LAN>` only in local notes.
 4. **Other ports fail.** `curl -4 --max-time 5 http://<echo>:8080/` fails. TCP is 80 and 443 only. Other UDP is rejected.
 5. **Kill switch.** Stop the ssh process. The same curl to the echo host fails. Start the ssh command again. The curl works again.
-6. **Listeners and the persisted INPUT rule.** `sudo docker exec l5gd-cgnat nft list table ip cgnat` shows the policy. On the guest, `ss -ltn` shows `1080` only on `<GW_IP>`, not on `0.0.0.0` or `*`. Both of these show the accept from `<CGNAT_IP>` and the drop:
+6. **Listeners and the persisted INPUT rule.** `sudo docker exec l5gd-cgnat nft list table ip cgnat` shows the policy. On the guest, `ss -ltn` shows `1080` only on `<GW_IP>`, not on `0.0.0.0` or `*`. Both of these show the accept from `CGNAT_EGRESS_ADDR` on the egress bridge and the drop of every other packet to 1080:
 
    ```bash
    sudo iptables -S INPUT | grep 1080
@@ -186,7 +200,7 @@ Not in this overlay: QCI 8, autossh, full UDP, IPv6, a GNU Radio multi-UE broker
 sudo bash lab/scripts/android-ue-down.sh --env-file lab/compose/android-ue.env
 ```
 
-This restores the ssh drop-in and reloads sshd first, then kills the guest listener on port 1080, deletes the INPUT rule, and removes `open5g-android-ue-iptables.service` so a reboot does not put it back. It then deletes the UPF `/32` policy rule and stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted.
+This restores the ssh drop-in and reloads sshd first, then removes only the tunnel `authorized_keys` line (the backup is taken by `prepare`; other keys stay), kills the guest listener on port 1080, deletes the INPUT rules, and removes `open5g-android-ue-iptables.service` so a reboot does not put them back. It then deletes the UPF `/32` policy rule and stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted. Unsetting `ue.addr` is the `--rollback` command in the existing-IMSI section, not this script.
 
 Set `ANDROID_UE_INSTALL_UPF_ROUTE` back to `0`.
 
