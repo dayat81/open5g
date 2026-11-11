@@ -57,6 +57,43 @@ android_ue_install_gtpu_route() {
   echo "android-ue: enb${n} reaches ${gtpu} via ${dev}"
 }
 
+android_ue_install_upf_s1u_route() {
+  local n=$1
+  local upf pid s1u subnet addrs dev cidr addr nets gw got
+  upf=$(get ANDROID_UE_UPF_CONTAINER)
+  s1u=$(get "UE${n}_ENB_S1U")
+  subnet=$(get ANDROID_UE_UPF_S1U_SUBNET)
+  android_ue_require_set ANDROID_UE_UPF_CONTAINER "$upf"
+  android_ue_reject_placeholder "UE${n}_ENB_S1U" "$s1u"
+  android_ue_reject_placeholder ANDROID_UE_UPF_S1U_SUBNET "$subnet"
+  if ! android_ue_ipv4 "$s1u"; then
+    echo "android-ue: UE${n}_ENB_S1U must be an IPv4 address" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$subnet" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$'; then
+    echo "android-ue: ANDROID_UE_UPF_S1U_SUBNET must be an IPv4 prefix" >&2
+    exit 1
+  fi
+  pid=$(docker inspect -f '{{.State.Pid}}' "$upf")
+  addrs=$(nsenter -t "$pid" -n ip -4 -o addr show)
+  dev=$(printf '%s\n' "$addrs" | android_ue_iface_in_subnet "$subnet")
+  cidr=$(printf '%s\n' "$addrs" | awk -v want="$dev" '$2 == want { print $4; exit }')
+  addr=${cidr%%/*}
+  nets=$(docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$net.IPAddress}} {{$net.Gateway}}{{"\n"}}{{end}}' "$upf")
+  gw=$(printf '%s\n' "$nets" | android_ue_gateway_for_addr "$addr")
+  nsenter -t "$pid" -n ip route replace "${s1u}/32" via "$gw" dev "$dev"
+  got=$(nsenter -t "$pid" -n ip route get "$s1u")
+  case "$got" in
+    *"via ${gw} dev ${dev}"*) ;;
+    *)
+      echo "android-ue: UPF ip route get ${s1u} is not via ${gw} dev ${dev}: ${got}" >&2
+      exit 1
+      ;;
+  esac
+  printf '%s %s %s\n' "$s1u" "$gw" "$dev" >"$state/upf-enb-s1u-${n}.route"
+  echo "android-ue: UPF reaches ${s1u} via ${gw} dev ${dev}"
+}
+
 android_ue_probe_sgi() {
   local n=$1
   local ue pid probe
@@ -251,6 +288,7 @@ echo "android-ue: starting ${user} only. Core config is not modified."
 android_ue_compose "$root" "$env_file" up -d \
   "ue${n}" "enb${n}" "ue${n}-route"
 android_ue_install_gtpu_route "$n"
+android_ue_install_upf_s1u_route "$n"
 android_ue_probe_sgi "$n"
 android_ue_compose "$root" "$env_file" up -d "android${n}"
 

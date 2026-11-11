@@ -42,7 +42,7 @@ cp lab/compose/android-ue.env.example lab/compose/android-ue.env
 chmod 600 lab/compose/android-ue.env
 ```
 
-Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the new test subscriber. Set `ANDROID_UE_PGW_DNS` to the DNS address the SMF/PGW gives that UE. It must not be `127.0.0.11`. Set `ANDROID_UE_EGRESS_NETWORK` to the network created above. Set `ANDROID_UE_SGWU_GTPU_ROUTE` to the SGW-U GTP-U address that `lab-routes.sh` installs on the stock eNB, and `ANDROID_UE_SGI_PROBE` to the SGi address used for the ping below. Leave `ANDROID_UE_CGNAT_IMAGE` as a placeholder until the cgnat step, then set it to the mirrored image name. Leave `ANDROID_UE_ALLOW_SECOND=0` and `ANDROID_UE_INSTALL_UPF_ROUTE=0`. Keep `ANDROID_UE_EXTRA_FLAGS` as `-no-metrics -no-audio -partition-size 2048`. The api-33 emulator rejects `-partition-size=2048`.
+Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the new test subscriber. Set `ANDROID_UE_PGW_DNS` to the DNS address the SMF/PGW gives that UE. It must not be `127.0.0.11`. Set `ANDROID_UE_EGRESS_NETWORK` to the network created above. Set `ANDROID_UE_SGWU_GTPU_ROUTE` to the SGW-U GTP-U address that `lab-routes.sh` installs on the stock eNB, `ANDROID_UE_UPF_S1U_SUBNET` to the subnet of the UPF interface that should carry return GTP-U, and `ANDROID_UE_SGI_PROBE` to the SGi address used for the ping below. Leave `ANDROID_UE_CGNAT_IMAGE` as a placeholder until the cgnat step, then set it to the mirrored image name. Leave `ANDROID_UE_ALLOW_SECOND=0` and `ANDROID_UE_INSTALL_UPF_ROUTE=0`. Keep `ANDROID_UE_EXTRA_FLAGS` as `-no-metrics -no-audio -partition-size 2048`. The api-33 emulator rejects `-partition-size=2048`.
 
 ```bash
 sudo bash lab/scripts/android-ue-seed.sh --env-file lab/compose/android-ue.env --user ue1
@@ -74,9 +74,13 @@ sudo bash lab/scripts/android-ue-up.sh \
   --user ue1
 ```
 
-The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not touch the UPF. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. If legacy `ip6tables` has no filter table, it tries `ip6tables-nft`, and otherwise disables IPv6 in the UE netns. It does not load kernel modules.
+The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not change the UPF main default route. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. If legacy `ip6tables` has no filter table, it tries `ip6tables-nft`, and otherwise disables IPv6 in the UE netns. It does not load kernel modules.
 
-The eNB container has no `NET_ADMIN`. After the route sidecar exits, `up` uses `nsenter` from the host, the same way `lab-routes.sh` does for `l5gd-enb`. It finds the interface that holds `UE1_ENB_S1U` and installs `ANDROID_UE_SGWU_GTPU_ROUTE/32` on that interface. `ip route get` must show that device. `up` then runs `ping -c 3 -I tun_srsue <ANDROID_UE_SGI_PROBE>` from the UE netns. A failed ping stops `up` before `android1` starts. That ping is only meaningful before `--install-upf-route`. After that flag, the test UE is steered to cgnat, which drops the lab subnet, so a ping to the lab SGi server fails on purpose.
+The eNB container has no `NET_ADMIN`. After the route sidecar exits, `up` uses `nsenter` from the host, the same way `lab-routes.sh` does for `l5gd-enb`. It finds the interface that holds `UE1_ENB_S1U` and installs `ANDROID_UE_SGWU_GTPU_ROUTE/32` on that interface. `ip route get` must show that device.
+
+Return GTP-U also needs a route on the UPF. Without it, `ip route get <UE1_ENB_S1U>` in the UPF netns follows another interface's gateway. `up` finds the UPF interface whose address is in `ANDROID_UE_UPF_S1U_SUBNET` and installs `<UE1_ENB_S1U>/32 via <that gateway> dev <that interface>`. The interface name is not fixed. `ip route get` must show that gateway and device. `down` deletes that `/32` and checks `ip route get` again. The UPF main default route is not replaced.
+
+`up` runs `ping -c 3 -I tun_srsue <ANDROID_UE_SGI_PROBE>` only after both routes are installed. A failed ping stops `up` before `android1` starts. That ping is only meaningful before `--install-upf-route`. After that flag, the test UE is steered to cgnat, which drops the lab subnet, so a ping to the lab SGi server fails on purpose.
 
 `uu` is an internal network, so Docker does not publish ports from it. Do not use `127.0.0.1:15551`. On the guest:
 
@@ -210,7 +214,7 @@ Not in this overlay: QCI 8, autossh, full UDP, IPv6, a GNU Radio multi-UE broker
 sudo bash lab/scripts/android-ue-down.sh --env-file lab/compose/android-ue.env
 ```
 
-This restores the ssh drop-in and reloads sshd first, then removes only the tunnel `authorized_keys` line (the backup is taken by `prepare`; other keys stay), kills the guest listener on port 1080, deletes the INPUT rules, and removes `open5g-android-ue-iptables.service` so a reboot does not put them back. It then deletes the UPF `/32` policy rule and stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted. Restoring the previous `ue.addr` is the `--rollback` command in the existing-IMSI section, not this script.
+This restores the ssh drop-in and reloads sshd first, then removes only the tunnel `authorized_keys` line (the backup is taken by `prepare`; other keys stay), kills the guest listener on port 1080, deletes the INPUT rules, and removes `open5g-android-ue-iptables.service` so a reboot does not put them back. It then deletes the UPF return `/32` toward the eNB S1-U address and checks `ip route get`, deletes the UPF `/32` policy rule, and stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted. Restoring the previous `ue.addr` is the `--rollback` command in the existing-IMSI section, not this script.
 
 Set `ANDROID_UE_INSTALL_UPF_ROUTE` back to `0`.
 

@@ -40,6 +40,30 @@ if [ -f "$state/tunnel-prepared" ] || [ -f "$state/gatewayports.bak" ]; then
   fi
 fi
 
+shopt -s nullglob
+for route_file in "$state"/upf-enb-s1u-*.route; do
+  read -r dest gw dev <"$route_file"
+  upf=$(get ANDROID_UE_UPF_CONTAINER)
+  if ! pid=$(docker inspect -f '{{.State.Pid}}' "$upf" 2>/dev/null) || [ -z "$pid" ] || [ "$pid" = "0" ]; then
+    echo "android-ue: UPF netns is not available; left ${dest}/32 in place" >&2
+    rollback_rc=1
+    continue
+  fi
+  nsenter -t "$pid" -n ip route del "${dest}/32" via "$gw" dev "$dev" || true
+  got=$(nsenter -t "$pid" -n ip route get "$dest" 2>/dev/null || true)
+  case "$got" in
+    *"via ${gw} dev ${dev}"*)
+      echo "android-ue: UPF ip route get ${dest} still uses via ${gw} dev ${dev}" >&2
+      rollback_rc=1
+      ;;
+    *)
+      rm -f "$route_file"
+      echo "android-ue: removed UPF route ${dest}/32. ip route get no longer uses via ${gw} dev ${dev}."
+      ;;
+  esac
+done
+shopt -u nullglob
+
 if [ -f "$state/upf-rule.txt" ]; then
   upf=$(get ANDROID_UE_UPF_CONTAINER)
   rule=$(head -n 1 "$state/upf-rule.txt")
