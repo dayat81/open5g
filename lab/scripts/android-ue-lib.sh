@@ -142,6 +142,40 @@ android_ue_fe80_proc_ok() {
   return 1
 }
 
+# ULA on dummy0, or a usable fe80. eth0 may have disable_ipv6=1 and tun may have no fe80.
+android_ue_ula_proc_ok() {
+  local procfile=$1
+  local sysroot=$2
+  local addr _idx _plen _scope flags name iflag prefix
+  while read -r addr _idx _plen _scope flags name; do
+    [ -n "${name:-}" ] || continue
+    if [ "$name" != "dummy0" ]; then
+      continue
+    fi
+    prefix=$(printf '%s' "$addr" | cut -c1-2 | tr 'A-F' 'a-f')
+    if [ "$prefix" != "fd" ] && [ "$prefix" != "fc" ]; then
+      continue
+    fi
+    flags=$((16#$flags))
+    if [ $((flags & 16#48)) -ne 0 ]; then
+      continue
+    fi
+    iflag=$(cat "${sysroot}/${name}/flags" 2>/dev/null || echo 0)
+    iflag=$((iflag))
+    if [ $((iflag & 1)) -eq 1 ]; then
+      return 0
+    fi
+  done <"$procfile"
+  return 1
+}
+
+android_ue_nonloop_v6_ok() {
+  if android_ue_ula_proc_ok "$@"; then
+    return 0
+  fi
+  android_ue_fe80_proc_ok "$@"
+}
+
 android_ue_android_image_ok() {
   local image=$1
   case "$image" in

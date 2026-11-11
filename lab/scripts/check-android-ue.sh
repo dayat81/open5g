@@ -338,6 +338,25 @@ fi
 grep -q 'disable_ipv6 on ${key}' lab/scripts/android-ue-up.sh
 grep -q 'accept_ra autoconf forwarding' lab/scripts/android-ue-up.sh
 grep -q 'ANDROID_UE_IPV6_NO_FILTER_OK:-0' lab/scripts/android-ue-route.sh
+grep -q 'dummy0 type dummy' lab/scripts/android-ue-route.sh
+grep -q 'nodad' lab/scripts/android-ue-route.sh
+grep -q 'ANDROID_UE_IN6' lab/scripts/android-ue-route.sh
+grep -q -- '-P INPUT DROP' lab/scripts/android-ue-route.sh
+
+echo "cgnat sysctl"
+sh lab/scripts/android-ue-cgnat.sh --sysctl-self-test
+
+echo "ipv6 input filter"
+rules=$(bash lab/scripts/android-ue-route.sh --render-ip6-input)
+printf '%s\n' "$rules" | grep -q ':INPUT DROP'
+printf '%s\n' "$rules" | grep -q -- '-i lo -j ACCEPT'
+printf '%s\n' "$rules" | grep -q -- '-d ::1 -j ACCEPT'
+printf '%s\n' "$rules" | grep -q -- '-s ::1 -j ACCEPT'
+printf '%s\n' "$rules" | grep -q -- '! -i lo -j DROP'
+if printf '%s\n' "$rules" | grep -E -- '-j ACCEPT' | grep -v -E -- '-i lo|-s ::1|-d ::1'; then
+  echo "INPUT v6 accepts something other than lo and ::1" >&2
+  exit 1
+fi
 
 echo "emulator image patch"
 image_root=lab/images/android-emulator
@@ -355,7 +374,11 @@ grep -q 'TIMEOUT=${BOOT_TIMEOUT:-600}' "$image_root/patches/0001-open5g-boot.pat
 grep -q '^-COPY keys/\*' "$image_root/patches/0001-open5g-boot.patch"
 grep -q 'AI_ADDRCONFIG' "$image_root/open5g-preflight.sh"
 grep -q 'fd00::1/128' "$image_root/open5g-preflight.sh"
-grep -q 'relying on fe80' "$image_root/open5g-preflight.sh"
+grep -q 'nodad' "$image_root/open5g-preflight.sh"
+if grep -q 'ANDROID_UE_IPV6_ANCHOR' "$image_root/open5g-preflight.sh" lab/scripts/android-ue-route.sh lab/scripts/gen-android-ue.sh; then
+  echo "IPv6 anchor is still an opt-in flag" >&2
+  exit 1
+fi
 patched=$(mktemp -d)
 cp -a "$image_root/upstream/." "$patched/"
 patch -p1 -d "$patched" <"$image_root/patches/0001-open5g-boot.patch" >/dev/null
@@ -471,6 +494,41 @@ if android_ue_fe80_proc_ok "$v6_proc/if_inet6" "$v6_proc/sys"; then
   exit 1
 fi
 rm -rf "$v6_proc"
+v6_lab=$(mktemp -d)
+ula_addr=$(printf 'fd00%028x' 1)
+lo_addr=$(printf '%032x' 1)
+{
+  printf '%s 01 80 10 80 lo\n' "$lo_addr"
+  printf '%s 03 80 00 80 dummy0\n' "$ula_addr"
+} >"$v6_lab/if_inet6"
+mkdir -p "$v6_lab/sys/lo" "$v6_lab/sys/dummy0" "$v6_lab/sys/eth0" "$v6_lab/sys/tun_srsue"
+printf '0x1003\n' >"$v6_lab/sys/dummy0/flags"
+printf '0x1003\n' >"$v6_lab/sys/lo/flags"
+printf '0x1003\n' >"$v6_lab/sys/eth0/flags"
+printf '0x1003\n' >"$v6_lab/sys/tun_srsue/flags"
+printf '1\n' >"$v6_lab/sys/eth0/disable_ipv6"
+printf '0\n' >"$v6_lab/sys/tun_srsue/disable_ipv6"
+if ! android_ue_nonloop_v6_ok "$v6_lab/if_inet6" "$v6_lab/sys"; then
+  echo "ULA anchor was rejected when eth0 disable_ipv6=1 and tun has no fe80" >&2
+  exit 1
+fi
+printf '%s 01 80 10 80 lo\n' "$lo_addr" >"$v6_lab/if_inet6"
+if android_ue_nonloop_v6_ok "$v6_lab/if_inet6" "$v6_lab/sys"; then
+  echo "non-loopback check passed with only ::1" >&2
+  exit 1
+fi
+fe_addr=$(printf 'fe80%028x' 1)
+printf '%s 02 40 20 80 eth0\n' "$fe_addr" >"$v6_lab/if_inet6"
+if ! android_ue_nonloop_v6_ok "$v6_lab/if_inet6" "$v6_lab/sys"; then
+  echo "fe80 alternative was rejected" >&2
+  exit 1
+fi
+printf '%s 03 80 00 40 dummy0\n' "$ula_addr" >"$v6_lab/if_inet6"
+if android_ue_nonloop_v6_ok "$v6_lab/if_inet6" "$v6_lab/sys"; then
+  echo "tentative ULA was accepted" >&2
+  exit 1
+fi
+rm -rf "$v6_lab"
 if android_ue_android_image_ok 'halimqarroum/docker-android:api-33'; then
   echo "registry image without a digest was accepted" >&2
   exit 1
@@ -634,6 +692,13 @@ mount_image=${ANDROID_UE_MOUNT_IMAGE:-alpine:3.20}
 if ! "${docker_cmd[@]}" image inspect "$mount_image" >/dev/null 2>&1; then
   "${docker_cmd[@]}" pull "$mount_image"
 fi
+ip6_rules=$(bash lab/scripts/android-ue-route.sh --render-ip6-input)
+if ! printf '%s\n' "$ip6_rules" | "${docker_cmd[@]}" run --rm -i --cap-add NET_ADMIN "$mount_image" \
+  sh -c 'apk add --no-cache iptables >/dev/null && ip6tables-restore --test'; then
+  echo "rendered INPUT v6 rules failed ip6tables-restore --test" >&2
+  exit 1
+fi
+echo "ip6tables-restore --test accepted the INPUT v6 rules"
 mount_env=$(mktemp)
 mount_override=$(mktemp)
 if [ "${docker_cmd[0]}" = sudo ]; then

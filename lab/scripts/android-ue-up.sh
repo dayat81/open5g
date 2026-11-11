@@ -90,8 +90,13 @@ android_ue_require_ipv6() {
     mkdir -p "${sysroot}/${name}"
     nsenter -t "$pid" -n cat "/sys/class/net/${name}/flags" >"${sysroot}/${name}/flags" 2>/dev/null || printf '0\n' >"${sysroot}/${name}/flags"
   done <"$proc"
-  if ! android_ue_fe80_proc_ok "$proc" "$sysroot"; then
-    echo "android-ue: ue${n} has no UP non-tentative fe80 address" >&2
+  if ! android_ue_nonloop_v6_ok "$proc" "$sysroot"; then
+    echo "android-ue: ue${n} has no ULA on dummy0 and no UP non-tentative fe80" >&2
+    rm -rf "$proc" "$sysroot"
+    exit 1
+  fi
+  if ! nsenter -t "$pid" -n ip link show dummy0 >/dev/null 2>&1; then
+    echo "android-ue: dummy0 anchor is missing in the ue${n} netns" >&2
     rm -rf "$proc" "$sysroot"
     exit 1
   fi
@@ -112,10 +117,12 @@ android_ue_require_ipv6() {
     fi
   done
   for iface in $(nsenter -t "$pid" -n ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
-    val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${iface}/disable_ipv6" 2>/dev/null || echo missing)
-    if [ "$val" != "0" ]; then
-      echo "android-ue: disable_ipv6 on ${iface} is ${val}, expected 0" >&2
-      exit 1
+    if [ "$iface" = "lo" ] || [ "$iface" = "dummy0" ]; then
+      val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${iface}/disable_ipv6" 2>/dev/null || echo missing)
+      if [ "$val" != "0" ]; then
+        echo "android-ue: disable_ipv6 on ${iface} is ${val}, expected 0" >&2
+        exit 1
+      fi
     fi
     if [ "$iface" = "lo" ]; then
       continue
@@ -128,7 +135,7 @@ android_ue_require_ipv6() {
       fi
     done
   done
-  echo "android-ue: ue${n} has ::1, a usable fe80, and IPv6 is fail-closed"
+  echo "android-ue: ue${n} has ::1, a non-loopback IPv6 anchor, and IPv6 is fail-closed"
 }
 
 android_ue_boot_diag() {
