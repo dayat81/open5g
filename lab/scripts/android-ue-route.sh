@@ -34,7 +34,7 @@ screen_rule_line() {
   local allow=$3
   case "$allow" in
     ""|REPLACE_*)
-      printf 'iptables -I INPUT 1 -i %s -p tcp --dport %s -j DROP\n' "$iface" "$port"
+      printf 'iptables -I INPUT 1 -i %s -p tcp -m multiport --dports %s,5555 -j DROP\n' "$iface" "$port"
       ;;
     *)
       printf 'iptables -I INPUT 1 -i %s -p tcp -m multiport --dports %s,5555 ! -s %s -j DROP\n' "$iface" "$port" "$allow"
@@ -81,22 +81,8 @@ if ! ip -4 -o addr show dev "$tun" 2>/dev/null | grep -q ' inet '; then
   exit 1
 fi
 
-# socat in the Android image binds 5555 on eth0. With two networks, eth0 is
-# not guaranteed to be uu. Move the uu address onto eth0 before the emulator starts.
-uu_addr=${ANDROID_UE_UU:-}
-if [ -n "$uu_addr" ]; then
-  uu_iface=$(ip -4 -o addr show | awk -v addr="$uu_addr" '$4 ~ "^" addr "/" { print $2; exit }')
-  if [ -n "$uu_iface" ] && [ "$uu_iface" != "eth0" ] && ip link show eth0 >/dev/null 2>&1; then
-    ip link set eth0 down
-    ip link set "$uu_iface" down
-    ip link set eth0 name open5g-tmp
-    ip link set "$uu_iface" name eth0
-    ip link set open5g-tmp name "$uu_iface"
-    ip link set eth0 up
-    ip link set "$uu_iface" up
-    echo "android-ue-route: ${uu_addr} is on eth0 so adb stays on the uu address"
-  fi
-fi
+# The image's socat is rewritten to the uu address by android-ue-adb-bind.sh.
+# Do not move interfaces here. Docker's eth0 is not a stable name for uu.
 
 route_line=$(ip -4 route get "$enb")
 dev=$(printf '%s\n' "$route_line" | awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
@@ -207,7 +193,7 @@ if screen_rules_active; then
   fi
   case "$allow" in
     ""|REPLACE_*)
-      iptables -I INPUT 1 -i "$iface" -p tcp --dport "$screen_port" -j DROP
+      iptables -I INPUT 1 -i "$iface" -p tcp -m multiport --dports "${screen_port},5555" -j DROP
       ;;
     *)
       iptables -I INPUT 1 -i "$iface" -p tcp -m multiport --dports "${screen_port},5555" ! -s "$allow" -j DROP

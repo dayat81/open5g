@@ -16,6 +16,7 @@ from psycopg import connect
 from psycopg.rows import dict_row
 
 from open5g_dashboard import db
+from open5g_dashboard.emulator import origin_allowed
 from open5g_dashboard.emulator_http import DashboardHooks, register_emulator
 from open5g_dashboard.domain import (
     Actor,
@@ -199,6 +200,10 @@ def create_app(settings: Settings, subscriber_port=None, metrics_reader=None, po
             return None, fail(401, "unauthenticated", "Login required")
         if mutating and not csrf_ok(request, session):
             return None, fail(403, "csrf_required", "Mutating requests require the session CSRF token")
+        if mutating and settings.emulator_origins:
+            origin = request.headers.get("origin")
+            if origin and not origin_allowed(origin, settings.emulator_origins):
+                return None, fail(403, "origin_rejected", "The request origin is not the dashboard origin")
         return session, None
 
     def scope_rejected(payload: dict) -> bool:

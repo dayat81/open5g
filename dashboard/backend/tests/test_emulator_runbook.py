@@ -34,5 +34,13 @@ def test_emulator_runbook_matches_the_screen_network():
     route = ROUTE.read_text(encoding="utf-8")
     assert "-i " in route
     assert "multiport" in route
-    assert "name eth0" in route
+    assert "name eth0" not in route
     assert "--dport 5555" not in route
+
+
+def test_dashboard_api_does_not_join_ue_networks():
+    text = (ROOT / "lab" / "compose" / "docker-compose.dashboard.optional.yml").read_text(encoding="utf-8")
+    body = text.split("  dashboard-api:", 1)[1].split("  dashboard-web:", 1)[0]
+    assert "l5gd-screen" not in body
+    assert "uu" not in body
+    assert "networks: [dashboard, mgmt]" in body

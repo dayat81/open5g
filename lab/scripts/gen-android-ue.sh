@@ -162,12 +162,16 @@ emit_user() {
     network_mode: "service:ue${n}"
     devices:
       - "/dev/kvm:/dev/kvm"
+    entrypoint: ["/bin/bash", "/opt/android-ue/android-ue-adb-bind.sh"]
     environment:
+      ANDROID_UE_UU: \${UE${n}_UU}
       MEMORY: \${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
       CORES: \${ANDROID_UE_CORES:?ANDROID_UE_CORES}
       SKIP_AUTH: \${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
       DISABLE_ANIMATION: \${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
       EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server \${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
+    volumes:
+      - ../scripts/android-ue-adb-bind.sh:/opt/android-ue/android-ue-adb-bind.sh:ro
     depends_on:
       ue${n}-route:
         condition: service_completed_successfully

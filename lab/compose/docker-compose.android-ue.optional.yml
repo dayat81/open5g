@@ -122,12 +122,16 @@ services:
     network_mode: "service:ue1"
     devices:
       - "/dev/kvm:/dev/kvm"
+    entrypoint: ["/bin/bash", "/opt/android-ue/android-ue-adb-bind.sh"]
     environment:
+      ANDROID_UE_UU: ${UE1_UU}
       MEMORY: ${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
       CORES: ${ANDROID_UE_CORES:?ANDROID_UE_CORES}
       SKIP_AUTH: ${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
       DISABLE_ANIMATION: ${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
       EXTRA_FLAGS: "${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server ${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
+    volumes:
+      - ../scripts/android-ue-adb-bind.sh:/opt/android-ue/android-ue-adb-bind.sh:ro
     depends_on:
       ue1-route:
         condition: service_completed_successfully
@@ -267,12 +271,16 @@ services:
     network_mode: "service:ue2"
     devices:
       - "/dev/kvm:/dev/kvm"
+    entrypoint: ["/bin/bash", "/opt/android-ue/android-ue-adb-bind.sh"]
     environment:
+      ANDROID_UE_UU: ${UE2_UU}
       MEMORY: ${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
       CORES: ${ANDROID_UE_CORES:?ANDROID_UE_CORES}
       SKIP_AUTH: ${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
       DISABLE_ANIMATION: ${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
       EXTRA_FLAGS: "${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server ${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
+    volumes:
+      - ../scripts/android-ue-adb-bind.sh:/opt/android-ue/android-ue-adb-bind.sh:ro
     depends_on:
       ue2-route:
         condition: service_completed_successfully

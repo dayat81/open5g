@@ -424,6 +424,22 @@ def test_api_uses_the_listener_status_row(env):
     assert fresh.json()["screen"] == "up"
 
 
+def test_write_from_the_screen_origin_is_rejected(env):
+    foreign = env["student"].client.post(
+        "/api/emulator/ue1/session",
+        json={},
+        headers={"x-csrf-token": env["student"].csrf, "origin": "http://localhost:3301"},
+    )
+    assert foreign.status_code == 403
+    assert foreign.json()["error"]["code"] == "origin_rejected"
+    allowed = env["student"].client.post(
+        "/api/emulator/ue1/session",
+        json={},
+        headers={"x-csrf-token": env["student"].csrf, "origin": "http://127.0.0.1:3300"},
+    )
+    assert allowed.status_code == 200, allowed.text
+
+
 def test_disabled_screen_stays_closed(env):
     disabled = Settings(
         DATABASE_URL,

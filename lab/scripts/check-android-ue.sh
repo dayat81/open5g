@@ -12,6 +12,7 @@ scripts=(
   lab/scripts/android-ue-down.sh
   lab/scripts/android-ue-enb.sh
   lab/scripts/android-ue-route.sh
+  lab/scripts/android-ue-adb-bind.sh
   lab/scripts/android-ue-seed.sh
   lab/scripts/android-ue-set-addr.sh
   lab/scripts/android-ue-tunnel.sh
@@ -71,6 +72,7 @@ scan_paths=(
   lab/scripts/render-corefile.sh
   lab/scripts/android-ue-enb.sh
   lab/scripts/android-ue-route.sh
+  lab/scripts/android-ue-adb-bind.sh
   lab/scripts/android-ue-lib.sh
   lab/scripts/android-ue-up.sh
   lab/scripts/android-ue-down.sh
@@ -389,6 +391,25 @@ case "$rule" in
     exit 1
     ;;
 esac
+empty=$(ANDROID_UE_SCREEN_IMAGE='' lab/scripts/android-ue-route.sh --print-screen-rule)
+if [ "$empty" != "skipped" ]; then
+  echo "screen rule ran while the image is empty: ${empty}" >&2
+  exit 1
+fi
+socat_cmd=$(ANDROID_UE_UU=192.0.2.40 lab/scripts/android-ue-adb-bind.sh --print)
+printf '%s\n' "$socat_cmd" | grep -q 'bind=192.0.2.40'
+if printf '%s\n' "$socat_cmd" | grep -Eq 'eth0|0\.0\.0\.0'; then
+  echo "socat command is not bound to the uu address: ${socat_cmd}" >&2
+  exit 1
+fi
+if ANDROID_UE_UU=0.0.0.0 lab/scripts/android-ue-adb-bind.sh --print >/dev/null; then
+  echo "socat command accepted 0.0.0.0" >&2
+  exit 1
+fi
+if ANDROID_UE_UU=eth0 lab/scripts/android-ue-adb-bind.sh --print >/dev/null; then
+  echo "socat command accepted eth0" >&2
+  exit 1
+fi
 grep -q 'INCLUDE_ADB_SHELL": false' lab/images/ws-scrcpy/build.config.override.json
 grep -q '@sha256:' lab/images/ws-scrcpy/Dockerfile
 grep -q 'WS_SCRCPY_COMMIT=' lab/images/ws-scrcpy/Dockerfile

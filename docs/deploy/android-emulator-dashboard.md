@@ -6,7 +6,7 @@ Nothing here was executed on lab5g-dev. Do not deploy it from this change.
 
 ## Why ws-scrcpy, not noVNC
 
-The pinned image is `halimqarroum/docker-android:api-33`. Its Docker Hub description and `scripts/start-emulator.sh` start a headless emulator. ADB is published inside the container with `adb -a` and with `socat` bound to the container IPv4 (eth0) for ports 5554 and 5555, forwarding to loopback. That script does not start x11vnc, websockify, or noVNC. There is no `WEB_VNC`, no `VNC_PORT`, and no `VNC_PASSWORD`.
+The pinned image is `halimqarroum/docker-android:api-33`. Its `scripts/start-emulator.sh` starts a headless emulator and would bind socat to `eth0`. This overlay replaces that bind with the uu address before the image entrypoint runs. The script does not start x11vnc, websockify, or noVNC. There is no `WEB_VNC`, no `VNC_PORT`, and no `VNC_PASSWORD`.
 
 `budtmo/docker-android` is a different image. It is the one that documents `WEB_VNC=true`, noVNC on 6080, and VNC on 5900. It is not the image this overlay pins, so those variables are not used.
 
@@ -26,7 +26,7 @@ The screen listener, not the API, reaches the sidecar. Set the target with eithe
 - `OPEN5G_EMULATOR_TARGETS=ue1=<UE1_SCREEN_ADDR>:8000,ue2=<UE2_SCREEN_ADDR>:8000`
 - or `internal_host` and `internal_port` on the `emulator_endpoints` row. A row wins over the env value for that UE.
 
-`<UE1_SCREEN_ADDR>` is the address on `l5gd-screen`, not `UE*_UU`. Copy it into the gitignored dashboard env. Do not commit the lab value. `adb connect` for the B2 check stays on `<UE1_UU>:5555`. The route script moves that address onto `eth0` before the emulator starts, because the image's `socat` binds whichever address lands on `eth0`.
+`<UE1_SCREEN_ADDR>` is the address on `l5gd-screen`, not the `uu` address. Copy it into the gitignored dashboard env. Do not commit the lab value. `adb connect` for the B2 check stays on `<UE1_UU>:5555`. The Android entrypoint rewrites the image's socat so it binds that uu address. It does not bind `eth0` or `0.0.0.0`.
 
 ## Build the sidecar image
 
@@ -64,7 +64,7 @@ Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE
 
    `OPEN5G_CORS_ORIGINS` must not include port 3301. `OPEN5G_DATABASE_URL` inside the API container stays on `dashboard-postgres`. Pepper is at least 32 characters and is not a VNC password.
 
-5. The screen listener runs on the guest host, not in `dashboard-api`, and not on `uu`. Compose publishes Postgres only on `127.0.0.1:5432` so this process can use the same database. Its `OPEN5G_DATABASE_URL` is `postgresql://open5g:<same-password>@127.0.0.1:5432/open5g` with the same pepper and the same emulator values, plus:
+5. The screen listener runs on the guest host. It is not `dashboard-api`, and it does not join `uu` or `l5gd-screen`. Compose publishes Postgres only on `127.0.0.1:5432`. The listener reaches that socket from the host. Its database URL and pepper come from the gitignored env, the same values the API uses, with the host changed to loopback: `postgresql://open5g:<password-from-env>@127.0.0.1:5432/open5g`. Do not commit the password. Add the same emulator values, plus:
 
    ```bash
    OPEN5G_EMULATOR_SCREEN_HOST=127.0.0.1
