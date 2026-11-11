@@ -43,7 +43,7 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
   ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
-  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE; do
+  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE ANDROID_UE_KVM_GID; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -297,20 +297,31 @@ fi
 gtpu_at=$(grep -n -F "android_ue_install_gtpu_route \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
 probe_at=$(grep -n -F "android_ue_probe_sgi \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
 wait_at=$(grep -n -F "android_ue_wait_route \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
-lo_at=$(grep -n -F "android_ue_require_lo_ipv6 \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
-if [ -z "$wait_at" ] || [ -z "$lo_at" ] || [ -z "$gtpu_at" ] || [ -z "$probe_at" ] || [ "$wait_at" -ge "$lo_at" ] || [ "$lo_at" -ge "$gtpu_at" ] || [ "$gtpu_at" -ge "$probe_at" ]; then
-  echo "SGi ping does not run after the route container exits and ::1 is checked" >&2
+lo_at=$(grep -n -F "android_ue_require_ipv6 \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+boot_at=$(grep -n -F "android_ue_wait_boot \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+if [ -z "$wait_at" ] || [ -z "$lo_at" ] || [ -z "$gtpu_at" ] || [ -z "$probe_at" ] || [ -z "$boot_at" ] || [ "$wait_at" -ge "$lo_at" ] || [ "$lo_at" -ge "$gtpu_at" ] || [ "$gtpu_at" -ge "$probe_at" ] || [ "$probe_at" -ge "$boot_at" ]; then
+  echo "boot gate is not after the route wait, IPv6 check, and SGi probe" >&2
   exit 1
 fi
-grep -q 'inet6 ::1' lab/scripts/android-ue-route.sh
-grep -q 'docker wait' lab/scripts/android-ue-up.sh
+grep -q 'fe80:' lab/scripts/android-ue-route.sh
+grep -q 'accept_ra' lab/scripts/android-ue-route.sh
+grep -q 'autoconf' lab/scripts/android-ue-route.sh
+if grep -q 'disable_ipv6' lab/scripts/android-ue-route.sh; then
+  echo "route script still disables IPv6" >&2
+  exit 1
+fi
+grep -q 'ANDROID_UE_BOOT_TIMEOUT' lab/scripts/android-ue-up.sh
+grep -q 'sys.boot_completed' lab/scripts/android-ue-up.sh
+grep -q 'emulator -accel-check' lab/scripts/android-ue-up.sh
+grep -q 'getent ahosts ::1' lab/scripts/android-ue-up.sh
+grep -q 'ANDROID_UE_KVM_GID' lab/scripts/gen-android-ue.sh
+grep -q 'group_add:' lab/compose/docker-compose.android-ue.optional.yml
 grep -q 'upf-enb-s1u' lab/scripts/android-ue-down.sh
 if grep -q 'ANDROID_UE_UPF_S1U_SUBNET' docs/deploy/android-ue-lab5g-dev.md docs/integration/android-ue-per-user.md; then
   echo "ANDROID_UE_UPF_S1U_SUBNET is still documented" >&2
   exit 1
 fi
 grep -q 'ip6tables-nft' lab/scripts/android-ue-route.sh
-grep -q 'disable_ipv6' lab/scripts/android-ue-route.sh
 if grep -n -E '^[[:space:]]*ports:' lab/compose/docker-compose.android-ue.optional.yml lab/scripts/gen-android-ue.sh; then
   echo "android-ue still publishes a port; uu is an internal network" >&2
   exit 1
@@ -378,6 +389,16 @@ android_ue_addr_in_pool 192.0.2.10 192.0.2.0/24
 android_ue_addr_in_pool 192.0.2.10 192.0.2.10/32
 if android_ue_addr_in_pool 192.0.2.10 198.51.100.0/24; then
   echo "an address outside the pool was accepted" >&2
+  exit 1
+fi
+v6_ok=$'1: lo    inet6 ::1/128 scope host\n2: eth0    inet6 fe80::1/64 scope link'
+v6_loop=$'1: lo    inet6 ::1/128 scope host'
+if ! printf '%s\n' "$v6_ok" | android_ue_ipv6_lines_ok; then
+  echo "IPv6 check rejected ::1 plus a link-local address" >&2
+  exit 1
+fi
+if printf '%s\n' "$v6_loop" | android_ue_ipv6_lines_ok; then
+  echo "IPv6 check accepted loopback alone" >&2
   exit 1
 fi
 
@@ -658,17 +679,16 @@ egress_id=$("${docker_cmd[@]}" run -d --name android-ue-egress-proc --network an
   "$ci_image" \
   /bin/sh /opt/cgnat/android-ue-egress.sh || true)
 if [ -z "$egress_id" ]; then
-  echo "egress sidecar did not start. tun2socks is not available and /dev/net/tun may be missing." >&2
-  echo "The mount check already proved the script is visible. This runner cannot keep the proxy process up." >&2
-else
-  sleep 1
-  if ! "${docker_cmd[@]}" inspect -f '{{.State.Running}}' android-ue-egress-proc | grep -qx true; then
-    "${docker_cmd[@]}" logs android-ue-egress-proc >&2 || true
-    "${docker_cmd[@]}" rm -f android-ue-egress-proc >/dev/null 2>&1 || true
-    echo "egress sidecar exited before its process was running" >&2
-    exit 1
-  fi
-  "${docker_cmd[@]}" rm -f android-ue-egress-proc >/dev/null
-  echo "egress sidecar process was running"
+  echo "egress sidecar did not start" >&2
+  exit 1
 fi
+sleep 1
+if ! "${docker_cmd[@]}" inspect -f '{{.State.Running}}' android-ue-egress-proc | grep -qx true; then
+  "${docker_cmd[@]}" logs android-ue-egress-proc >&2 || true
+  "${docker_cmd[@]}" rm -f android-ue-egress-proc >/dev/null 2>&1 || true
+  echo "egress sidecar exited before its process was running" >&2
+  exit 1
+fi
+"${docker_cmd[@]}" rm -f android-ue-egress-proc >/dev/null
+echo "egress sidecar process was running"
 echo "android-ue checks passed"

@@ -52,33 +52,39 @@ install_guard() {
 }
 
 install_guard 4 iptables ANDROID_UE_GUARD
+# Keep every IPv6 address, including ::1 and fe80. QEMU resolves ::1 with
+# AI_ADDRCONFIG, which ignores loopback unless some other IPv6 address exists.
+while IFS= read -r v6default; do
+  [ -n "$v6default" ] || continue
+  # shellcheck disable=SC2086
+  ip -6 route del $v6default || true
+done <<EOF
+$(ip -6 route show default 2>/dev/null || true)
+EOF
+for knob in accept_ra autoconf; do
+  for key in all default; do
+    sys="/proc/sys/net/ipv6/conf/${key}/${knob}"
+    if [ -w "$sys" ]; then
+      printf '0\n' >"$sys"
+    fi
+  done
+done
 if command -v ip6tables >/dev/null 2>&1 && ip6tables -L >/dev/null 2>&1; then
   install_guard 6 ip6tables ANDROID_UE_GUARD6
 elif command -v ip6tables-nft >/dev/null 2>&1 && ip6tables-nft -L >/dev/null 2>&1; then
   install_guard 6 ip6tables-nft ANDROID_UE_GUARD6
 else
-  # Do not set disable_ipv6 on all, default, or lo. all removes ::1, and the
-  # emulator modem resolves that address. Drop IPv6 only on other interfaces.
-  wrote=0
-  for iface in $(ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
-    if [ "$iface" = "lo" ]; then
-      continue
-    fi
-    sys="/proc/sys/net/ipv6/conf/${iface}/disable_ipv6"
-    if [ -w "$sys" ]; then
-      printf '1\n' >"$sys"
-      wrote=1
-    fi
-  done
-  if [ "$wrote" -ne 1 ]; then
-    echo "android-ue-route: ip6tables has no filter table and IPv6 cannot be disabled on non-loopback interfaces" >&2
-    exit 1
-  fi
-  echo "android-ue-route: ip6tables filter table is unavailable; IPv6 is disabled except on lo"
+  echo "android-ue-route: ip6tables is unavailable. IPv6 addresses stay, and there is no IPv6 default route." >&2
 fi
-if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
+v6_lines=$(ip -6 -o addr show 2>/dev/null || true)
+if ! printf '%s\n' "$v6_lines" | grep -q 'inet6 ::1'; then
   echo "android-ue-route: ::1 is missing on lo" >&2
-  ip -6 addr show dev lo >&2 || true
+  printf '%s\n' "$v6_lines" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$v6_lines" | grep 'inet6 fe80:' | grep -vq ' lo '; then
+  echo "android-ue-route: no non-loopback IPv6 address; QEMU cannot resolve ::1" >&2
+  printf '%s\n' "$v6_lines" >&2
   exit 1
 fi
 

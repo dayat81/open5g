@@ -115,6 +115,31 @@ sys.exit(0 if left // shift == right // shift else 1)
 PY
 }
 
+# stdin: ip -6 -o addr show. Succeeds only when lo has ::1 and another
+# interface has a link-local address. glibc AI_ADDRCONFIG ignores lo.
+android_ue_ipv6_lines_ok() {
+  local line iface has_lo=0 has_link=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    iface=$(printf '%s\n' "$line" | awk '{ print $2 }')
+    case "$line" in
+      *'inet6 ::1'*)
+        if [ "$iface" = "lo" ]; then
+          has_lo=1
+        fi
+        ;;
+    esac
+    case "$line" in
+      *'inet6 fe80:'*)
+        if [ "$iface" != "lo" ]; then
+          has_link=1
+        fi
+        ;;
+    esac
+  done
+  [ "$has_lo" -eq 1 ] && [ "$has_link" -eq 1 ]
+}
+
 android_ue_reject_placeholder() {
   local name=$1
   local value=$2

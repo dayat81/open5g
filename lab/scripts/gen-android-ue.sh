@@ -155,6 +155,8 @@ emit_user() {
     network_mode: "service:ue${n}"
     devices:
       - "/dev/kvm:/dev/kvm"
+    group_add:
+      - "\${ANDROID_UE_KVM_GID:?ANDROID_UE_KVM_GID}"
     environment:
       MEMORY: \${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
       CORES: \${ANDROID_UE_CORES:?ANDROID_UE_CORES}

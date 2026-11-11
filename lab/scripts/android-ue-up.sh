@@ -73,16 +73,76 @@ android_ue_wait_route() {
   echo "android-ue: ${cid} exited 0"
 }
 
-android_ue_require_lo_ipv6() {
+android_ue_require_ipv6() {
   local n=$1
-  local pid
+  local pid lines
   pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}")
-  if ! nsenter -t "$pid" -n ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
-    echo "android-ue: ::1 is missing on lo in the ue${n} netns" >&2
-    nsenter -t "$pid" -n ip -6 addr show dev lo >&2 || true
+  lines=$(nsenter -t "$pid" -n ip -6 -o addr show 2>/dev/null || true)
+  if ! printf '%s\n' "$lines" | android_ue_ipv6_lines_ok; then
+    echo "android-ue: ue${n} needs ::1 on lo and a non-loopback IPv6 address" >&2
+    printf '%s\n' "$lines" >&2
     exit 1
   fi
-  echo "android-ue: ue${n} lo still has ::1"
+  echo "android-ue: ue${n} has ::1 and a non-loopback IPv6 address"
+}
+
+android_ue_boot_diag() {
+  local n=$1
+  local pid
+  pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}" 2>/dev/null || true)
+  echo "android-ue: emulator log:" >&2
+  docker logs --tail 80 "l5gd-android${n}" >&2 || true
+  echo "android-ue: IPv6 addresses in the ue${n} netns:" >&2
+  if [ -n "$pid" ]; then
+    nsenter -t "$pid" -n ip -6 addr >&2 || true
+    nsenter -t "$pid" -n getent ahosts ::1 >&2 || true
+  fi
+  echo "android-ue: host /dev/kvm:" >&2
+  ls -l /dev/kvm >&2 || true
+  echo "android-ue: emulator identity and accelerator:" >&2
+  docker exec "l5gd-android${n}" sh -c 'ls -l /dev/kvm; id; ps -o user,uid,gid,args; emulator -accel-check' >&2 || true
+}
+
+android_ue_accel_check() {
+  local n=$1
+  if ! docker exec "l5gd-android${n}" emulator -accel-check; then
+    echo "android-ue: emulator -accel-check failed" >&2
+    android_ue_boot_diag "$n"
+    exit 1
+  fi
+}
+
+android_ue_wait_boot() {
+  local n=$1
+  local uu timeout deadline completed
+  uu=$(get "UE${n}_UU")
+  android_ue_reject_placeholder "UE${n}_UU" "$uu"
+  timeout=$(get ANDROID_UE_BOOT_TIMEOUT)
+  if [ -z "$timeout" ]; then
+    timeout=600
+  fi
+  if ! printf '%s\n' "$timeout" | grep -Eq '^[0-9]+$'; then
+    echo "android-ue: ANDROID_UE_BOOT_TIMEOUT must be a number of seconds" >&2
+    exit 1
+  fi
+  if ! command -v adb >/dev/null 2>&1; then
+    echo "android-ue: adb is not installed on this host" >&2
+    exit 1
+  fi
+  android_ue_accel_check "$n"
+  deadline=$((SECONDS + timeout))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    adb connect "${uu}:5555" >/dev/null 2>&1 || true
+    completed=$(adb -s "${uu}:5555" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+    if [ "$completed" = "1" ]; then
+      echo "android-ue: sys.boot_completed=1 on ${uu}:5555"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "android-ue: sys.boot_completed was not 1 within ${timeout}s" >&2
+  android_ue_boot_diag "$n"
+  exit 1
 }
 
 android_ue_probe_sgi() {
@@ -279,10 +339,11 @@ echo "android-ue: starting ${user} only. Core config is not modified."
 android_ue_compose "$root" "$env_file" up -d \
   "ue${n}" "enb${n}" "ue${n}-route"
 android_ue_wait_route "$n"
-android_ue_require_lo_ipv6 "$n"
+android_ue_require_ipv6 "$n"
 android_ue_install_gtpu_route "$n"
 android_ue_probe_sgi "$n"
 android_ue_compose "$root" "$env_file" up -d "android${n}"
+android_ue_wait_boot "$n"
 
 if [ "$with_cgnat" -eq 1 ]; then
   android_ue_reject_placeholder ANDROID_UE_CGNAT_IMAGE "$(get ANDROID_UE_CGNAT_IMAGE)"

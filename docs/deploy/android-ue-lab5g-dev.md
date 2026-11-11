@@ -74,7 +74,7 @@ sudo bash lab/scripts/android-ue-up.sh \
   --user ue1
 ```
 
-The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not change the UPF main default route. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. If legacy `ip6tables` has no filter table, it tries `ip6tables-nft`, and otherwise disables IPv6 only on interfaces other than `lo`. `::1` stays on `lo`. The script checks `ip -6 addr show dev lo` and stops if `::1` is missing. It does not load kernel modules.
+The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not change the UPF main default route. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. If `ip6tables` or `ip6tables-nft` can open the filter table, IPv6 output is dropped except on `lo`. Otherwise the script warns and continues. It does not set `disable_ipv6`. It removes any IPv6 default route and sets `accept_ra=0` and `autoconf=0`, so link-local addresses stay. It stops unless `lo` has `::1` and another interface has `fe80`. It does not load kernel modules. The api-33 image has no official modem-host setting, only `EXTRA_FLAGS`, so the modem is not redirected.
 
 `up` runs `docker wait l5gd-ue1-route` and continues only when that exit code is 0. The eNB container has no `NET_ADMIN`. After that wait, `up` uses `nsenter` from the host, the same way `lab-routes.sh` does for `l5gd-enb`. It finds the interface that holds `UE1_ENB_S1U` and installs `ANDROID_UE_SGWU_GTPU_ROUTE/32` on that interface. `ip route get` must show that device. A route on the UPF toward that S1-U address is not added. The lab capture showed the eNB route alone is enough for the SGi ping.
 
@@ -96,7 +96,7 @@ adb connect 127.0.0.1:15551
 
 Do not publish ADB or VNC on the libvirt bridge or the LAN. Do not attach a non-internal network to the UE. The image's socat already listens on the uu address, port 5555.
 
-The api-33 image already starts the emulator with `-no-snapshot` (`scripts/start-emulator.sh`) and its own boot watcher gives up after 300 seconds (`Error: Emulator failed to boot within 300 seconds` in `scripts/emulator-monitoring.sh`). On c8d3455, `sys.boot_completed` was still empty after about 7.5 minutes, so a longer wait would not have finished that boot. The log line `Unable to connect character device modem: address resolution failed for ::1` matches a netns where IPv6 loopback was removed. Keep `::1` on `lo`.
+The api-33 image already starts the emulator with `-no-snapshot` and its watcher prints `Emulator failed to boot within 300 seconds` after 300 seconds. `up` keeps polling `sys.boot_completed` for `ANDROID_UE_BOOT_TIMEOUT` seconds (600 by default) and then prints the emulator log, `ip -6 addr`, `getent ahosts ::1`, `/dev/kvm`, the emulator uid, and `emulator -accel-check`. `ANDROID_UE_KVM_GID` is added to the emulator process with `group_add`. Set it to the numeric GID of the host group that owns `/dev/kvm`.
 
 ## Verification
 
