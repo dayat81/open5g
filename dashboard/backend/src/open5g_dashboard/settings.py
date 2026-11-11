@@ -77,8 +77,8 @@ class Settings:
     emulator_allowed_nets: tuple[str, ...] = ()
     emulator_screen_port: int = 8000
     emulator_screen_origin: str = ""
-    emulator_screen_host: str = "127.0.0.2"
-    emulator_screen_bind_port: int = 3001
+    emulator_screen_host: str = "127.0.0.1"
+    emulator_screen_bind_port: int = 3301
     emulator_max_age_seconds: int = 3600
     emulator_watch_seconds: float = 5.0
     mongo_uri: str = ""
@@ -119,11 +119,13 @@ class Settings:
         screen_port = _bounded_int(os.environ.get("OPEN5G_EMULATOR_SCREEN_PORT", "8000"), 1, 65535, "OPEN5G_EMULATOR_SCREEN_PORT")
         idle = _bounded_int(os.environ.get("OPEN5G_EMULATOR_IDLE_SECONDS", "300"), 1, 86400, "OPEN5G_EMULATOR_IDLE_SECONDS")
         max_age = _bounded_int(os.environ.get("OPEN5G_EMULATOR_MAX_AGE_SECONDS", "3600"), idle, 86400, "OPEN5G_EMULATOR_MAX_AGE_SECONDS")
-        screen_bind_port = _bounded_int(os.environ.get("OPEN5G_EMULATOR_SCREEN_BIND_PORT", "3001"), 1, 65535, "OPEN5G_EMULATOR_SCREEN_BIND_PORT")
+        screen_bind_port = _bounded_int(os.environ.get("OPEN5G_EMULATOR_SCREEN_BIND_PORT", "3301"), 1, 65535, "OPEN5G_EMULATOR_SCREEN_BIND_PORT")
         probe = _bounded_float(os.environ.get("OPEN5G_EMULATOR_PROBE_SECONDS", "0.5"), 0.05, 5.0, "OPEN5G_EMULATOR_PROBE_SECONDS")
         watch = _bounded_float(os.environ.get("OPEN5G_EMULATOR_WATCH_SECONDS", "5"), 0.05, 60.0, "OPEN5G_EMULATOR_WATCH_SECONDS")
         screen_origin = os.environ.get("OPEN5G_EMULATOR_SCREEN_ORIGIN", "").strip().rstrip("/")
-        screen_host = os.environ.get("OPEN5G_EMULATOR_SCREEN_HOST", "127.0.0.2").strip()
+        screen_host = os.environ.get("OPEN5G_EMULATOR_SCREEN_HOST", "127.0.0.1").strip()
+        if screen_bind_port in {3000, 3001}:  # Grafana keeps 3000; 3001 is Next inside the web image
+            raise RuntimeError("the screen listener must not use port 3000 (Grafana) or 3001 (Next inside the web image)")
         try:
             targets = parse_targets(os.environ.get("OPEN5G_EMULATOR_TARGETS", ""), nets, screen_port)
         except ValueError as exc:
@@ -132,7 +134,9 @@ class Settings:
             if not nets or not origins or not screen_origin:
                 raise RuntimeError("emulator allowlist, dashboard origins, and screen origin are required")
             if screen_host in {"", "0.0.0.0", "::"} or not origins_are_isolated(screen_origin, origins):
-                raise RuntimeError("the screen origin must use a different host from the dashboard")
+                raise RuntimeError("the screen origin must differ from every dashboard origin")
+            if _origin_port(screen_origin) in {"3000", "3001"}:  # Grafana keeps 3000; 3001 is Next inside the web image
+                raise RuntimeError("the screen origin must not use port 3000 (Grafana) or 3001 (Next inside the web image)")
         mongo_database = os.environ.get("OPEN5G_MONGO_DATABASE", "open5gs").strip() or "open5gs"
         mongo_collection = os.environ.get("OPEN5G_MONGO_COLLECTION", "subscribers").strip() or "subscribers"
         return cls(

@@ -84,6 +84,8 @@ emit_user() {
     networks:
       uu:
         ipv4_address: \${UE${n}_UU}
+      screen:
+        ipv4_address: \${UE${n}_SCREEN_ADDR:?UE${n}_SCREEN_ADDR}
 
   enb${n}:
     image: \${ANDROID_UE_SRS_IMAGE}
@@ -177,7 +179,7 @@ emit_user() {
     network_mode: "service:ue${n}"
     entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
     environment:
-      ANDROID_UE_SCREEN_BIND: \${UE${n}_UU}
+      ANDROID_UE_SCREEN_BIND: \${UE${n}_SCREEN_ADDR:?UE${n}_SCREEN_ADDR}
       ANDROID_UE_SCREEN_PORT: \${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
       ANDROID_UE_SCREEN_PATH: /emulator/ue${n}
     volumes:
@@ -289,6 +291,13 @@ networks:
   egress:
     external: true
     name: ${ANDROID_UE_EGRESS_NETWORK:?ANDROID_UE_EGRESS_NETWORK}
+  screen:
+    name: l5gd-screen
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANDROID_UE_SCREEN_SUBNET:?ANDROID_UE_SCREEN_SUBNET}
+          gateway: ${ANDROID_UE_SCREEN_GATEWAY:?ANDROID_UE_SCREEN_GATEWAY}
 EOF
 }
 

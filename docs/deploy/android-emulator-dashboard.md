@@ -67,7 +67,7 @@ Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE
    OPEN5G_EMULATOR_ENABLED=1
    OPEN5G_EMULATOR_ORIGINS=http://127.0.0.1:3300
    OPEN5G_EMULATOR_IDLE_SECONDS=300
-   OPEN5G_EMULATOR_TARGETS=ue1=<UE1_UU>:8000
+   OPEN5G_EMULATOR_TARGETS=ue1=<UE1_SCREEN_ADDR>:8000
    ```
 
    `OPEN5G_DATABASE_URL` and `OPEN5G_SESSION_PEPPER` stay as they are. Pepper is at least 32 characters and is not a VNC password.
@@ -75,14 +75,14 @@ Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE
 5. Start the API on loopback and Next on loopback. `OPEN5G_API_PROXY` is the API, seen only by the Next server. `NEXT_PUBLIC_API_BASE` is the browser origin so cookies stay on one host.
 
    ```bash
-   OPEN5G_EMULATOR_ALLOWED_NETS=<uu-subnet>
+   OPEN5G_EMULATOR_ALLOWED_NETS=<screen-subnet>
    OPEN5G_EMULATOR_SCREEN_PORT=8000
-   OPEN5G_EMULATOR_SCREEN_ORIGIN=http://127.0.0.2:3001
-   OPEN5G_EMULATOR_SCREEN_HOST=127.0.0.2
-   OPEN5G_EMULATOR_SCREEN_BIND_PORT=3001
+   OPEN5G_EMULATOR_SCREEN_ORIGIN=http://127.0.0.1:3301
+   OPEN5G_EMULATOR_SCREEN_HOST=127.0.0.1
+   OPEN5G_EMULATOR_SCREEN_BIND_PORT=3301
    ```
 
-   Start the API and the screen listener on the host, not `next dev`, and not inside the `uu` network. Build the web artifact with `OPEN5G_EMULATOR_SCREEN_ORIGIN` set so `frame-src` matches.
+   `OPEN5G_EMULATOR_ORIGINS` is the dashboard origin on `WEB_PORT` (default 3300). Start the API and `python -m open5g_dashboard.screen` on the host. `npm run dev` listens on `WEB_PORT` (default 3300) and is not the screen listener. Do not put either process on the `uu` network. Port 3001 stays inside the web image for Next (`OPEN5G_NEXT_PORT`); the screen proxy does not use it. Build the web artifact with `OPEN5G_EMULATOR_SCREEN_ORIGIN` set so `frame-src` matches.
 
    ```bash
    python -m open5g_dashboard
@@ -95,7 +95,7 @@ Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE
 
 This is the same group rule as profile read. A student can open only a UE assigned to them. An instructor can open a UE only when their current group is that assignment's group. An admin can open every configured UE. Anyone else gets 403. No session gets 401. If an instructor's group membership changes, their open websocket is closed.
 
-The screen is not served on the dashboard origin. Cookies ignore ports, so `127.0.0.1:3000` and `127.0.0.1:3001` would share cookies. The screen listener binds `127.0.0.2:3001` (`python -m open5g_dashboard.screen`). The dashboard origin only mints a one-time exchange code. The iframe loads that other host, which sets its own cookie and sends `Content-Security-Policy: frame-ancestors <dashboard origin>`. The dashboard sends `frame-src` for that host only. Do not attach the dashboard API container to the `uu` network. The screen process runs on the guest host and reaches `UE*_UU` through the Docker bridge. `ANDROID_UE_SCREEN_ALLOW_FROM` is that host address; the UE netns accepts the screen port and ADB 5555 only from it.
+The screen is a separate origin, `http://127.0.0.1:3301` (`python -m open5g_dashboard.screen`). The dashboard origin only mints a one-time exchange code. The iframe loads that port, which sets its own cookie and sends `Content-Security-Policy: frame-ancestors <dashboard origin>`. The dashboard sends `frame-src` for that origin only. Cookies are not separated by port: do not open Grafana (port 3000) and the dashboard in the same browser profile. Do not attach the dashboard API container to `uu` or `l5gd-screen`. The screen process runs on the guest host and dials `UE*_SCREEN_ADDR` on `l5gd-screen`. `ANDROID_UE_SCREEN_ALLOW_FROM` is the host address on that network; the UE netns accepts the screen port and ADB 5555 only from it.
 
 One control session per UE. A second user gets **409 `emulator_control_busy`**. The holder can refresh; that replaces their own session and closes the previous one. A second session is not view-only: ws-scrcpy carries input and video on the same socket, and filtering part of it could grant control by mistake. The UI shows the busy status and does not open a second frame.
 
@@ -129,7 +129,7 @@ This needs the lab guest, KVM, and an attached UE. CI does not run it.
    ssh -L 3300:127.0.0.1:3300 <guest>
    ```
 
-2. Open `http://127.0.0.1:3300`, log in as the student who owns ue1, and open Emulator. Grafana already uses port 3000, so the dashboard default is `DASHBOARD_WEB_PORT` 3300. If that variable is different, use it on both sides of the tunnel and in `OPEN5G_EMULATOR_ORIGINS`.
+2. Open `http://127.0.0.1:3300`, log in as the student who owns ue1, and open Emulator. The dashboard listens on `WEB_PORT` (default 3300). Grafana already uses port 3000. Do not open Grafana and the dashboard in the same browser profile: cookies are not separated by port. If `WEB_PORT` is different, use it on both sides of the tunnel and in `OPEN5G_EMULATOR_ORIGINS`. Tunnel the screen origin separately when the frame should load: `ssh -L 3301:127.0.0.1:3301 <guest>`.
 3. The frame should show the Android screen. Open Chrome in the guest Android UI.
 4. On the guest, check the UE path from the ue1 netns. Do not publish a port to do this, and do not use a host ADB port:
 

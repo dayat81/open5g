@@ -1,4 +1,4 @@
-"""Screen listener. Bind a host that is not the dashboard host. Cookies ignore ports."""
+"""Screen listener. Default bind is 127.0.0.1:3301. Port 3001 is Next inside the web image."""
 
 from open5g_dashboard.emulator_http import create_screen_app
 from open5g_dashboard.settings import Settings

@@ -65,8 +65,8 @@ def test_origin_csrf_query_and_idle_rules():
     assert not is_idle(now - timedelta(seconds=299), now, 300)
     assert session_expired(now - timedelta(seconds=10), now - timedelta(seconds=300), now, 300, 3600) == "idle_timeout"
     assert session_expired(now - timedelta(seconds=3600), now, now, 300, 3600) == "absolute_timeout"
-    assert origins_are_isolated("http://127.0.0.2:3001", ("http://127.0.0.1:3300",))
-    assert not origins_are_isolated("http://127.0.0.1:3001", ("http://127.0.0.1:3300",))
+    assert origins_are_isolated("http://127.0.0.1:3301", ("http://127.0.0.1:3300",))
+    assert not origins_are_isolated("http://127.0.0.1:3300", ("http://127.0.0.1:3300",))
     assert build_upstream("192.0.2.32", 8000, "ue1", "vnc.html", "path=1", "http") == (
         "http://192.0.2.32:8000/emulator/ue1/vnc.html?path=1"
     )

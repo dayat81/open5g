@@ -161,7 +161,7 @@ Di workstation yang men-SSH ke guest:
 ssh -L 3300:127.0.0.1:3300 <user-guest>
 ```
 
-Buka `http://127.0.0.1:3300`. Jangan mem-publish port web ke alamat selain loopback guest.
+Buka `http://127.0.0.1:3300`. Jangan mem-publish port web ke alamat selain loopback guest. Jangan membuka Grafana dan dashboard di profil browser yang sama: cookie tidak dipisah per port, dan Grafana tetap di port 3000.
 
 ## 8. Smoke test
 

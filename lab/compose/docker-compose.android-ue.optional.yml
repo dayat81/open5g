@@ -44,6 +44,8 @@ services:
     networks:
       uu:
         ipv4_address: ${UE1_UU}
+      screen:
+        ipv4_address: ${UE1_SCREEN_ADDR:?UE1_SCREEN_ADDR}
 
   enb1:
     image: ${ANDROID_UE_SRS_IMAGE}
@@ -137,7 +139,7 @@ services:
     network_mode: "service:ue1"
     entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
     environment:
-      ANDROID_UE_SCREEN_BIND: ${UE1_UU}
+      ANDROID_UE_SCREEN_BIND: ${UE1_SCREEN_ADDR:?UE1_SCREEN_ADDR}
       ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
       ANDROID_UE_SCREEN_PATH: /emulator/ue1
     volumes:
@@ -184,6 +186,8 @@ services:
     networks:
       uu:
         ipv4_address: ${UE2_UU}
+      screen:
+        ipv4_address: ${UE2_SCREEN_ADDR:?UE2_SCREEN_ADDR}
 
   enb2:
     image: ${ANDROID_UE_SRS_IMAGE}
@@ -277,7 +281,7 @@ services:
     network_mode: "service:ue2"
     entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
     environment:
-      ANDROID_UE_SCREEN_BIND: ${UE2_UU}
+      ANDROID_UE_SCREEN_BIND: ${UE2_SCREEN_ADDR:?UE2_SCREEN_ADDR}
       ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
       ANDROID_UE_SCREEN_PATH: /emulator/ue2
     volumes:
@@ -368,3 +372,10 @@ networks:
   egress:
     external: true
     name: ${ANDROID_UE_EGRESS_NETWORK:?ANDROID_UE_EGRESS_NETWORK}
+  screen:
+    name: l5gd-screen
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANDROID_UE_SCREEN_SUBNET:?ANDROID_UE_SCREEN_SUBNET}
+          gateway: ${ANDROID_UE_SCREEN_GATEWAY:?ANDROID_UE_SCREEN_GATEWAY}

@@ -45,7 +45,7 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
   ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
   ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE \
-  ANDROID_UE_SCREEN_IMAGE ANDROID_UE_SCREEN_ALLOW_FROM; do
+  ANDROID_UE_SCREEN_IMAGE; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -343,8 +343,10 @@ if name:
     blocks[name] = "\n".join(buf)
 for key in ("ue1-screen", "ue2-screen"):
     body = blocks.get(key, "")
-    if "network_mode:" not in body or "ANDROID_UE_SCREEN_BIND" not in body:
-        sys.exit(f"{key} is missing its uu bind")
+    if "network_mode:" not in body or "SCREEN_ADDR" not in body:
+        sys.exit(f"{key} is missing its screen-network bind")
+    if "UE1_UU" in body or "UE2_UU" in body:
+        sys.exit(f"{key} binds the uu address")
     if "ports:" in body or "0.0.0.0" in body or "ADB_HOST_PORT" in body:
         sys.exit(f"{key} publishes a port or binds every interface")
 PY
@@ -372,6 +374,8 @@ fi
 grep -q 'INCLUDE_ADB_SHELL": false' lab/images/ws-scrcpy/build.config.override.json
 grep -q '@sha256:' lab/images/ws-scrcpy/Dockerfile
 grep -q 'WS_SCRCPY_COMMIT=' lab/images/ws-scrcpy/Dockerfile
+grep -q 'name: l5gd-screen' lab/compose/docker-compose.android-ue.optional.yml
+grep -q 'internal: true' lab/compose/docker-compose.android-ue.optional.yml
 extra_flags=$(awk -F= '$1 == "ANDROID_UE_EXTRA_FLAGS" { sub(/^[^=]*=/, ""); print; exit }' lab/compose/android-ue.env.example)
 case "$extra_flags" in
   *partition-size=*)

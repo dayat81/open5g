@@ -380,7 +380,7 @@ if android_ue_screen_enabled; then
     exit 1
   fi
   android_ue_compose "$root" "$env_file" up -d "ue${n}-screen"
-  echo "android-ue: screen sidecar is up on the uu address. No host port is published."
+  echo "android-ue: screen sidecar is up on l5gd-screen. No host port is published."
 else
   echo "android-ue: screen sidecar is off until ANDROID_UE_SCREEN_IMAGE is a real image."
 fi

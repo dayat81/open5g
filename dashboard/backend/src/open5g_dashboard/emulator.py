@@ -94,17 +94,26 @@ def origin_allowed(origin: str | None, allowed: tuple[str, ...]) -> bool:
     return normal in {item.rstrip("/") for item in allowed}
 
 
-def origins_are_isolated(screen_origin: str, dashboard_origins: tuple[str, ...]) -> bool:
-    """Cookies ignore ports, so the screen host must differ from the dashboard host."""
+def _origin_key(origin: str) -> tuple[str, str, int] | None:
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    if parsed.hostname in {"0.0.0.0", "::"}:
+        return None
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return parsed.scheme, parsed.hostname, port
 
-    screen = urlparse(screen_origin)
-    if screen.scheme not in {"http", "https"} or not screen.hostname:
-        return False
-    if screen.hostname in {"0.0.0.0", "::"}:
+
+def origins_are_isolated(screen_origin: str, dashboard_origins: tuple[str, ...]) -> bool:
+    """The screen URL must not be a dashboard origin. Cookies are not scoped by port."""
+
+    screen = _origin_key(screen_origin)
+    if screen is None:
         return False
     for item in dashboard_origins:
-        other = urlparse(item)
-        if other.hostname and other.hostname == screen.hostname:
+        if _origin_key(item) == screen:
             return False
     return True
 

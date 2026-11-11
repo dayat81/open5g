@@ -77,11 +77,16 @@ stop_children() {
 trap stop_children INT TERM
 
 # The emulator adb port is inside this netns. Do not dial a host-published port.
+# Connect once, then again only while no device is attached.
 if command -v adb >/dev/null 2>&1; then
+  adb connect 127.0.0.1:5555 >/dev/null 2>&1 || true
   (
     while true; do
-      adb connect 127.0.0.1:5555 >/dev/null 2>&1 || true
       sleep 5
+      attached=$(adb devices | awk 'NR > 1 && $2 == "device" { print; exit }')
+      if [ -z "$attached" ]; then
+        adb connect 127.0.0.1:5555 >/dev/null 2>&1 || true
+      fi
     done
   ) &
   loop_pid=$!
