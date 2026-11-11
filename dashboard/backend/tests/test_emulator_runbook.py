@@ -30,12 +30,16 @@ def test_emulator_runbook_matches_the_screen_network():
         "101 Switching Protocols",
     ):
         assert required in text, required
-    assert "uu address" not in SCREEN.read_text(encoding="utf-8")
+    screen = SCREEN.read_text(encoding="utf-8")
+    assert "ANDROID_ADB_SERVER_PORT=5038" in screen
+    assert 'adb -P 5038 connect "${ANDROID_UE_UU}:5555"' in screen
+    assert "127.0.0.1:5555" not in screen
+    assert "adb -P 5037" not in screen
     route = ROUTE.read_text(encoding="utf-8")
-    assert "-i " in route
-    assert "multiport" in route
+    assert "ANDROID_UE_ADB" in route
+    assert "-A INPUT -j" in route
+    assert "-P INPUT" not in route
     assert "name eth0" not in route
-    assert "--dport 5555" not in route
 
 
 def test_dashboard_api_does_not_join_ue_networks():

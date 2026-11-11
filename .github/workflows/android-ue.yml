@@ -21,3 +21,10 @@ jobs:
           ANDROID_UE_COMPOSE_BIN: /tmp/docker-compose
           ANDROID_UE_REQUIRE_COMPOSE_VERSION: 2.29.7
         run: lab/scripts/check-android-ue.sh
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Open5G Android emulator image
+        run: bash lab/images/android-emulator/build.sh

@@ -76,16 +76,19 @@ stop_children() {
 }
 trap stop_children INT TERM
 
-# The emulator adb port is inside this netns. Do not dial a host-published port.
-# Connect once, then again only while no device is attached.
+# The emulator adb server stays on 5037 inside the emulator container.
+# This sidecar uses its own adb client and server on 5038, and dials socat at the uu address.
+export ANDROID_ADB_SERVER_PORT=5038
+: "${ANDROID_UE_UU:?ANDROID_UE_UU}"
 if command -v adb >/dev/null 2>&1; then
-  adb connect 127.0.0.1:5555 >/dev/null 2>&1 || true
+  adb -P 5038 start-server >/dev/null 2>&1 || true
+  adb -P 5038 connect "${ANDROID_UE_UU}:5555" >/dev/null 2>&1 || true
   (
     while true; do
       sleep 5
-      attached=$(adb devices | awk 'NR > 1 && $2 == "device" { print; exit }')
+      attached=$(adb -P 5038 devices | awk 'NR > 1 && $2 == "device" { print; exit }')
       if [ -z "$attached" ]; then
-        adb connect 127.0.0.1:5555 >/dev/null 2>&1 || true
+        adb -P 5038 connect "${ANDROID_UE_UU}:5555" >/dev/null 2>&1 || true
       fi
     done
   ) &

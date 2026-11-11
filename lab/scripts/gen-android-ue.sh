@@ -140,6 +140,7 @@ emit_user() {
       ANDROID_UE_ENB_UU: \${UE${n}_ENB_UU}
       ANDROID_UE_TUN: tun_srsue
       ANDROID_UE_ATTACH_TIMEOUT: \${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
+      ANDROID_UE_IPV6_ULA: \${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
       ANDROID_UE_UU: \${UE${n}_UU}
       ANDROID_UE_SCREEN_PORT: \${ANDROID_UE_SCREEN_PORT:-8000}
       ANDROID_UE_SCREEN_ALLOW_FROM: \${ANDROID_UE_SCREEN_ALLOW_FROM:-}
@@ -152,7 +153,7 @@ emit_user() {
         condition: service_started
 
   android${n}:
-    image: \${ANDROID_UE_ANDROID_IMAGE:?ANDROID_UE_ANDROID_IMAGE}
+    image: \${ANDROID_UE_ANDROID_IMAGE:-open5g-android-emulator:local}
     container_name: l5gd-android${n}
     restart: "no"
     profiles: ["android-ue"]
@@ -164,7 +165,6 @@ emit_user() {
       - "/dev/kvm:/dev/kvm"
     group_add:
       - "\${ANDROID_UE_KVM_GID:?ANDROID_UE_KVM_GID}"
-    entrypoint: ["/bin/bash", "/opt/android-ue/android-ue-adb-bind.sh"]
     environment:
       ANDROID_UE_UU: \${UE${n}_UU}
       MEMORY: \${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
@@ -172,8 +172,8 @@ emit_user() {
       SKIP_AUTH: \${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
       DISABLE_ANIMATION: \${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
       EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server \${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
-    volumes:
-      - ../scripts/android-ue-adb-bind.sh:/opt/android-ue/android-ue-adb-bind.sh:ro
+      BOOT_TIMEOUT: \${ANDROID_UE_BOOT_TIMEOUT:-600}
+      ANDROID_UE_IPV6_ULA: \${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
     depends_on:
       ue${n}-route:
         condition: service_completed_successfully
@@ -191,6 +191,7 @@ emit_user() {
       ANDROID_UE_SCREEN_BIND: \${UE${n}_SCREEN_ADDR:?UE${n}_SCREEN_ADDR}
       ANDROID_UE_SCREEN_PORT: \${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
       ANDROID_UE_SCREEN_PATH: /emulator/ue${n}
+      ANDROID_UE_UU: \${UE${n}_UU}
     volumes:
       - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
     depends_on:

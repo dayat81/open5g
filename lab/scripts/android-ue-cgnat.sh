@@ -3,6 +3,56 @@
 # Does not change Open5GS. The UPF route is a separate, restored step.
 set -eu
 
+# Continue when the value is already 1, even if /proc/sys is read-only.
+# Compose sets these sysctls. Fail only when the value is not 1 and the
+# write is rejected or does not stick.
+cgnat_ensure_sysctl() {
+  _file=$1
+  _name=$2
+  _current=$(cat "$_file" 2>/dev/null || echo missing)
+  if [ "$_current" = "1" ]; then
+    return 0
+  fi
+  if ! printf '1\n' >"$_file" 2>/dev/null; then
+    echo "cgnat: ${_name} is ${_current} and /proc/sys rejected the write. The compose service must set sysctls ${_name}: \"1\"." >&2
+    return 1
+  fi
+  _current=$(cat "$_file" 2>/dev/null || echo missing)
+  if [ "$_current" != "1" ]; then
+    echo "cgnat: ${_name} is ${_current} after the write. The compose service must set sysctls ${_name}: \"1\"." >&2
+    return 1
+  fi
+}
+
+if [ "${1:-}" = "--sysctl-self-test" ]; then
+  root=$(mktemp -d)
+  trap 'rm -rf "$root"' EXIT
+  printf '1\n' >"$root/already"
+  cgnat_ensure_sysctl "$root/already" net.ipv4.ip_forward
+  if ! grep -qx 1 "$root/already"; then
+    echo "cgnat: self-test changed a sysctl that was already 1" >&2
+    exit 1
+  fi
+  printf '0\n' >"$root/writable"
+  cgnat_ensure_sysctl "$root/writable" net.ipv4.ip_forward
+  if ! grep -qx 1 "$root/writable"; then
+    echo "cgnat: self-test did not set a writable sysctl to 1" >&2
+    exit 1
+  fi
+  mkdir "$root/rejected"
+  if cgnat_ensure_sysctl "$root/rejected" net.ipv4.ip_forward 2>"$root/err"; then
+    echo "cgnat: self-test ignored a rejected write" >&2
+    exit 1
+  fi
+  if ! grep -q 'compose service must set sysctls net.ipv4.ip_forward' "$root/err"; then
+    echo "cgnat: self-test failure did not name the compose sysctl" >&2
+    cat "$root/err" >&2
+    exit 1
+  fi
+  echo "cgnat sysctl self-test passed"
+  exit 0
+fi
+
 template=/etc/cgnat/cgnat.nft.template
 rendered=/tmp/cgnat.nft
 meta=/tmp/cgnat.if
@@ -53,12 +103,8 @@ export SOCKS_ADDR="$socks_host"
 export CT_LIMIT="$CGNAT_CT_LIMIT"
 /bin/sh /opt/cgnat/render-cgnat.sh "$template" >"$rendered"
 
-if [ -w /proc/sys/net/ipv4/ip_forward ]; then
-  printf '1\n' > /proc/sys/net/ipv4/ip_forward
-fi
-if [ -w /proc/sys/net/ipv4/conf/all/route_localnet ]; then
-  printf '1\n' > /proc/sys/net/ipv4/conf/all/route_localnet
-fi
+cgnat_ensure_sysctl /proc/sys/net/ipv4/ip_forward net.ipv4.ip_forward
+cgnat_ensure_sysctl /proc/sys/net/ipv4/conf/all/route_localnet net.ipv4.conf.all.route_localnet
 ip route replace "$UE_POOL" via "$UPF_SGI_ADDR" dev "$sgi_if"
 nft delete table ip cgnat 2>/dev/null || true
 nft delete table ip6 cgnat 2>/dev/null || true

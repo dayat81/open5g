@@ -52,7 +52,7 @@ The UE pool, SGi subnet, and the planned CGNAT hop are the ones already written 
 | Test IMSI | One IMSI in the lab PLMN (MCC/MNC from the existing plan). Seeded with the existing subscriber mechanism: `infra/roles/subscribers/templates/seed-subscriber.js.j2`, which is a Mongo `replaceOne`. The dashboard, once merged, can later edit QoS on that document. This overlay does not write Mongo. |
 | srsUE | Container `l5gd-ueN`. USIM comes from `lab/config/ran/android-ue.conf.template` after `envsubst`. Placeholders are `UE_IMSI`, `UE_KI`, `UE_OPC`, `UE_IMEI`. |
 | srsENB | Container `l5gd-enbN`. One eNB per UE. See the multi-UE decision below. eNB ID and S1 addresses are not the stock pair. |
-| Emulator | Container `l5gd-androidN`, image `halimqarroum/docker-android:api-33`, `network_mode: service:ueN`. |
+| Emulator | Container `l5gd-androidN`, image `open5g-android-emulator:local`, `network_mode: service:ueN`. |
 
 `ue1` and `ue2` are the template. The up script starts `ue1` only. `ue2` requires `ANDROID_UE_ALLOW_SECOND=1` because the current guest cannot honestly run two emulators. The generator refuses a count above 2.
 
@@ -115,7 +115,7 @@ Known ZMQ behavior from the same app note still applies: stop the UE before the 
 
 ## docker-android
 
-Source: https://github.com/HQarroum/docker-android (image `halimqarroum/docker-android`, current project version 1.1.0).
+Source: https://github.com/HQarroum/docker-android at commit `f569246983ee994aed06517bf8e06a3f10547b6d` (2026-05-07), vendored under `lab/images/android-emulator/upstream/`. Open5G builds `open5g-android-emulator:local` from that tree plus `patches/0001-open5g-boot.patch`. The published `halimqarroum/docker-android:api-33` image is not the `FROM` line.
 
 | Item | Value |
 |---|---|
@@ -149,7 +149,7 @@ How many instances: the guest in the lab notes is 8 vCPU, 16 GiB RAM, and 40 GiB
 Netdrive and Lab Ops have to clear these before the internet path, or before more than a dry description, is real:
 
 1. **Egress.** Internet for this profile is the SOCKS tunnel. The egress docker network stays `--internal`. The guest sshd needs `GatewayPorts clientspecified`, and INPUT on TCP 1080 is allowed only from the cgnat address. The laptop opens `ssh -N -J agen -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -R <GW_IP>:1080 guest`.
-2. **Mirrors.** The guest cannot pull. Mirror `halimqarroum/docker-android:api-33`, a cgnat image with `nft`, `ip`, `awk`, and `sh`, a tun2socks image with `tun2socks`, `ip`, and `sh`, and a CoreDNS image that reads `-conf`. The example leaves those names as `REPLACE_`. Also mirror `adb` and `scrcpy`. Do not `docker pull` from this overlay.
+2. **Mirrors.** The guest cannot pull. Build `open5g-android-emulator:local` where the JDK and SDK mirrors are reachable, then `docker load` it on the guest. Also mirror a cgnat image with `nft`, `ip`, `awk`, and `sh`, a tun2socks image with `tun2socks`, `ip`, and `sh`, and a CoreDNS image that reads `-conf`. The example leaves those names as `REPLACE_`. Also mirror `adb` and `scrcpy`. Do not `docker pull` from this overlay.
 3. **KVM.** `/dev/kvm` must exist inside the lab guest. The guest is itself a libvirt VM, so this is nested virtualization on the host. The up script stops if the device is missing.
 4. **Test IMSIs.** Seed one new test IMSI for ue1. Seed a second only if a larger guest is approved for ue2. Use the existing `replaceOne` seed, the lab PLMN, and Ki/OPc only in the gitignored env and the vault. Do not reuse the IMSI the stock srsUE is using. Point the student's dashboard assignment at that same IMSI once PR #7 is the tool operators use. This change does not merge that PR.
 5. **Guest size.** One user first. Two concurrent emulators need more vCPU and RAM than 8 / 16 GiB.

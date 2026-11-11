@@ -10,7 +10,7 @@ The pinned image is `halimqarroum/docker-android:api-33`. Its `scripts/start-emu
 
 `budtmo/docker-android` is a different image. It is the one that documents `WEB_VNC=true`, noVNC on 6080, and VNC on 5900. It is not the image this overlay pins, so those variables are not used.
 
-The screen path is a ws-scrcpy sidecar (`NetrisTV/ws-scrcpy`) in the UE netns (`network_mode: service:ueN`). The sidecar writes a config that sets `server.host` to `UE*_SCREEN_ADDR` on the internal network `l5gd-screen` and `server.port` to `ANDROID_UE_SCREEN_PORT` (8000 in the example). `WS_SCRCPY_PATHNAME` is `/emulator/ueN`. ADB from the sidecar dials `127.0.0.1:5555` inside that netns. It does not use a host port, and it does not read `UE*_ADB_HOST_PORT`.
+The screen path is a ws-scrcpy sidecar (`NetrisTV/ws-scrcpy`) in the UE netns (`network_mode: service:ueN`). The sidecar writes a config that sets `server.host` to `UE*_SCREEN_ADDR` on the internal network `l5gd-screen` and `server.port` to `ANDROID_UE_SCREEN_PORT` (8000 in the example). `WS_SCRCPY_PATHNAME` is `/emulator/ueN`. The sidecar runs its own adb client on port 5038 and dials `<UE_UU>:5555`. It does not use the emulator adb server on 5037, a host port, or `UE*_ADB_HOST_PORT`.
 
 There is no VNC password because there is no VNC server. Do not invent one in git. The sidecar itself has no login. The dashboard session is the gate, and the listen address is `UE*_SCREEN_ADDR` only.
 
@@ -26,7 +26,7 @@ The screen listener, not the API, reaches the sidecar. Set the target with eithe
 - `OPEN5G_EMULATOR_TARGETS=ue1=<UE1_SCREEN_ADDR>:8000,ue2=<UE2_SCREEN_ADDR>:8000`
 - or `internal_host` and `internal_port` on the `emulator_endpoints` row. A row wins over the env value for that UE.
 
-`<UE1_SCREEN_ADDR>` is the address on `l5gd-screen`, not the `uu` address. Copy it into the gitignored dashboard env. Do not commit the lab value. `adb connect` for the B2 check stays on `<UE1_UU>:5555`. The Android entrypoint rewrites the image's socat so it binds that uu address. It does not bind `eth0` or `0.0.0.0`.
+`<UE1_SCREEN_ADDR>` is the address on `l5gd-screen`, not the `uu` address. Copy it into the gitignored dashboard env. Do not commit the lab value. `adb connect` for the B2 check stays on `<UE1_UU>:5555`. The vendored emulator image binds socat to `ANDROID_UE_UU` in `lab/images/android-emulator/patches/0001-open5g-boot.patch`. It does not bind `eth0` or `0.0.0.0`, and the compose service does not rewrite the entrypoint. The host installs the IPv6 nft filter only after that screen address is already on an interface. The filter still accepts only `lo`, so IPv6 on `l5gd-screen` stays dropped.
 
 ## Build the sidecar image
 

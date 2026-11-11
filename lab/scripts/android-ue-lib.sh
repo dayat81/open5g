@@ -115,33 +115,120 @@ sys.exit(0 if left // shift == right // shift else 1)
 PY
 }
 
+# Args: /proc/net/if_inet6 contents file, sysfs net root.
+# A usable fe80 is not lo, not tentative (0x40), not dadfailed (0x08), and IFF_UP.
+android_ue_fe80_proc_ok() {
+  local procfile=$1
+  local sysroot=$2
+  local addr _idx _plen _scope flags name iflag
+  while read -r addr _idx _plen _scope flags name; do
+    case "$addr" in
+      fe80*) ;;
+      *) continue ;;
+    esac
+    if [ "$name" = "lo" ]; then
+      continue
+    fi
+    flags=$((16#$flags))
+    if [ $((flags & 16#48)) -ne 0 ]; then
+      continue
+    fi
+    iflag=$(cat "${sysroot}/${name}/flags" 2>/dev/null || echo 0)
+    iflag=$((iflag))
+    if [ $((iflag & 1)) -eq 1 ]; then
+      return 0
+    fi
+  done <"$procfile"
+  return 1
+}
+
+# fc00::/7 with prefix /128. ::1, fe80, and global unicast are rejected.
+android_ue_ula_cidr_ok() {
+  local ula=$1
+  local addr head
+  case "$ula" in
+    */128) ;;
+    *) return 1 ;;
+  esac
+  addr=${ula%/*}
+  case "$addr" in
+    ::*) return 1 ;;
+    *:*) ;;
+    *) return 1 ;;
+  esac
+  head=$(printf '%s' "${addr%%:*}" | tr '[:upper:]' '[:lower:]')
+  printf '%s\n' "$head" | grep -Eq '^(fc|fd)[0-9a-f]{0,2}$' || return 1
+  printf '%s\n' "$addr" | grep -Eq '^[0-9A-Fa-f:]+$' || return 1
+  case "$addr" in
+    *:::*) return 1 ;;
+  esac
+}
+
+# A non-tentative ULA on an UP dummy0. fe80 does not satisfy this check.
+android_ue_ula_proc_ok() {
+  local procfile=$1
+  local sysroot=$2
+  local addr _idx _plen _scope flags name iflag prefix
+  while read -r addr _idx _plen _scope flags name; do
+    [ -n "${name:-}" ] || continue
+    if [ "$name" != "dummy0" ]; then
+      continue
+    fi
+    prefix=$(printf '%s' "$addr" | cut -c1-2 | tr 'A-F' 'a-f')
+    if [ "$prefix" != "fd" ] && [ "$prefix" != "fc" ]; then
+      continue
+    fi
+    flags=$((16#$flags))
+    if [ $((flags & 16#48)) -ne 0 ]; then
+      continue
+    fi
+    iflag=$(cat "${sysroot}/${name}/flags" 2>/dev/null || echo 0)
+    iflag=$((iflag))
+    if [ $((iflag & 1)) -eq 1 ]; then
+      return 0
+    fi
+  done <"$procfile"
+  return 1
+}
+
+android_ue_nonloop_v6_ok() {
+  android_ue_ula_proc_ok "$@"
+}
+
 android_ue_screen_image_ok() {
   printf '%s\n' "$1" | grep -Eq '@sha256:[0-9A-Fa-f]{64}([^0-9A-Fa-f]|$)'
 }
 
-# stdin: ip -6 -o addr show. Succeeds only when lo has ::1 and another
-# interface has a link-local address. glibc AI_ADDRCONFIG ignores lo.
-android_ue_ipv6_lines_ok() {
-  local line iface has_lo=0 has_link=0
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    iface=$(printf '%s\n' "$line" | awk '{ print $2 }')
-    case "$line" in
-      *'inet6 ::1'*)
-        if [ "$iface" = "lo" ]; then
-          has_lo=1
-        fi
-        ;;
-    esac
-    case "$line" in
-      *'inet6 fe80:'*)
-        if [ "$iface" != "lo" ]; then
-          has_link=1
-        fi
-        ;;
-    esac
-  done
-  [ "$has_lo" -eq 1 ] && [ "$has_link" -eq 1 ]
+android_ue_android_image_ok() {
+  local image=$1
+  case "$image" in
+    open5g-android-emulator:local) return 0 ;;
+  esac
+  printf '%s\n' "$image" | grep -Eq '@sha256:[0-9A-Fa-f]{64}$'
+}
+
+# Host nft rules for the UE netns. lo is accepted, so ::1 on lo stays open.
+# policy drop covers every other interface. No extra ::1 match.
+android_ue_render_ip6_nft() {
+  cat <<'EOF'
+table ip6 android_ue {
+	chain input {
+		type filter hook input priority 0; policy drop;
+		iif "lo" accept
+	}
+	chain output {
+		type filter hook output priority 0; policy drop;
+		oif "lo" accept
+	}
+}
+EOF
+}
+
+android_ue_kvm_gid_ok() {
+  local want=$1
+  local have=$2
+  printf '%s\n' "$want" | grep -Eq '^[1-9][0-9]*$' || return 1
+  [ "$want" = "$have" ]
 }
 
 android_ue_reject_placeholder() {

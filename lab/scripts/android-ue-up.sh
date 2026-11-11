@@ -75,15 +75,102 @@ android_ue_wait_route() {
 
 android_ue_require_ipv6() {
   local n=$1
-  local pid lines
+  local pid proc sysroot iface knob val key
   pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}")
-  lines=$(nsenter -t "$pid" -n ip -6 -o addr show 2>/dev/null || true)
-  if ! printf '%s\n' "$lines" | android_ue_ipv6_lines_ok; then
-    echo "android-ue: ue${n} needs ::1 on lo and a non-loopback IPv6 address" >&2
-    printf '%s\n' "$lines" >&2
+  proc=$(mktemp)
+  sysroot=$(mktemp -d)
+  nsenter -t "$pid" -n cat /proc/net/if_inet6 >"$proc"
+  if ! nsenter -t "$pid" -n ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
+    echo "android-ue: ::1 is missing on lo in the ue${n} netns" >&2
+    rm -rf "$proc" "$sysroot"
     exit 1
   fi
-  echo "android-ue: ue${n} has ::1 and a non-loopback IPv6 address"
+  while read -r _addr _idx _plen _scope _flags name; do
+    [ -n "$name" ] || continue
+    mkdir -p "${sysroot}/${name}"
+    nsenter -t "$pid" -n cat "/sys/class/net/${name}/flags" >"${sysroot}/${name}/flags" 2>/dev/null || printf '0\n' >"${sysroot}/${name}/flags"
+  done <"$proc"
+  if ! android_ue_ula_proc_ok "$proc" "$sysroot"; then
+    echo "android-ue: ue${n} dummy0 has no UP non-tentative ULA. fe80 does not replace it." >&2
+    rm -rf "$proc" "$sysroot"
+    exit 1
+  fi
+  if ! nsenter -t "$pid" -n ip link show dummy0 >/dev/null 2>&1; then
+    echo "android-ue: dummy0 anchor is missing in the ue${n} netns" >&2
+    rm -rf "$proc" "$sysroot"
+    exit 1
+  fi
+  rm -rf "$proc" "$sysroot"
+  if ! nsenter -t "$pid" -n ip -6 route show | grep -q 'unreachable default'; then
+    echo "android-ue: ue${n} is missing the unreachable IPv6 default route" >&2
+    exit 1
+  fi
+  if nsenter -t "$pid" -n ip -6 route show default | grep -v 'unreachable' | grep -q .; then
+    echo "android-ue: ue${n} still has a usable IPv6 default route" >&2
+    exit 1
+  fi
+  for key in all default; do
+    val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${key}/disable_ipv6" 2>/dev/null || echo missing)
+    if [ "$val" != "0" ]; then
+      echo "android-ue: disable_ipv6 on ${key} is ${val}, expected 0" >&2
+      exit 1
+    fi
+  done
+  for iface in $(nsenter -t "$pid" -n ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
+    if [ "$iface" = "lo" ] || [ "$iface" = "dummy0" ]; then
+      val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${iface}/disable_ipv6" 2>/dev/null || echo missing)
+      if [ "$val" != "0" ]; then
+        echo "android-ue: disable_ipv6 on ${iface} is ${val}, expected 0" >&2
+        exit 1
+      fi
+    fi
+    if [ "$iface" = "lo" ]; then
+      continue
+    fi
+    for knob in accept_ra autoconf forwarding; do
+      val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${iface}/${knob}")
+      if [ "$val" != "0" ]; then
+        echo "android-ue: ${knob} on ${iface} is ${val}, expected 0" >&2
+        exit 1
+      fi
+    done
+  done
+  echo "android-ue: ue${n} has ::1, a dummy0 ULA, and IPv6 is fail-closed"
+}
+
+android_ue_install_ip6_filter() {
+  local n=$1
+  local pid rendered screen_addr screen_iface
+  if [ "${ANDROID_UE_IPV6_NO_FILTER_OK:-0}" = "1" ]; then
+    echo "android-ue: ANDROID_UE_IPV6_NO_FILTER_OK=1, not installing the IPv6 filter"
+    return 0
+  fi
+  if ! command -v nft >/dev/null 2>&1; then
+    echo "android-ue: nft is missing on the host. Refusing to continue without an IPv6 filter." >&2
+    exit 1
+  fi
+  pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}")
+  screen_addr=$(get "UE${n}_SCREEN_ADDR")
+  screen_iface=$(nsenter -t "$pid" -n ip -4 -o addr show | awk -v addr="$screen_addr" '$4 ~ "^" addr "/" { print $2; exit }')
+  if [ -z "$screen_iface" ] || [ "$screen_iface" = "lo" ]; then
+    echo "android-ue: l5gd-screen address ${screen_addr} is not on an interface yet" >&2
+    exit 1
+  fi
+  echo "android-ue: l5gd-screen address ${screen_addr} is on ${screen_iface} before the IPv6 filter"
+  rendered=$(mktemp)
+  android_ue_render_ip6_nft >"$rendered"
+  nsenter -t "$pid" -n nft delete table ip6 android_ue >/dev/null 2>&1 || true
+  if ! nsenter -t "$pid" -n nft -f "$rendered"; then
+    echo "android-ue: nft IPv6 filter failed in the ue${n} netns. The srsRAN image ip6tables is not used." >&2
+    rm -f "$rendered"
+    exit 1
+  fi
+  rm -f "$rendered"
+  if ! nsenter -t "$pid" -n nft list table ip6 android_ue | grep -q 'hook input'; then
+    echo "android-ue: nft table ip6 android_ue is missing after install" >&2
+    exit 1
+  fi
+  echo "android-ue: IPv6 filter installed with nft in the ue${n} netns"
 }
 
 android_ue_boot_diag() {
@@ -99,7 +186,8 @@ android_ue_boot_diag() {
   fi
   echo "android-ue: host /dev/kvm:" >&2
   ls -l /dev/kvm >&2 || true
-  echo "android-ue: emulator identity and accelerator:" >&2
+  echo "android-ue: AI_ADDRCONFIG and emulator identity:" >&2
+  docker exec "l5gd-android${n}" python3 -c 'import socket; socket.getaddrinfo("::1", 5554, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG)' >&2 || true
   docker exec "l5gd-android${n}" sh -c 'ls -l /dev/kvm; id; ps -o user,uid,gid,args; emulator -accel-check' >&2 || true
 }
 
@@ -114,7 +202,7 @@ android_ue_accel_check() {
 
 android_ue_wait_boot() {
   local n=$1
-  local uu timeout deadline completed
+  local uu timeout deadline completed boot_gate
   uu=$(get "UE${n}_UU")
   android_ue_reject_placeholder "UE${n}_UU" "$uu"
   timeout=$(get ANDROID_UE_BOOT_TIMEOUT)
@@ -130,6 +218,14 @@ android_ue_wait_boot() {
     exit 1
   fi
   android_ue_accel_check "$n"
+  boot_gate=$(get ANDROID_UE_BOOT_GATE)
+  if [ -z "$boot_gate" ]; then
+    boot_gate=1
+  fi
+  if [ "$boot_gate" = "0" ]; then
+    echo "android-ue: ANDROID_UE_BOOT_GATE=0, not waiting for sys.boot_completed"
+    return 0
+  fi
   deadline=$((SECONDS + timeout))
   while [ "$SECONDS" -lt "$deadline" ]; do
     adb connect "${uu}:5555" >/dev/null 2>&1 || true
@@ -266,6 +362,21 @@ if [ ! -e /dev/kvm ]; then
   echo "android-ue: /dev/kvm is missing. Nested KVM is a Lab Ops prerequisite." >&2
   exit 1
 fi
+android_image=$(get ANDROID_UE_ANDROID_IMAGE)
+if [ -z "$android_image" ]; then
+  android_image=open5g-android-emulator:local
+fi
+if ! android_ue_android_image_ok "$android_image"; then
+  echo "android-ue: ANDROID_UE_ANDROID_IMAGE must be open5g-android-emulator:local or include @sha256" >&2
+  exit 1
+fi
+kvm_gid=$(get ANDROID_UE_KVM_GID)
+android_ue_reject_placeholder ANDROID_UE_KVM_GID "$kvm_gid"
+host_kvm_gid=$(stat -c %g /dev/kvm)
+if ! android_ue_kvm_gid_ok "$kvm_gid" "$host_kvm_gid"; then
+  echo "android-ue: ANDROID_UE_KVM_GID must be a non-zero number and equal ${host_kvm_gid} from stat /dev/kvm" >&2
+  exit 1
+fi
 mem_raw=$(get ANDROID_UE_MEMORY)
 limit_raw=$(get ANDROID_UE_MEM_LIMIT)
 if [ -z "$limit_raw" ]; then
@@ -347,11 +458,16 @@ if [ "$install_upf_route" -eq 1 ] && [ "$with_socks" -eq 1 ]; then
   fi
 fi
 
+if docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null | grep -qx true; then
+  echo "android-ue: android${n} is already running; refusing to run the route sidecar again" >&2
+  exit 1
+fi
 echo "android-ue: starting ${user} only. Core config is not modified."
 android_ue_compose "$root" "$env_file" up -d \
   "ue${n}" "enb${n}" "ue${n}-route"
 android_ue_wait_route "$n"
 android_ue_require_ipv6 "$n"
+android_ue_install_ip6_filter "$n"
 android_ue_install_gtpu_route "$n"
 android_ue_probe_sgi "$n"
 android_ue_compose "$root" "$env_file" up -d "android${n}"

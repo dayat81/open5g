@@ -22,7 +22,7 @@ Stop here until each line is true. The design doc lists the same blockers for Ne
 - Explicit approval to use lab5g-dev. The core is already up from its own compose file (`name: lab5g-dev`). This runbook does not start it and does not edit `lab/config/examples/open5gs/`.
 - `/dev/kvm` exists in the guest (nested virtualization). `ls -l /dev/kvm`.
 - `ANDROID_UE_MEM_LIMIT` defaults to `4096m`. It must be at least `ANDROID_UE_MEMORY` plus 1536 MiB. A 2560 MiB limit OOM-kills api-33. `up` refuses a smaller limit.
-- Images are already loaded: `gradiant/srsran-4g:25_10`, `halimqarroum/docker-android:api-33`, and a local cgnat image that contains `nft`, `ip`, `awk`, and `sh`. No pulls.
+- Images are already loaded: `gradiant/srsran-4g:25_10`, the local emulator image below, and a local cgnat image that contains `nft`, `ip`, `awk`, and `sh`. No pulls from this overlay during `up`.
 - `adb` and `scrcpy` are installed on the guest from the mirror.
 - One new test IMSI is inserted with `lab/scripts/android-ue-seed.sh`. That script stops if the IMSI is already in Mongo. It does not replace an existing subscriber. Do not run it during the dashboard PR #7 test window. Ki and OPc stay in the gitignored env. Do not reuse the stock srsUE's IMSI. Do not `drop` the subscriber collection.
 - Stock `l5gd-enb` and `l5gd-ue` are stopped if the guest cannot spare another eNB and UE (2 CPU and 2048 MiB each in this overlay, plus the emulator).
@@ -34,6 +34,19 @@ sudo docker network create --internal lab5g-dev-android-ue-egress
 ```
 
 Use that name only in the gitignored env. Leave `android-ue.env.example` as it is.
+
+## Emulator image
+
+Build it on a machine that can reach the JDK and Android SDK mirrors, then load the result on the guest:
+
+```bash
+sudo bash lab/images/android-emulator/build.sh
+sudo docker save open5g-android-emulator:local | gzip > open5g-android-emulator.tar.gz
+```
+
+On the guest, `docker load` that archive. Do not push this image to a public registry. It contains Android SDK components whose licenses were accepted at build time. `ANDROID_UE_ANDROID_IMAGE` stays `open5g-android-emulator:local`. A registry image is accepted only when its name ends with `@sha256:` and 64 hex digits. The build starts from the vendored docker-android tree at commit `f569246983ee994aed06517bf8e06a3f10547b6d`, with the base JDK and the command-line tools zip pinned. No ADB key is stored in the repo or the image; `adb` creates a key on first start, or the lab can mount its own key from outside git. `adb` listens on loopback only.
+
+`BOOT_TIMEOUT` defaults to 600 seconds, the same as `ANDROID_UE_BOOT_TIMEOUT`. A lab boot reached `sys.boot_completed=1` at 481 seconds, so the watcher stays at 600. The image HEALTHCHECK start period is 900 seconds because that clock starts when the container starts, before the AVD and QEMU. The route sidecar creates `dummy0`, brings it up, and adds `ANDROID_UE_IPV6_ULA` (`nodad`, no route on that interface). The example value `fdc2:fd97:24a4::1/128` is a locally chosen address inside `fc00::/7`. It is not a documentation prefix and not a lab allocation. The emulator container has no `NET_ADMIN`. Its preflight only checks that the ULA is present and not tentative, that `::1` is on `lo`, and that `getaddrinfo("::1", AI_ADDRCONFIG)` succeeds. `fe80` may exist and is not required. `dummy0` with that ULA is required. Set `ANDROID_UE_BOOT_GATE=0` to skip the host boot wait for a netns-only run. Optional, and not the default: add `-feature -ModemSimulator` to `ANDROID_UE_EXTRA_FLAGS` only if the Android specialist asks for that fallback.
 
 ## Env file
 
@@ -74,7 +87,9 @@ sudo bash lab/scripts/android-ue-up.sh \
   --user ue1
 ```
 
-The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not change the UPF main default route. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. If `ip6tables` or `ip6tables-nft` can open the filter table, IPv6 output is dropped except on `lo`. Otherwise the script warns and continues. It does not set `disable_ipv6`. It removes any IPv6 default route and sets `accept_ra=0` and `autoconf=0`, so link-local addresses stay. It stops unless `lo` has `::1` and another interface has `fe80`. It does not load kernel modules. The api-33 image has no official modem-host setting, only `EXTRA_FLAGS`, so the modem is not redirected.
+The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not change the UPF main default route. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. `ANDROID_UE_KVM_GID` must be a non-zero number and the same as `stat -c %g /dev/kvm`. A registry emulator image is refused unless its name contains `@sha256`. `open5g-android-emulator:local` is the image this repo builds.
+
+IPv6 stays enabled on `all`, `default`, `lo`, and `dummy0`. Docker may leave `disable_ipv6=1` on `eth0`, and `tun_srsue` may never gain `fe80`. That link-local address is optional. The sidecar always creates `dummy0` with the ULA `/128` (`nodad`, no route on that interface). `accept_ra=0`, `autoconf=0`, and `forwarding=0` are set on each interface other than `lo`. It installs `ip -6 route replace unreachable default metric 1` and removes any other IPv6 default. IPv4 INPUT accepts `lo` and established flows, then drops new packets that arrive on `tun_srsue`. Listeners on the uu address, including 5554 and 5555, are not covered by that drop. A later chain, `ANDROID_UE_ADB`, is appended after `ANDROID_UE_IN4` and accepts 5554/5555 only on the uu interface. The INPUT policy is not changed. After the sidecar exits, `up` checks that the `l5gd-screen` address is already on an interface, then runs `nsenter -n nft` in the UE netns. The `ip6` table accepts `lo` on input and output and drops every other interface, including `l5gd-screen`. `::1` is reached through `lo`, so it stays open for the modem. The srsRAN image `ip6tables` is not used. If `nft` is missing or the rules do not load, `up` exits. `ANDROID_UE_IPV6_NO_FILTER_OK=1` is the only override, and only for a netns check. `::1` plus the ULA on `dummy0` are required. `up` reads those sysctls and the unreachable route again after the sidecar exits. If `l5gd-android1` is already running, `up` does not start the sidecar again. cgnat reads `net.ipv4.ip_forward` and continues when compose already set it to 1. It exits only when the value is not 1 and `/proc/sys` rejects the write. The image has no official modem-host setting. `-feature -ModemSimulator` is an optional `EXTRA_FLAGS` value, not the default. The emulator service does not receive `NET_ADMIN`.
 
 `up` runs `docker wait l5gd-ue1-route` and continues only when that exit code is 0. The eNB container has no `NET_ADMIN`. After that wait, `up` uses `nsenter` from the host, the same way `lab-routes.sh` does for `l5gd-enb`. It finds the interface that holds `UE1_ENB_S1U` and installs `ANDROID_UE_SGWU_GTPU_ROUTE/32` on that interface. `ip route get` must show that device. A route on the UPF toward that S1-U address is not added. The lab capture showed the eNB route alone is enough for the SGi ping.
 
