@@ -165,6 +165,25 @@ emit_user() {
       ue${n}-route:
         condition: service_completed_successfully
 
+  ue${n}-screen:
+    image: \${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: l5gd-ue${n}-screen
+    restart: "no"
+    profiles: ["android-ue"]
+    cpus: 0.5
+    mem_limit: 512m
+    network_mode: "service:ue${n}"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_BIND: \${UE${n}_UU}
+      ANDROID_UE_SCREEN_PORT: \${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
+      ANDROID_UE_SCREEN_PATH: /emulator/ue${n}
+    volumes:
+      - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
+    depends_on:
+      android${n}:
+        condition: service_started
+
 EOF
 }
 
@@ -175,6 +194,7 @@ emit_all() {
 # Run this file on its own. Do not combine it with the core compose file.
 # Addresses, images, and USIM values come from the env file. ZMQ TCP ports are
 # the lab's verified single-pair ports and stay inside each container netns.
+# The screen sidecar shares the UE netns and is not published on the host.
 
 EOF
   cat <<'EOF'

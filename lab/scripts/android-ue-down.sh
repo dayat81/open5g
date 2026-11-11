@@ -66,11 +66,11 @@ if [ -f "$state/upf-rule.txt" ]; then
 fi
 
 # UE before eNB. srsRAN's ZMQ note asks for that order on the way down.
-for svc in android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat; do
+for svc in ue1-screen ue2-screen android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat; do
   android_ue_compose "$root" "$env_file" stop "$svc" || true
 done
 android_ue_compose "$root" "$env_file" rm -f \
-  android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat || true
+  ue1-screen ue2-screen android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat || true
 rm -f "$state/cgnat-ues.txt"
 echo "android-ue: profile stopped. Core, Mongo, and subscriber documents were not changed."
 exit "$rollback_rc"

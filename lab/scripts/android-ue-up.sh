@@ -141,12 +141,24 @@ state=$(android_ue_state_dir)
 get() { android_ue_env_get "$env_file" "$1"; }
 n=${user#ue}
 
+android_ue_screen_enabled() {
+  local image
+  image=$(get ANDROID_UE_SCREEN_IMAGE)
+  case "$image" in
+    ""|REPLACE_*) return 1 ;;
+  esac
+  return 0
+}
+
 if [ "$with_socks" -eq 1 ]; then
   with_cgnat=1
 fi
 
 if [ "$print_services" -eq 1 ]; then
   printf '%s\n' "ue${n}" "enb${n}" "ue${n}-route" "android${n}"
+  if android_ue_screen_enabled; then
+    echo "ue${n}-screen"
+  fi
   if [ "$with_cgnat" -eq 1 ]; then
     echo cgnat
   fi
@@ -357,6 +369,13 @@ if [ "$install_upf_route" -eq 1 ]; then
     printf 'from %s/32 lookup 1080\n' "$ue_addr" >"$state/upf-rule.txt"
     echo "android-ue: UPF steers only ${ue_addr}/32 via table 1080. The main default route was not changed."
   fi
+fi
+
+if android_ue_screen_enabled; then
+  android_ue_compose "$root" "$env_file" up -d "ue${n}-screen"
+  echo "android-ue: screen sidecar is up on the uu address. No host port is published."
+else
+  echo "android-ue: screen sidecar is off until ANDROID_UE_SCREEN_IMAGE is a real image."
 fi
 
 echo "android-ue: ${user} is up. On the guest, adb connect $(get "UE${n}_UU"):5555. Core containers were not restarted."

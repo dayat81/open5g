@@ -159,7 +159,7 @@ Netdrive and Lab Ops have to clear these before the internet path, or before mor
 
 - A GNU Radio (or other) IQ broker so one srsENB can serve several srsUEs, after a lab5g-dev spike. Not this overlay.
 - A dashboard control to start and stop the emulator for an assignment.
-- A screen path that is not scrcpy-over-SSH. This image does not provide web VNC. A different image would be a separate choice.
+- The dashboard screen is a ws-scrcpy sidecar, because this image does not provide web VNC. See `docs/deploy/android-emulator-dashboard.md`. Starting and stopping the emulator from the dashboard is still later.
 - Show the UE address, the port block, and a byte counter on the dashboard.
 - Live Gx RAR (Gate D) so a student profile edit hits the existing bearer without a reattach.
 - Resize the guest, and confirm nested KVM, before a second emulator.

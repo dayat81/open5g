@@ -206,7 +206,7 @@ Ping and iperf to the SGi server still do not prove this path. They never enter 
 
 ### Phase 2
 
-Not in this overlay: QCI 8, autossh, full UDP, IPv6, a GNU Radio multi-UE broker, dashboard control of the emulator, a screen path other than scrcpy, live Gx RAR, keeping USIM material out of the container environment, and a larger guest for a second emulator. Also later: deny the laptop WAN address and corporate VPN ranges, extra bogons, a cgnat input chain, and limiting the eNB TCP exception to the ZMQ ports. IPv6 forwarding on the cgnat netns is already dropped.
+Not in this overlay: QCI 8, autossh, full UDP, IPv6, a GNU Radio multi-UE broker, dashboard buttons that start, stop, reset, or wipe the emulator, live Gx RAR, keeping USIM material out of the container environment, and a larger guest for a second emulator. The screen proxy is a separate runbook, [`android-emulator-dashboard.md`](android-emulator-dashboard.md). It does not change this egress path. Also later: deny the laptop WAN address and corporate VPN ranges, extra bogons, a cgnat input chain, and limiting the eNB TCP exception to the ZMQ ports. IPv6 forwarding on the cgnat netns is already dropped.
 
 ## Rollback
 

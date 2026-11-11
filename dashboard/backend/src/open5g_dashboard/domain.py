@@ -186,6 +186,23 @@ def authorize(actor: Actor, assignment: Assignment, action: str) -> Decision:
     return Decision(False, 403, "role_forbidden")
 
 
+def authorize_emulator(actor: Actor, owner_user_id: str | None) -> Decision:
+    """Who may open an emulator screen.
+
+    A student may open only a UE assigned to them. An admin or an instructor
+    may open every configured UE. Profile edits stay on `authorize`; this is
+    only the screen.
+    """
+
+    if actor.role in {"admin", "instructor"}:
+        return Decision(True, 200, "emulator_staff")
+    if actor.role == "student" and owner_user_id and actor.id == owner_user_id:
+        return Decision(True, 200, "emulator_owner")
+    if actor.role == "student":
+        return Decision(False, 403, "not_owner")
+    return Decision(False, 403, "role_forbidden")
+
+
 def _walk_keys(payload: Any) -> list[tuple[str, Any]]:
     found: list[tuple[str, Any]] = []
     if isinstance(payload, dict):

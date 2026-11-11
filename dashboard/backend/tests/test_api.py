@@ -67,8 +67,8 @@ def env():
         assert again == []
         conn.execute(
             """
-            TRUNCATE audit_events, apply_targets, apply_jobs, profile_versions, profiles,
-                     catalog_entries, sessions, imsi_assignments, users, groups
+            TRUNCATE emulator_sessions, emulator_endpoints, audit_events, apply_targets, apply_jobs,
+                     profile_versions, profiles, catalog_entries, sessions, imsi_assignments, users, groups
             RESTART IDENTITY CASCADE
             """
         )

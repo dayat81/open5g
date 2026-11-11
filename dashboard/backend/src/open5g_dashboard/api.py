@@ -16,6 +16,7 @@ from psycopg import connect
 from psycopg.rows import dict_row
 
 from open5g_dashboard import db
+from open5g_dashboard.emulator_http import DashboardHooks, register_emulator
 from open5g_dashboard.domain import (
     Actor,
     Assignment,
@@ -714,6 +715,17 @@ def create_app(settings: Settings) -> FastAPI:
         def demo():
             return demo_sample()
 
+    register_emulator(
+        app,
+        settings,
+        DashboardHooks(
+            connect_db=connect_db,
+            fail=fail,
+            require_user=require_user,
+            actor_from=actor_from,
+            audit=audit,
+        ),
+    )
     return app
 
 

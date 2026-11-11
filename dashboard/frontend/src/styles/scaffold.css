@@ -15,6 +15,15 @@
   border-left-color: var(--warn);
   background: var(--warn-soft);
 }
+.emulator-frame {
+  display: block;
+  width: 100%;
+  height: min(720px, 70vh);
+  margin-top: var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
 @media (max-width: 800px) {
   .nav {
     display: block;

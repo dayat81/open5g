@@ -3,6 +3,7 @@
 # Run this file on its own. Do not combine it with the core compose file.
 # Addresses, images, and USIM values come from the env file. ZMQ TCP ports are
 # the lab's verified single-pair ports and stay inside each container netns.
+# The screen sidecar shares the UE netns and is not published on the host.
 
 services:
   ue1:
@@ -124,6 +125,25 @@ services:
       ue1-route:
         condition: service_completed_successfully
 
+  ue1-screen:
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: l5gd-ue1-screen
+    restart: "no"
+    profiles: ["android-ue"]
+    cpus: 0.5
+    mem_limit: 512m
+    network_mode: "service:ue1"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_BIND: ${UE1_UU}
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
+      ANDROID_UE_SCREEN_PATH: /emulator/ue1
+    volumes:
+      - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
+    depends_on:
+      android1:
+        condition: service_started
+
   ue2:
     image: ${ANDROID_UE_SRS_IMAGE:?ANDROID_UE_SRS_IMAGE}
     container_name: l5gd-ue2
@@ -242,6 +262,25 @@ services:
     depends_on:
       ue2-route:
         condition: service_completed_successfully
+
+  ue2-screen:
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: l5gd-ue2-screen
+    restart: "no"
+    profiles: ["android-ue"]
+    cpus: 0.5
+    mem_limit: 512m
+    network_mode: "service:ue2"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_BIND: ${UE2_UU}
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
+      ANDROID_UE_SCREEN_PATH: /emulator/ue2
+    volumes:
+      - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
+    depends_on:
+      android2:
+        condition: service_started
 
   cgnat:
     image: ${ANDROID_UE_CGNAT_IMAGE:?ANDROID_UE_CGNAT_IMAGE}

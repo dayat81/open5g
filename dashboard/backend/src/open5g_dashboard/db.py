@@ -351,3 +351,104 @@ def insert_catalog(conn, kind: str, name: str, max_ambr_dl_bps, enforced: bool, 
 
 def list_caps(conn):
     return conn.execute("SELECT * FROM catalog_entries ORDER BY name").fetchall()
+
+
+def list_emulator_endpoints(conn):
+    return conn.execute("SELECT * FROM emulator_endpoints ORDER BY ue_id").fetchall()
+
+
+def emulator_endpoint(conn, ue_id: str):
+    return conn.execute("SELECT * FROM emulator_endpoints WHERE ue_id = %s", (ue_id,)).fetchone()
+
+
+def upsert_emulator_endpoint(conn, ue_id: str, assignment_id: str, host, port, apn, attach_ipv4):
+    return conn.execute(
+        """
+        INSERT INTO emulator_endpoints (
+            ue_id, assignment_id, internal_host, internal_port, apn, attach_ipv4
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (ue_id) DO UPDATE SET
+            assignment_id = EXCLUDED.assignment_id,
+            internal_host = EXCLUDED.internal_host,
+            internal_port = EXCLUDED.internal_port,
+            apn = EXCLUDED.apn,
+            attach_ipv4 = EXCLUDED.attach_ipv4
+        RETURNING *
+        """,
+        (ue_id, assignment_id, host, port, apn, attach_ipv4),
+    ).fetchone()
+
+
+def open_emulator_session(conn, ue_id: str):
+    return conn.execute(
+        """
+        SELECT * FROM emulator_sessions
+        WHERE ue_id = %s AND closed_at IS NULL
+        """,
+        (ue_id,),
+    ).fetchone()
+
+
+def emulator_session_by_token(conn, token_hash: str):
+    return conn.execute(
+        """
+        SELECT * FROM emulator_sessions
+        WHERE token_hash = %s AND closed_at IS NULL
+        """,
+        (token_hash,),
+    ).fetchone()
+
+
+def emulator_session_open(conn, session_id: str):
+    return conn.execute(
+        """
+        SELECT 1 FROM emulator_sessions
+        WHERE id = %s AND closed_at IS NULL
+        """,
+        (session_id,),
+    ).fetchone()
+
+
+def insert_emulator_session(conn, ue_id: str, actor_id: str, token_hash: str):
+    return conn.execute(
+        """
+        INSERT INTO emulator_sessions (ue_id, actor_id, token_hash)
+        VALUES (%s, %s, %s)
+        RETURNING *
+        """,
+        (ue_id, actor_id, token_hash),
+    ).fetchone()
+
+
+def close_emulator_session(conn, session_id: str, reason: str):
+    return conn.execute(
+        """
+        UPDATE emulator_sessions
+        SET closed_at = now(), close_reason = %s
+        WHERE id = %s AND closed_at IS NULL
+        RETURNING *
+        """,
+        (reason, session_id),
+    ).fetchone()
+
+
+def touch_emulator_session(conn, session_id: str) -> None:
+    conn.execute(
+        """
+        UPDATE emulator_sessions
+        SET last_active_at = now()
+        WHERE id = %s AND closed_at IS NULL
+        """,
+        (session_id,),
+    )
+
+
+def idle_emulator_sessions(conn, cutoff):
+    return conn.execute(
+        """
+        SELECT * FROM emulator_sessions
+        WHERE closed_at IS NULL AND last_active_at <= %s
+        """,
+        (cutoff,),
+    ).fetchall()

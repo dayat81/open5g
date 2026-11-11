@@ -23,6 +23,7 @@ sh_scripts=(
   lab/scripts/android-ue-egress.sh
   lab/scripts/android-ue-add-ue.sh
   lab/scripts/render-corefile.sh
+  lab/scripts/android-ue-screen.sh
 )
 
 echo "shellcheck"
@@ -43,7 +44,8 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
   ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
-  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE; do
+  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE \
+  ANDROID_UE_SCREEN_IMAGE; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -78,6 +80,8 @@ scan_paths=(
   lab/scripts/check-android-ue.sh
   docs/integration/android-ue-per-user.md
   docs/deploy/android-ue-lab5g-dev.md
+  docs/deploy/android-emulator-dashboard.md
+  lab/scripts/android-ue-screen.sh
   .github/workflows/android-ue.yml
 )
 if grep -R -E -n --exclude-dir=.git \
@@ -319,6 +323,44 @@ if grep -n -E 'ADB_HOST_PORT|:[0-9]*:(5554|5555|5900|6080)' lab/compose/docker-c
   echo "android-ue still publishes ADB or VNC to the host" >&2
   exit 1
 fi
+python3 - <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path("lab/compose/docker-compose.android-ue.optional.yml").read_text()
+blocks = {}
+name = None
+buf = []
+for line in text.splitlines():
+    if line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
+        if name:
+            blocks[name] = "\n".join(buf)
+        name = line.strip()[:-1]
+        buf = [line]
+    else:
+        buf.append(line)
+if name:
+    blocks[name] = "\n".join(buf)
+for key in ("ue1-screen", "ue2-screen"):
+    body = blocks.get(key, "")
+    if "network_mode:" not in body or "ANDROID_UE_SCREEN_BIND" not in body:
+        sys.exit(f"{key} is missing its uu bind")
+    if "ports:" in body or "0.0.0.0" in body or "ADB_HOST_PORT" in body:
+        sys.exit(f"{key} publishes a port or binds every interface")
+PY
+echo "screen bind"
+if ANDROID_UE_SCREEN_BIND=0.0.0.0 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "screen bind accepted 0.0.0.0" >&2
+  exit 1
+fi
+if ANDROID_UE_SCREEN_BIND=127.0.0.1 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "screen bind accepted loopback" >&2
+  exit 1
+fi
+if ! ANDROID_UE_SCREEN_BIND=192.0.2.32 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "screen bind rejected a unicast address" >&2
+  exit 1
+fi
 extra_flags=$(awk -F= '$1 == "ANDROID_UE_EXTRA_FLAGS" { sub(/^[^=]*=/, ""); print; exit }' lab/compose/android-ue.env.example)
 case "$extra_flags" in
   *partition-size=*)
@@ -403,6 +445,18 @@ fi
 echo "up-script service list"
 without=$(lab/scripts/android-ue-up.sh --env-file "$example" --print-services)
 printf '%s\n' "$without" | grep -qx 'ue1'
+if printf '%s\n' "$without" | grep -qx 'ue1-screen'; then
+  echo "screen sidecar starts while its image is still a placeholder" >&2
+  exit 1
+fi
+screen_env=$tmp/screen.env
+sed 's/^ANDROID_UE_SCREEN_IMAGE=.*/ANDROID_UE_SCREEN_IMAGE=example.invalid\/ws-scrcpy:test/' "$example" >"$screen_env"
+screen_list=$(lab/scripts/android-ue-up.sh --env-file "$screen_env" --print-services)
+printf '%s\n' "$screen_list" | grep -qx 'ue1-screen'
+if printf '%s\n' "$screen_list" | grep -qx 'egress'; then
+  echo "screen list started egress" >&2
+  exit 1
+fi
 if printf '%s\n' "$without" | grep -qx 'egress'; then
   echo "egress is in the default service list" >&2
   exit 1
@@ -438,6 +492,9 @@ rendered=$tmp/rendered.yml
 grep -q 'service:ue1' "$rendered"
 grep -q 'service:ue2' "$rendered"
 grep -q 'container_name: l5gd-android1' "$rendered"
+grep -q 'container_name: l5gd-ue1-screen' "$rendered"
+grep -q 'container_name: l5gd-ue2-screen' "$rendered"
+grep -q 'ANDROID_UE_SCREEN_BIND' lab/compose/docker-compose.android-ue.optional.yml
 grep -q 'container_name: l5gd-cgnat' "$rendered"
 grep -q 'android-ue' "$rendered"
 grep -q 'REPLACE_ANDROID_UE_PGW_DNS' "$rendered"

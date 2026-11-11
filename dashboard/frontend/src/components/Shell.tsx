@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 const LINKS = [
   { href: "/", label: "Eksperimen", hint: "Overview / intended vs observed" },
   { href: "/profil", label: "Profil PCRF", hint: "Editor intent + apply" },
+  { href: "/emulator", label: "Emulator", hint: "Layar UE, bukan kontrol core" },
   { href: "/audit", label: "Audit", hint: "Status apply, bukan bukti sesi" },
 ];
 
