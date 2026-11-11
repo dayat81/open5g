@@ -1,26 +1,50 @@
-# CGNAT rules for the android-ue profile.
-# render-cgnat.sh replaces the tokens. per_ue chains start empty and
-# android-ue-add-ue.sh fills them after the PGW assigns the UE address.
-# Forward policy is drop: a UE pool source is not forwarded until that step.
+# SOCKS CGNAT policy. render-cgnat.sh replaces the tokens.
+# Internet leaves only via tun0. Return traffic to the UE pool and the SOCKS
+# dial itself are the exceptions. Log lines are prefixes only: no payload,
+# and DNS is not logged.
 
 table ip cgnat {
-    chain per_ue {
-__PER_UE_RULES__
-    }
-
-    chain per_ue_nat {
-__PER_UE_NAT_RULES__
+    chain prerouting {
+        type nat hook prerouting priority dstnat; policy accept;
+        ip saddr __UE_POOL__ udp dport 53 dnat to 127.0.0.1:53
+        ip saddr __UE_POOL__ tcp dport 53 dnat to 127.0.0.1:53
     }
 
     chain forward {
         type filter hook forward priority 0; policy drop;
         ct state established,related accept
-        jump per_ue
-        ip daddr __UE_POOL__ iifname "__EGRESS_IF__" oifname "__SGI_IF__" accept
+        iifname "tun0" ip daddr __UE_POOL__ accept
+        ip saddr != __UE_POOL__ drop
+        ip saddr __UE_POOL__ ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16, 100.64.0.0/10, 224.0.0.0/4, 0.0.0.0/8 } drop
+        ip saddr __UE_POOL__ ip daddr __LAB_SUBNET__ drop
+        ip saddr __UE_POOL__ meter ue_bw size 1024 { ip saddr timeout 60s limit rate over 1250 kbytes/second } log prefix "cgnat-rate " limit rate 4/minute drop
+        ip saddr __UE_POOL__ meter ue_ct size 1024 { ip saddr ct count over __CT_LIMIT__ } drop
+        ip saddr __UE_POOL__ oifname "tun0" tcp dport { 80, 443 } accept
+        ip saddr __UE_POOL__ tcp dport != { 80, 443 } reject with tcp reset
+        ip saddr __UE_POOL__ meta l4proto udp reject with icmp type port-unreachable
+        oifname != "tun0" log prefix "cgnat-fwd-drop " limit rate 4/minute drop
     }
 
-    chain postrouting {
-        type nat hook postrouting priority 100; policy accept;
-        jump per_ue_nat
+    chain output {
+        type filter hook output priority 0; policy drop;
+        ct state established,related accept
+        oifname "lo" accept
+        ip daddr __SOCKS_ADDR__ tcp dport 1080 accept
+        ip daddr __UE_POOL__ accept
+        ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16, 100.64.0.0/10, 224.0.0.0/4, 0.0.0.0/8 } drop
+        ip daddr __LAB_SUBNET__ drop
+        oifname "tun0" accept
+        log prefix "cgnat-out-drop " limit rate 4/minute drop
+    }
+}
+
+table ip6 cgnat {
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+
+    chain output {
+        type filter hook output priority 0; policy drop;
+        oifname "lo" accept
     }
 }

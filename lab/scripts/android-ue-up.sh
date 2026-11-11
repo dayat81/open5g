@@ -10,10 +10,12 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 env_file=""
 user=ue1
 with_cgnat=0
+with_socks=0
 install_upf_route=0
+print_services=0
 
 usage() {
-  echo "usage: android-ue-up.sh --env-file FILE [--user ue1|ue2] [--with-cgnat] [--install-upf-route]" >&2
+  echo "usage: android-ue-up.sh --env-file FILE [--user ue1|ue2] [--with-cgnat] [--with-socks-egress] [--install-upf-route] [--print-services]" >&2
   exit 2
 }
 
@@ -30,7 +32,9 @@ while [ "$#" -gt 0 ]; do
       user=$1
       ;;
     --with-cgnat) with_cgnat=1 ;;
+    --with-socks-egress) with_socks=1 ;;
     --install-upf-route) install_upf_route=1 ;;
+    --print-services) print_services=1 ;;
     *) usage ;;
   esac
   shift
@@ -49,11 +53,26 @@ esac
 
 root=$(android_ue_root)
 state=${ANDROID_UE_STATE_DIR:-/tmp/open5g-android-ue-state}
+get() { android_ue_env_get "$env_file" "$1"; }
+n=${user#ue}
+
+if [ "$with_socks" -eq 1 ]; then
+  with_cgnat=1
+fi
+
+if [ "$print_services" -eq 1 ]; then
+  printf '%s\n' "ue${n}" "enb${n}" "ue${n}-route" "android${n}"
+  if [ "$with_cgnat" -eq 1 ]; then
+    echo cgnat
+  fi
+  if [ "$with_socks" -eq 1 ]; then
+    printf '%s\n' egress egress-dns
+  fi
+  exit 0
+fi
+
 mkdir -p "$state"
 
-get() { android_ue_env_get "$env_file" "$1"; }
-
-n=${user#ue}
 if [ "$user" = "ue2" ]; then
   allow=$(get ANDROID_UE_ALLOW_SECOND)
   if [ "$allow" != 1 ]; then
@@ -86,12 +105,6 @@ if ! printf '%s\n' "$imei" | grep -Eq '^[0-9]{15}$'; then
   echo "android-ue: UE${n}_IMEI must be 15 digits" >&2
   exit 1
 fi
-block=$(get "UE${n}_PORT_BLOCK")
-if ! printf '%s\n' "$block" | grep -Eq '^[0-9]+-[0-9]+$'; then
-  echo "android-ue: UE${n}_PORT_BLOCK must look like 15000-19999" >&2
-  exit 1
-fi
-
 if [ ! -e /dev/kvm ]; then
   echo "android-ue: /dev/kvm is missing. Nested KVM is a Lab Ops prerequisite." >&2
   exit 1
@@ -117,6 +130,28 @@ if ! docker network inspect "$egress" >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ "$with_socks" -eq 1 ]; then
+  android_ue_reject_placeholder ANDROID_UE_TUN2SOCKS_IMAGE "$(get ANDROID_UE_TUN2SOCKS_IMAGE)"
+  android_ue_reject_placeholder ANDROID_UE_DNS_IMAGE "$(get ANDROID_UE_DNS_IMAGE)"
+  android_ue_reject_placeholder ANDROID_UE_SOCKS_ADDR "$(get ANDROID_UE_SOCKS_ADDR)"
+  android_ue_reject_placeholder ANDROID_UE_LAB_SUBNET "$(get ANDROID_UE_LAB_SUBNET)"
+  socks_addr=$(get ANDROID_UE_SOCKS_ADDR)
+  if ! printf '%s\n' "$socks_addr" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:1080$'; then
+    echo "android-ue: ANDROID_UE_SOCKS_ADDR must look like an IPv4 address and port 1080" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$(get ANDROID_UE_LAB_SUBNET)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$'; then
+    echo "android-ue: ANDROID_UE_LAB_SUBNET must be an IPv4 prefix" >&2
+    exit 1
+  fi
+  socks_internal=$(docker network inspect -f '{{.Internal}}' "$egress")
+  if [ "$socks_internal" != "true" ]; then
+    echo "android-ue: the egress network must stay internal for the SOCKS path" >&2
+    exit 1
+  fi
+  export ANDROID_UE_SOCKS_PROFILE=1
+fi
+
 echo "android-ue: starting ${user} only. Core config is not modified."
 android_ue_compose "$root" "$env_file" up -d \
   "ue${n}" "enb${n}" "ue${n}-route" "android${n}"
@@ -136,21 +171,25 @@ if [ "$with_cgnat" -eq 1 ]; then
     echo "android-ue: cgnat did not write /tmp/cgnat.if" >&2
     exit 1
   fi
-  ue_cidr=$(docker exec "l5gd-ue${n}" ip -4 -o addr show dev tun_srsue | awk '{ print $4; exit }')
-  ue_ip=${ue_cidr%%/*}
-  if [ -z "$ue_ip" ]; then
-    echo "android-ue: tun_srsue has no address to SNAT" >&2
+  echo "android-ue: cgnat policy is loaded. No per-UE SNAT rule is added."
+fi
+
+if [ "$with_socks" -eq 1 ]; then
+  android_ue_compose "$root" "$env_file" up -d egress
+  tun_ready=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+    if docker exec l5gd-cgnat ip -4 route show default | grep -q 'dev tun0'; then
+      tun_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$tun_ready" -ne 1 ]; then
+    echo "android-ue: tun0 is not the default route in the cgnat netns" >&2
     exit 1
   fi
-  pairs_file=$state/cgnat-ues.txt
-  touch "$pairs_file"
-  tmp_pairs=$(mktemp)
-  awk -v u="$user" '$1 != u { print }' "$pairs_file" >"$tmp_pairs"
-  printf '%s %s %s\n' "$user" "$ue_ip" "$block" >>"$tmp_pairs"
-  mv "$tmp_pairs" "$pairs_file"
-  # shellcheck disable=SC2046
-  docker exec l5gd-cgnat /bin/sh /etc/cgnat/android-ue-add-ue.sh $(awk '{ printf "%s %s ", $2, $3 }' "$pairs_file")
-  echo "android-ue: CGNAT SNAT installed for ${user} (${ue_ip}, ports ${block})"
+  android_ue_compose "$root" "$env_file" up -d egress-dns
+  echo "android-ue: SOCKS egress is up. The egress docker network stays internal."
 fi
 
 if [ "$install_upf_route" -eq 1 ]; then
@@ -159,9 +198,8 @@ if [ "$install_upf_route" -eq 1 ]; then
     echo "android-ue: --install-upf-route also needs ANDROID_UE_INSTALL_UPF_ROUTE=1" >&2
     exit 1
   fi
-  internal=$(docker network inspect -f '{{.Internal}}' "$egress")
-  if [ "$internal" = "true" ]; then
-    echo "android-ue: egress network ${egress} is internal. Refusing to point the UPF default route at it." >&2
+  if [ "$with_socks" -ne 1 ]; then
+    echo "android-ue: the UPF route is only for the SOCKS test window. Pass --with-socks-egress as well." >&2
     exit 1
   fi
   upf=$(get ANDROID_UE_UPF_CONTAINER)

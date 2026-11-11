@@ -29,12 +29,15 @@ srsENB  -- S1-MME --> MME ---- S6a ---- HSS (Mongo)
                           +-------------------+------------------+
                           |                                      |
                     SGi iperf server                         cgnat
-                    (already in the lab)              nftables SNAT
-                                                             |
-                                                    egress docker network
-                                                    absent until approved
-                                                             |
-                                                          internet
+                    (already in the lab)         nftables, then tun0
+                                                     |
+                                              tun2socks in the cgnat netns
+                                                     |
+                                              SOCKS on <GW_IP>:1080
+                                                     |
+                                              ssh -R from the laptop
+                                                     |
+                                                  internet
 ```
 
 Control-plane ADB does not follow that path. It is published on the guest loopback into the shared netns. The reply stays on the uu interface because the peer is the bridge gateway, which is a connected route. New destinations that are not the eNB use `tun_srsue`.
@@ -78,28 +81,17 @@ Policy routing (`ip rule`) was the other option. It is the wrong default here: o
 
 ## CGNAT on SGi
 
-`l5gd-cgnat` is optional and is not part of the first attach. It sits on the existing SGi network at `CGNAT_SGI_ADDR` (the plan's `cgnat_ip`) and on an external docker network named by `ANDROID_UE_EGRESS_NETWORK`.
+The approved internet path is CGNAT plus a SOCKS tunnel to the operator laptop. It stays off until `android-ue-up.sh --with-socks-egress`. The egress docker network stays `--internal`.
 
-Until Netdrive approves egress, that network is created with `--internal`. An internal network cannot reach the internet. The up script refuses to change the UPF default route while the network is internal.
+`l5gd-cgnat` sits on SGi. `l5gd-egress` (tun2socks) and `l5gd-egress-dns` (CoreDNS) use `network_mode: service:cgnat`, so they share that netns. Images are `ANDROID_UE_TUN2SOCKS_IMAGE` and `ANDROID_UE_DNS_IMAGE`. Both are `REPLACE_` placeholders until Lab Ops names the mirror. `ANDROID_UE_SOCKS_ADDR` is `<GW_IP>:1080`, also a placeholder.
 
-Rules live in `lab/config/cgnat/cgnat.nft.template` and are rendered by `lab/scripts/render-cgnat.sh`. The forward chain policy is drop. At start, the per-UE chains are empty, so UE-pool sources are not forwarded. `lab/scripts/android-ue-add-ue.sh` runs after attach, reads the address on `tun_srsue`, and installs:
+After tun0 exists, the only default route in that netns is `dev tun0`. A host route to the SOCKS address lets tun2socks reach the tunnel. nft drops every other packet that does not leave via tun0.
 
-- a conntrack ceiling per UE (`CGNAT_CT_LIMIT`, example 256)
-- TCP and UDP SNAT into that user's port block
-- ICMP SNAT to the same address without a port
+`lab/config/cgnat/cgnat.nft.template` is the policy. It accepts new forwards only from `UE_POOL`, drops bogons plus `ANDROID_UE_LAB_SUBNET`, allows TCP 80 and 443 only, DNATs UDP and TCP 53 to `127.0.0.1:53`, and rejects other UDP. Each UE address is limited to about 10 Mbit/s (`1250 kbytes/second`) and `CGNAT_CT_LIMIT` connections (200 in the example). Logs are a rate-limited prefix. DNS queries are not logged. The Corefile is `forward . tcp://1.1.1.1 { force_tcp }` with no log plugin.
 
-nftables rejects a port range unless the rule matches a transport protocol, so TCP and UDP are separate statements. Other IP protocols are not SNATed.
+The UPF default route toward cgnat is still opt-in (`--install-upf-route` and `ANDROID_UE_INSTALL_UPF_ROUTE=1`), only together with the SOCKS flag, and only for that test window. The previous route is saved and restored by `android-ue-down.sh`. HSS, PCRF, and SMF configuration are not changed. The SGi server stays on the connected route.
 
-The SNAT address is `CGNAT_SNAT_ADDR`. Two uses:
-
-- An address in `100.64.0.0/10` (the example is `100.64.0.1`) when Netdrive routes that address back to this guest. The cgnat container also needs that address on its egress interface, or return traffic dies.
-- The cgnat container's own egress address, when the only approved path is the host's existing NAT. The internet then sees the host, not a CGN address. Say so in the test note.
-
-Port blocks in the example are `15000-19999` for ue1 and `20000-24999` for ue2. They are not derived from the last octet. Open5GS assigns the UE address from the pool at attach, and the stock UE may already hold one, so the script uses the address that actually appeared on `tun_srsue`.
-
-The UPF already has a connected route for the SGi subnet, so the iperf server stays reachable without CGNAT. Internet-bound packets need a default route on the UPF toward the cgnat container. That route is not in the Open5GS config. `android-ue-up.sh --install-upf-route` applies it only when `ANDROID_UE_INSTALL_UPF_ROUTE=1` and the egress network is not internal, and it saves the previous route for `android-ue-down.sh`. Signaling subnets and the SGi connected route are more specific and stay as they are. `lab/config/examples/open5gs/` is not modified.
-
-`infra/roles/internet_egress` stays disabled. It is a different, unfinished SOCKS/tun2socks design. This CGNAT does not turn it on.
+`infra/roles/internet_egress` is not what this flag turns on. The guest reaches the internet only through the ssh reverse forward from the laptop.
 
 ## Multi-UE on srsRAN ZMQ
 
@@ -144,7 +136,7 @@ How many instances: the guest in the lab notes is 8 vCPU, 16 GiB RAM, and 40 GiB
 | A second eNB disturbs the stock eNB | Different eNB IDs (`0x1A1`, `0x1A2` in the example, not `0x19B`) and different S1 and ZMQ addresses. Stop the stock UE if it uses the same IMSI. |
 | Subscriber collection is rewritten | No Mongo client in this overlay. Extra IMSIs are a `replaceOne` through the existing seed, one test IMSI at a time. Rollback does not delete subscribers. |
 | Open5GS YAML or freeDiameter changes | None. The only core data change is the test subscriber document. |
-| UPF default route blackholes SGi | The change is opt-in, refused on an internal egress network, and restored by the down script. Connected routes, including the iperf server, stay. |
+| UPF default route blackholes SGi | The change is opt-in, only with `--with-socks-egress`, and restored by the down script. Connected routes, including the iperf server, stay. |
 | Emulator reaches the internet without the EPC | Shared netns, default route via `tun_srsue`, OUTPUT drop, IPv6 drop, uu network internal, no `NET_ADMIN` on the emulator. |
 | ADB exposed on the lab network | Published on `127.0.0.1` only. |
 | Image USIM defaults or logs leak Ki | Env overrides `KEY` and `OPC`. Do not paste `docker logs` or `docker inspect` of the UE into a ticket. `docker inspect` will show the USIM to anyone who already has Docker on the guest. |
@@ -154,8 +146,8 @@ How many instances: the guest in the lab notes is 8 vCPU, 16 GiB RAM, and 40 GiB
 
 Netdrive and Lab Ops have to clear these before the internet path, or before more than a dry description, is real:
 
-1. **Egress.** The guest has no internet egress. `internet_egress_enabled` is false, and the IaC egress role is still the unfinished cgnat/tun2socks stub. CGNAT toward the internet needs an approved egress and a return route for `CGNAT_SNAT_ADDR`. Until that exists, create the egress docker network with `--internal`.
-2. **Mirrors.** The guest cannot pull. Mirror `halimqarroum/docker-android:api-33`, a cgnat image that already contains `nft`, `ip`, `awk`, and `sh` (the example leaves this name as `REPLACE_`), `gradiant/srsran-4g:25_10` if it is not already loaded, plus `adb` and `scrcpy` for the guest. Do not `docker pull` from this overlay.
+1. **Egress.** Internet for this profile is the SOCKS tunnel. The egress docker network stays `--internal`. The guest sshd needs `GatewayPorts clientspecified`, and INPUT on TCP 1080 is allowed only from the cgnat address. The laptop opens `ssh -N -J agen -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -R <GW_IP>:1080 guest`.
+2. **Mirrors.** The guest cannot pull. Mirror `halimqarroum/docker-android:api-33`, a cgnat image with `nft`, `ip`, `awk`, and `sh`, a tun2socks image with `tun2socks`, `ip`, and `sh`, and a CoreDNS image that reads `-conf`. The example leaves those names as `REPLACE_`. Also mirror `adb` and `scrcpy`. Do not `docker pull` from this overlay.
 3. **KVM.** `/dev/kvm` must exist inside the lab guest. The guest is itself a libvirt VM, so this is nested virtualization on the host. The up script stops if the device is missing.
 4. **Test IMSIs.** Seed one new test IMSI for ue1. Seed a second only if a larger guest is approved for ue2. Use the existing `replaceOne` seed, the lab PLMN, and Ki/OPc only in the gitignored env and the vault. Do not reuse the IMSI the stock srsUE is using. Point the student's dashboard assignment at that same IMSI once PR #7 is the tool operators use. This change does not merge that PR.
 5. **Guest size.** One user first. Two concurrent emulators need more vCPU and RAM than 8 / 16 GiB.
@@ -170,3 +162,4 @@ Netdrive and Lab Ops have to clear these before the internet path, or before mor
 - Live Gx RAR (Gate D) so a student profile edit hits the existing bearer without a reattach.
 - Resize the guest, and confirm nested KVM, before a second emulator.
 - Play Store image only if `api-33` has no browser the test needs, and only with a mirrored adb key and approved Google egress.
+- autossh for the laptop tunnel, full UDP through the filter, and IPv6. The cgnat netns drops IPv6 until then.

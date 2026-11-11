@@ -94,35 +94,67 @@ Use the IMSI from the env file. Do not paste UE logs into a ticket; the image en
    ```
 
    One TCP flow to the SGi server does not need CGNAT. Browsing does. The OUTPUT filter allows it because the route to that address is `tun_srsue`.
-5. **Public address behind CGNAT.** Skip this until egress is approved. Then follow the next section. `curl` from the netns to an approved echo host should show the SNAT address Netdrive assigned, or the host address if the SNAT target is the cgnat container's egress IP. Record which one. Do not claim a public address while the egress network is internal.
+5. **Public address behind the SOCKS tunnel.** Skip this until the CGNAT section below has been run. The echo host must show the laptop's public address. Write that result as `<LAPTOP_PUBLIC_IP>` in notes. Do not put the real address in the PR.
 
 A failed ZMQ wait or a route timeout means the UE did not attach. Read `sudo docker logs l5gd-ue1` and `sudo docker logs l5gd-enb1` on the guest, fix the subscriber or the addresses, and start again. After a detach, stop the UE and then the eNB before starting them again. The down script does that order.
 
-## CGNAT, only after egress is approved
+## CGNAT via the SOCKS tunnel
 
-1. Confirm the egress network is not internal: `sudo docker network inspect -f '{{.Internal}}' <ANDROID_UE_EGRESS_NETWORK>` prints `false`.
-2. Set `ANDROID_UE_CGNAT_IMAGE` to the mirrored image.
-3. If the SNAT address is in `100.64.0.0/10`, Netdrive must route it to this guest, and the cgnat container must hold that address on the egress interface. If the SNAT address is the container's egress address, the internet sees the host.
-4. Set `ANDROID_UE_INSTALL_UPF_ROUTE=1` only for this window.
+Netdrive's approved path is CGNAT plus a SOCKS tunnel to the operator laptop. The egress docker network stays `--internal`. Do not recreate it without `--internal`.
+
+```bash
+sudo docker network inspect -f '{{.Internal}}' <ANDROID_UE_EGRESS_NETWORK>
+```
+
+That prints `true`. The up script refuses `--with-socks-egress` otherwise.
+
+On the guest sshd, set `GatewayPorts clientspecified` and reload sshd. This repo does not edit sshd and does not deploy that change. Without it, sshd will not bind `<GW_IP>:1080`.
+
+Allow guest INPUT on TCP 1080 only from the cgnat container address:
+
+```bash
+sudo iptables -I INPUT 1 -p tcp -d <GW_IP> --dport 1080 -s <CGNAT_IP> -j ACCEPT
+sudo iptables -I INPUT 2 -p tcp -d <GW_IP> --dport 1080 -j DROP
+```
+
+`<GW_IP>` and `<CGNAT_IP>` stay in the gitignored env and in this local shell. Do not commit them.
+
+From WSL, open the reverse dynamic forward. The laptop ssh client is the SOCKS peer. Nothing else on the guest should listen on 1080.
+
+```bash
+ssh -N -J agen -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -R <GW_IP>:1080 guest
+```
+
+In `android-ue.env`, set `ANDROID_UE_SOCKS_ADDR` to `<GW_IP>:1080`, `ANDROID_UE_LAB_SUBNET` to the lab prefix, and the tun2socks and DNS image names to the mirror. The DNS image must serve `lab/config/cgnat/Corefile` (`forward . tcp://1.1.1.1 { force_tcp }`). Set `ANDROID_UE_INSTALL_UPF_ROUTE=1` only for this window.
 
 ```bash
 sudo bash lab/scripts/android-ue-up.sh \
   --env-file lab/compose/android-ue.env \
   --user ue1 \
-  --with-cgnat \
+  --with-socks-egress \
   --install-upf-route
 ```
 
-The script reads the address on `tun_srsue` and installs that user's port block. It saves the previous UPF default route under `/tmp/open5g-android-ue-state/`.
+`--with-socks-egress` starts `cgnat`, then `egress` (tun2socks), then `egress-dns`. Both sidecars use `network_mode: service:cgnat`. In that netns the only default route is `dev tun0`. A host route to `<GW_IP>` exists so tun2socks can reach the tunnel. It is not a second default route. nft drops anything else that does not leave via tun0.
 
-Check the public path from the netns, then from the emulator (literal IP, or a name only if DNS through the EPC works):
+The script saves the previous UPF default route under `/tmp/open5g-android-ue-state/` before replacing it with the cgnat address on SGi. That route exists only for this window. Rollback restores the saved route. HSS, PCRF, and SMF configuration are not changed.
 
-```bash
-sudo docker exec l5gd-cgnat nft list table ip cgnat
-sudo docker exec l5gd-ue1 curl -4 --max-time 10 http://<approved-echo>/
-```
+### Proof
 
-DNS to a public resolver is UE traffic. It stays broken until this path exists. Ping and iperf to the SGi server do not prove egress.
+Use an echo host Netdrive named. Mask the laptop address in anything that is committed.
+
+1. **Laptop address.** From the UE netns, `curl -4 --max-time 15 http://<echo>/` prints `<LAPTOP_PUBLIC_IP>`.
+2. **DNS.** From the emulator, `adb -s 127.0.0.1:15551 shell ping -c 1 example.com` resolves. The resolver is TCP-only and does not log the query.
+3. **Laptop LAN and localhost fail.** `curl -4 --max-time 5 http://<LAPTOP_LAN>/` fails. So does a destination in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or `127.0.0.0/8` that is not the UE's own stack. Write `<LAPTOP_LAN>` only in local notes.
+4. **Other ports fail.** `curl -4 --max-time 5 http://<echo>:8080/` fails. TCP is 80 and 443 only. Other UDP is rejected.
+5. **Kill switch.** Stop the ssh process. The same curl to the echo host fails. Start the ssh command again. The curl works again.
+6. **Listeners.** `sudo docker exec l5gd-cgnat nft list table ip cgnat` shows the policy. On the guest, `ss -ltn` shows `1080` only on `<GW_IP>`, not on `0.0.0.0` or `*`.
+
+Ping and iperf to the SGi server still do not prove this path. They never enter the tunnel.
+
+### Phase 2
+
+autossh, full UDP, and IPv6. None of those are in this overlay. IPv6 forwarding on the cgnat netns is dropped.
 
 ## Rollback
 
@@ -146,4 +178,4 @@ On a workstation, or in CI, without starting containers:
 lab/scripts/check-android-ue.sh
 ```
 
-That runs shellcheck, checks the generator still matches the overlay, renders the nftables rules (`nft -c` when `nft` is installed, otherwise a syntax check), and runs `docker compose config` for the `android-ue` profile. CI uses standalone `docker-compose` v2.29.7. The example env is enough for `config`. It is not enough for `up`, on purpose.
+That runs shellcheck, checks the generator still matches the overlay, renders the nftables rules and runs `nft -c` (or the syntax checker if `nft` is absent), checks the Corefile is TCP-only, and runs `docker compose config` with and without the `socks-egress` profile. CI uses standalone `docker-compose` v2.29.7. The example env is enough for `config`. It is not enough for `up`, on purpose.

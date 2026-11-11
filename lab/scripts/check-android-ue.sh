@@ -15,9 +15,9 @@ scripts=(
   lab/scripts/check-android-ue.sh
 )
 sh_scripts=(
-  lab/scripts/cgnat-rules.sh
   lab/scripts/render-cgnat.sh
   lab/scripts/android-ue-cgnat.sh
+  lab/scripts/android-ue-egress.sh
   lab/scripts/android-ue-add-ue.sh
 )
 
@@ -35,7 +35,8 @@ fi
 echo "placeholders"
 example=lab/compose/android-ue.env.example
 for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
-  ANDROID_UE_CGNAT_IMAGE ANDROID_UE_EGRESS_NETWORK; do
+  ANDROID_UE_CGNAT_IMAGE ANDROID_UE_EGRESS_NETWORK ANDROID_UE_TUN2SOCKS_IMAGE \
+  ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -53,10 +54,11 @@ scan_paths=(
   lab/config/ran/android-ue.conf.template
   lab/config/cgnat
   lab/scripts/gen-android-ue.sh
-  lab/scripts/cgnat-rules.sh
   lab/scripts/render-cgnat.sh
   lab/scripts/android-ue-cgnat.sh
+  lab/scripts/android-ue-egress.sh
   lab/scripts/android-ue-add-ue.sh
+  lab/config/cgnat/Corefile
   lab/scripts/android-ue-enb.sh
   lab/scripts/android-ue-route.sh
   lab/scripts/android-ue-lib.sh
@@ -116,13 +118,23 @@ for ch in text:
             break
 if depth != 0:
     errors.append("unbalanced brace")
-for needle in ("table ip cgnat", "chain forward", "chain postrouting", "policy drop;", "jump per_ue"):
+for needle in (
+    "table ip cgnat",
+    "policy drop;",
+    "oifname \"tun0\"",
+    "tcp dport { 80, 443 }",
+    "dnat to 127.0.0.1:53",
+    "reject with icmp type port-unreachable",
+    "ct count over 200",
+    "1250 kbytes/second",
+    "log prefix \"cgnat-fwd-drop \"",
+):
     if needle not in text:
         errors.append("missing " + needle)
-if mode == "full":
-    for needle in ("ct count over", "tcp dport 0-65535 snat to", "udp dport 0-65535 snat to", "ip protocol icmp snat to"):
-        if needle not in text:
-            errors.append("missing " + needle)
+if "snat to" in text:
+    errors.append("unexpected snat")
+if "flags all" in text:
+    errors.append("log flags include more than metadata")
 if errors:
     sys.stderr.write("nft syntax check failed: " + ", ".join(errors) + "\n")
     sys.exit(1)
@@ -159,30 +171,50 @@ echo "nftables"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 UE_POOL=$(env_get UE_POOL)
-CGNAT_SNAT_ADDR=$(env_get CGNAT_SNAT_ADDR)
-CGNAT_CT_LIMIT=$(env_get CGNAT_CT_LIMIT)
-SGI_IF=eth0
-EGRESS_IF=eth1
-NFT_UE_1=10.45.0.2
-NFT_BLOCK_1=$(env_get UE1_PORT_BLOCK)
-NFT_UE_2=10.45.0.3
-NFT_BLOCK_2=$(env_get UE2_PORT_BLOCK)
-export UE_POOL CGNAT_SNAT_ADDR CGNAT_CT_LIMIT SGI_IF EGRESS_IF
-export NFT_UE_1 NFT_BLOCK_1 NFT_UE_2 NFT_BLOCK_2
-lab/scripts/render-cgnat.sh base lab/config/cgnat/cgnat.nft.template >"$tmp/base.nft"
-lab/scripts/render-cgnat.sh full lab/config/cgnat/cgnat.nft.template >"$tmp/full.nft"
-syntax_check "$tmp/base.nft" base
-syntax_check "$tmp/full.nft" full
+# Documentation prefixes for nft -c. Not lab addresses and not a laptop.
+LAB_SUBNET=192.0.2.0/24
+SOCKS_ADDR=192.0.2.10
+CT_LIMIT=200
+export UE_POOL LAB_SUBNET SOCKS_ADDR CT_LIMIT
+lab/scripts/render-cgnat.sh lab/config/cgnat/cgnat.nft.template >"$tmp/cgnat.nft"
+syntax_check "$tmp/cgnat.nft" rendered
 nft_rc=0
-nft_check "$tmp/base.nft" || nft_rc=$?
+nft_check "$tmp/cgnat.nft" || nft_rc=$?
 if [ "$nft_rc" -eq 1 ]; then
   exit 1
 fi
 if [ "$nft_rc" -eq 2 ]; then
-  echo "base ruleset passed the fallback syntax checker"
-else
-  nft_check "$tmp/full.nft"
+  echo "rendered ruleset passed the fallback syntax checker"
 fi
+
+echo "resolver is TCP-only"
+corefile=lab/config/cgnat/Corefile
+grep -q 'force_tcp' "$corefile"
+grep -q 'tcp://' "$corefile"
+if grep -q 'udp://' "$corefile"; then
+  echo "resolver config has a UDP upstream" >&2
+  exit 1
+fi
+if grep -Eq '^[[:space:]]*log([[:space:]]|$)' "$corefile"; then
+  echo "resolver config logs queries" >&2
+  exit 1
+fi
+if grep -Eq 'forward \. ([^t]|t[^c]|tc[^p])' "$corefile"; then
+  echo "resolver forward is not tcp://" >&2
+  exit 1
+fi
+
+echo "up-script service list"
+without=$(lab/scripts/android-ue-up.sh --env-file "$example" --print-services)
+printf '%s\n' "$without" | grep -qx 'ue1'
+if printf '%s\n' "$without" | grep -qx 'egress'; then
+  echo "egress is in the default service list" >&2
+  exit 1
+fi
+with_socks=$(lab/scripts/android-ue-up.sh --env-file "$example" --with-socks-egress --print-services)
+printf '%s\n' "$with_socks" | grep -qx 'egress'
+printf '%s\n' "$with_socks" | grep -qx 'egress-dns'
+printf '%s\n' "$with_socks" | grep -qx 'cgnat'
 
 echo "compose config"
 if [ -n "${ANDROID_UE_COMPOSE_BIN:-}" ]; then
@@ -212,7 +244,25 @@ grep -q 'service:ue2' "$rendered"
 grep -q 'container_name: l5gd-android1' "$rendered"
 grep -q 'container_name: l5gd-cgnat' "$rendered"
 grep -q 'android-ue' "$rendered"
-if grep -E -n '[0-9A-Fa-f]{32}' "$rendered"; then
+if grep -E -q 'container_name: l5gd-egress$' "$rendered"; then
+  echo "socks egress service is present without the socks-egress profile" >&2
+  exit 1
+fi
+if grep -q 'service:cgnat' "$rendered"; then
+  echo "cgnat network mode is present without the socks-egress profile" >&2
+  exit 1
+fi
+socks_rendered=$tmp/rendered-socks.yml
+"${compose[@]}" \
+  -f lab/compose/docker-compose.android-ue.optional.yml \
+  --env-file "$example" \
+  --profile android-ue \
+  --profile socks-egress \
+  config >"$socks_rendered"
+grep -E -q 'container_name: l5gd-egress$' "$socks_rendered"
+grep -q 'container_name: l5gd-egress-dns' "$socks_rendered"
+grep -q 'service:cgnat' "$socks_rendered"
+if grep -E -n '[0-9A-Fa-f]{32}' "$rendered" "$socks_rendered"; then
   echo "rendered compose contains a 32-hex USIM value" >&2
   exit 1
 fi

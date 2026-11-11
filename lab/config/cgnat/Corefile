@@ -1,0 +1,8 @@
+# TCP-only resolver for the android-ue SOCKS sidecar.
+# Do not add a log plugin. Do not add a UDP forward.
+. {
+    bind 127.0.0.1
+    forward . tcp://1.1.1.1 {
+        force_tcp
+    }
+}

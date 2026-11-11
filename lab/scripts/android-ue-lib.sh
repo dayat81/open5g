@@ -54,9 +54,13 @@ android_ue_compose() {
   else
     compose=(docker compose)
   fi
+  local -a profiles=(--profile android-ue)
+  if [ "${ANDROID_UE_SOCKS_PROFILE:-0}" = 1 ]; then
+    profiles+=(--profile socks-egress)
+  fi
   "${compose[@]}" \
     -f "$root/lab/compose/docker-compose.android-ue.optional.yml" \
     --env-file "$env_file" \
-    --profile android-ue \
+    "${profiles[@]}" \
     "$@"
 }

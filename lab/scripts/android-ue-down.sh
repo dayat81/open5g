@@ -30,6 +30,7 @@ fi
 root=$(android_ue_root)
 state=${ANDROID_UE_STATE_DIR:-/tmp/open5g-android-ue-state}
 get() { android_ue_env_get "$env_file" "$1"; }
+export ANDROID_UE_SOCKS_PROFILE=1
 
 if [ -f "$state/upf-default.txt" ]; then
   upf=$(get ANDROID_UE_UPF_CONTAINER)
@@ -48,10 +49,10 @@ if [ -f "$state/upf-default.txt" ]; then
 fi
 
 # UE before eNB. srsRAN's ZMQ note asks for that order on the way down.
-for svc in android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 cgnat; do
+for svc in android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat; do
   android_ue_compose "$root" "$env_file" stop "$svc" || true
 done
 android_ue_compose "$root" "$env_file" rm -f \
-  android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 cgnat || true
+  android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat || true
 rm -f "$state/cgnat-ues.txt"
 echo "android-ue: profile stopped. Core, Mongo, and subscriber documents were not changed."
