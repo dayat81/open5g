@@ -43,8 +43,7 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
   ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
-  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE \
-  ANDROID_UE_UPF_S1U_SUBNET; do
+  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -287,19 +286,18 @@ grep -q 'nsenter -t' lab/scripts/android-ue-up.sh
 grep -q 'ip route get' lab/scripts/android-ue-up.sh
 grep -q 'ping -c 3 -I tun_srsue' lab/scripts/android-ue-up.sh
 grep -q 'ANDROID_UE_SGWU_GTPU_ROUTE' lab/scripts/android-ue-up.sh
-grep -q 'ANDROID_UE_UPF_S1U_SUBNET' lab/scripts/android-ue-up.sh
-grep -F -q "via \"\$gw\" dev \"\$dev\"" lab/scripts/android-ue-up.sh
-grep -q 'ip route del' lab/scripts/android-ue-down.sh
-grep -q 'ip route get' lab/scripts/android-ue-down.sh
+if grep -q 'ANDROID_UE_UPF_S1U_SUBNET' lab/scripts/android-ue-up.sh lab/scripts/android-ue-down.sh lab/compose/android-ue.env.example; then
+  echo "UPF S1-U route is still present" >&2
+  exit 1
+fi
 if grep -E -q 'dev eth[0-9]' lab/scripts/android-ue-up.sh lab/scripts/android-ue-down.sh; then
-  echo "UPF or eNB route hardcodes an interface name" >&2
+  echo "eNB route hardcodes an interface name" >&2
   exit 1
 fi
 gtpu_at=$(grep -n -F "android_ue_install_gtpu_route \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
-upf_at=$(grep -n -F "android_ue_install_upf_s1u_route \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
 probe_at=$(grep -n -F "android_ue_probe_sgi \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
-if [ -z "$gtpu_at" ] || [ -z "$upf_at" ] || [ -z "$probe_at" ] || [ "$gtpu_at" -ge "$upf_at" ] || [ "$upf_at" -ge "$probe_at" ]; then
-  echo "SGi ping does not run after both GTP-U routes" >&2
+if [ -z "$gtpu_at" ] || [ -z "$probe_at" ] || [ "$gtpu_at" -ge "$probe_at" ]; then
+  echo "SGi ping does not run after the eNB GTP-U route" >&2
   exit 1
 fi
 grep -q 'ip6tables-nft' lab/scripts/android-ue-route.sh
@@ -371,19 +369,6 @@ android_ue_addr_in_pool 192.0.2.10 192.0.2.0/24
 android_ue_addr_in_pool 192.0.2.10 192.0.2.10/32
 if android_ue_addr_in_pool 192.0.2.10 198.51.100.0/24; then
   echo "an address outside the pool was accepted" >&2
-  exit 1
-fi
-iface_sample=$'2: eth2    inet 192.0.2.20/24 brd 192.0.2.255 scope global eth2\n3: eth1    inet 198.51.100.10/24 brd 198.51.100.255 scope global eth1'
-if [ "$(printf '%s\n' "$iface_sample" | android_ue_iface_in_subnet 198.51.100.0/24)" != "eth1" ]; then
-  echo "subnet 198.51.100.0/24 did not select its own interface" >&2
-  exit 1
-fi
-if [ "$(printf '%s\n' "$iface_sample" | android_ue_iface_in_subnet 192.0.2.0/24)" != "eth2" ]; then
-  echo "subnet 192.0.2.0/24 did not select its own interface" >&2
-  exit 1
-fi
-if [ "$(printf '%s\n' '198.51.100.10 192.0.2.1' | android_ue_gateway_for_addr 198.51.100.10)" != "192.0.2.1" ]; then
-  echo "gateway lookup did not return the gateway for that address" >&2
   exit 1
 fi
 

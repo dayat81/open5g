@@ -115,48 +115,6 @@ sys.exit(0 if left // shift == right // shift else 1)
 PY
 }
 
-android_ue_iface_in_subnet() {
-  local subnet=$1
-  local line iface cidr addr found=""
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    iface=$(printf '%s\n' "$line" | awk '{ print $2 }')
-    cidr=$(printf '%s\n' "$line" | awk '{ print $4 }')
-    addr=${cidr%%/*}
-    if [ -z "$iface" ] || [ -z "$addr" ]; then
-      continue
-    fi
-    if android_ue_addr_in_pool "$addr" "$subnet"; then
-      if [ -n "$found" ]; then
-        echo "android-ue: more than one address is in ${subnet}" >&2
-        return 1
-      fi
-      found=$iface
-    fi
-  done
-  if [ -z "$found" ]; then
-    echo "android-ue: no address is in ${subnet}" >&2
-    return 1
-  fi
-  printf '%s\n' "$found"
-}
-
-android_ue_gateway_for_addr() {
-  local want=$1
-  local line ip gw
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    ip=${line%% *}
-    gw=${line#* }
-    if [ "$ip" = "$want" ] && [ -n "$gw" ] && [ "$gw" != "<no value>" ]; then
-      printf '%s\n' "$gw"
-      return 0
-    fi
-  done
-  echo "android-ue: no gateway for ${want}" >&2
-  return 1
-}
-
 android_ue_reject_placeholder() {
   local name=$1
   local value=$2
