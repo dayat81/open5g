@@ -33,7 +33,7 @@ def _settings(port: int) -> Settings:
         enable_demo_routes=False,
         emulator_enabled=True,
         emulator_targets={},
-        emulator_origins=("http://127.0.0.1:3000",),
+        emulator_origins=("http://127.0.0.1:3300",),
         emulator_idle_seconds=300,
         emulator_probe_seconds=0.4,
         emulator_allowed_nets=("127.0.0.1/32",),
@@ -213,7 +213,7 @@ def _screen(env, opened):
     path = url.split("http://testserver", 1)[1]
     response = screen.get(path, follow_redirects=False)
     assert response.status_code == 302, response.text
-    assert "frame-ancestors http://127.0.0.1:3000" in response.headers["content-security-policy"]
+    assert "frame-ancestors http://127.0.0.1:3300" in response.headers["content-security-policy"]
     return screen
 
 

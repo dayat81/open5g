@@ -3,7 +3,7 @@ import http from "node:http";
 import { URL } from "node:url";
 
 const listenHost = process.env.OPEN5G_WEB_HOST || "0.0.0.0";
-const listenPort = Number(process.env.PORT || 3000);
+const listenPort = Number(process.env.PORT || 3300);
 const nextPort = Number(process.env.OPEN5G_NEXT_PORT || 3001);
 const apiBase = new URL(process.env.OPEN5G_API_INTERNAL_URL || "http://dashboard-api:8000");
 

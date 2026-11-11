@@ -77,10 +77,10 @@ Opsional di shell, bukan di file yang di-commit:
 
 ```bash
 export DASHBOARD_WEB_BIND=127.0.0.1
-export DASHBOARD_WEB_PORT=3000
+export DASHBOARD_WEB_PORT=3300
 ```
 
-Default bind web sudah `127.0.0.1:3000`.
+Default bind web sudah `127.0.0.1:3300`.
 
 ## 4. Cek file Compose
 
@@ -90,7 +90,7 @@ Dari root repositori, di guest atau di host build:
 docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile dashboard config
 ```
 
-Binary harus v2.29.7. Periksa bahwa hanya `dashboard-web` punya `ports`, dan binding-nya `127.0.0.1:3000:3000` kecuali variabel di atas diubah. `dashboard-api` tidak punya port publish.
+Binary harus v2.29.7. Periksa bahwa hanya `dashboard-web` punya `ports`, dan binding-nya `127.0.0.1:${DASHBOARD_WEB_PORT}:${DASHBOARD_WEB_PORT}` (default `127.0.0.1:3300:3300`) kecuali variabel di atas diubah. `dashboard-api` tidak punya port publish.
 
 ## 5. Backup subscriber Mongo sebelum up
 
@@ -145,7 +145,7 @@ Jaringan:
 
 - `dashboard` internal. Postgres dan API ada di sini. API tidak dipublish.
 - `mgmt` adalah jaringan eksternal `lab5g-dev_mgmt`. Hanya API yang bergabung, supaya mencapai service `mongo`.
-- `web` tidak internal. Hanya `dashboard-web` yang ada di sini, plus jaringan `dashboard` agar proxy ke API. Port host `127.0.0.1:3000` menempel di jaringan `web`. Jaringan internal saja tidak meneruskan binding port itu ke host.
+- `web` tidak internal. Hanya `dashboard-web` yang ada di sini, plus jaringan `dashboard` agar proxy ke API. Port host `127.0.0.1:3300` menempel di jaringan `web`. Jaringan internal saja tidak meneruskan binding port itu ke host.
 
 Kalau API langsung keluar, baca log. Penyebab yang diharapkan bila env belum diganti: penolakan placeholder.
 
@@ -158,21 +158,21 @@ docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile da
 Di workstation yang men-SSH ke guest:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 <user-guest>
+ssh -L 3300:127.0.0.1:3300 <user-guest>
 ```
 
-Buka `http://127.0.0.1:3000`. Jangan mem-publish port web ke alamat selain loopback guest.
+Buka `http://127.0.0.1:3300`. Jangan mem-publish port web ke alamat selain loopback guest.
 
 ## 8. Smoke test
 
-Jendela ini hanya memakai akun uji dan IMSI uji. Bukan akun operasional dan bukan IMSI pelanggan. Prosedur ini tidak mengganti pagar di kode. Ganti port bila `DASHBOARD_WEB_PORT` bukan 3000.
+Jendela ini hanya memakai akun uji dan IMSI uji. Bukan akun operasional dan bukan IMSI pelanggan. Prosedur ini tidak mengganti pagar di kode. Ganti port di tunnel bila `DASHBOARD_WEB_PORT` bukan 3300. Grafana sudah memakai 3000.
 
 Permintaan arsitek, wajib selama jendela uji: jangan membuat akun instructor, dan jangan menjalankan seed apa pun (Ansible atau cara lain). Subscriber uji harus sudah ada di Mongo sebelum jendela ini. Dashboard tidak membuat dokumen subscriber baru.
 
 Satu subscriber uji yang sudah ada cukup. Placeholder di bawah bukan rahasia dan bukan IMSI hidup.
 
 ```bash
-curl -fsS http://127.0.0.1:3000/health
+curl -fsS http://127.0.0.1:3300/health
 ```
 
 Harapan: JSON `status` ok. `core` boleh `not_checked`.
@@ -186,27 +186,27 @@ docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile da
   dashboard-api python /app/scripts/create_user.py
 ```
 
-Perintah itu mencetak id admin. Buka `http://127.0.0.1:3000/login` lewat tunnel dan masuk dengan email serta kata sandi itu.
+Perintah itu mencetak id admin. Buka `http://127.0.0.1:3300/login` lewat tunnel dan masuk dengan email serta kata sandi itu.
 
 Admin lalu membuat grup, satu student uji, dan assignment untuk IMSI uji lewat API origin yang sama. Ganti placeholder. Jangan memakai IMSI pelanggan.
 
 ```bash
 curl -fsS -c cookies.txt -H 'content-type: application/json' \
   -d '{"email":"admin@example.test","password":"<12-characters-minimum>"}' \
-  http://127.0.0.1:3000/api/auth/login
+  http://127.0.0.1:3300/api/auth/login
 # Simpan csrf_token dari badan JSON. Cookie sesi ada di cookies.txt.
 
 curl -fsS -b cookies.txt -H 'content-type: application/json' -H 'x-csrf-token: <csrf>' \
   -d '{"name":"kelas-uji"}' \
-  http://127.0.0.1:3000/api/admin/groups
+  http://127.0.0.1:3300/api/admin/groups
 
 curl -fsS -b cookies.txt -H 'content-type: application/json' -H 'x-csrf-token: <csrf>' \
   -d '{"email":"student@example.test","display_name":"Student uji","role":"student","group_id":"<group-id>","password":"<12-characters-minimum>"}' \
-  http://127.0.0.1:3000/api/admin/users
+  http://127.0.0.1:3300/api/admin/users
 
 curl -fsS -b cookies.txt -H 'content-type: application/json' -H 'x-csrf-token: <csrf>' \
   -d '{"imsi":"<IMSI-UJI>","owner_user_id":"<student-id>","group_id":"<group-id>"}' \
-  http://127.0.0.1:3000/api/admin/assignments
+  http://127.0.0.1:3300/api/admin/assignments
 ```
 
 Keluar dari admin (tombol Keluar, atau `POST /api/auth/logout` dengan CSRF). Student masuk lewat form di `/login`. Buka `/profil`, pilih assignment IMSI uji, simpan draf, validasi, lalu tulis subscriber. Tombol Fase 2 tetap nonaktif.
@@ -214,7 +214,7 @@ Keluar dari admin (tombol Keluar, atau `POST /api/auth/logout` dengan CSRF). Stu
 Lalu:
 
 ```bash
-curl -fsS -b cookies.txt http://127.0.0.1:3000/api/core/status
+curl -fsS -b cookies.txt http://127.0.0.1:3300/api/core/status
 ```
 
 Harapan: HTTP 200. NF tanpa URL metrik berstatus `not_configured`, bukan gagal sehalaman. `gx_rar_effective` false.
@@ -222,7 +222,7 @@ Harapan: HTTP 200. NF tanpa URL metrik berstatus `not_configured`, bukan gagal s
 Baca satu subscriber uji yang memang ada di Mongo:
 
 ```bash
-curl -fsS -b cookies.txt http://127.0.0.1:3000/api/assignments/<assignment-id-uji>/subscriber
+curl -fsS -b cookies.txt http://127.0.0.1:3300/api/assignments/<assignment-id-uji>/subscriber
 ```
 
 Harapan: tidak ada field `security`, Ki, atau OPc di badan respons.
@@ -231,7 +231,7 @@ Provision hanya untuk subscriber uji yang sudah di-seed, lewat tombol **Tulis su
 
 ```bash
 curl -fsS -b cookies.txt -H "x-csrf-token: <csrf>" -H "if-match: <etag>" \
-  -X POST http://127.0.0.1:3000/api/profiles/<profile-id-uji>/provision
+  -X POST http://127.0.0.1:3300/api/profiles/<profile-id-uji>/provision
 ```
 
 Harapan: `status` written, `live_gx_rar` false. Sesi UE yang sedang aktif tidak berubah.

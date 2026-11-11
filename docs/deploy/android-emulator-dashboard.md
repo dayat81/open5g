@@ -18,7 +18,7 @@ There is no VNC password because there is no VNC server. Do not invent one in gi
 
 - The compose service `ueN-screen` has no `ports:` key.
 - The entrypoint refuses to bind `0.0.0.0`, `::`, or `127.0.0.0/8`.
-- The API process keeps its own listener on `127.0.0.1:8000`. Next listens on `127.0.0.1:3000`.
+- The API process keeps its own listener on `127.0.0.1:8000`. Next listens on `127.0.0.1:3300`.
 - The browser never dials the uu address. It only talks to the dashboard origin.
 
 The API reaches the sidecar at the internal target. Set that with either of these, not with a host port:
@@ -65,7 +65,7 @@ Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE
 
    ```bash
    OPEN5G_EMULATOR_ENABLED=1
-   OPEN5G_EMULATOR_ORIGINS=http://127.0.0.1:3000
+   OPEN5G_EMULATOR_ORIGINS=http://127.0.0.1:3300
    OPEN5G_EMULATOR_IDLE_SECONDS=300
    OPEN5G_EMULATOR_TARGETS=ue1=<UE1_UU>:8000
    ```
@@ -126,10 +126,10 @@ This needs the lab guest, KVM, and an attached UE. CI does not run it.
 1. From the laptop, tunnel only the dashboard port:
 
    ```bash
-   ssh -L 3000:127.0.0.1:3000 <guest>
+   ssh -L 3300:127.0.0.1:3300 <guest>
    ```
 
-2. Open `http://127.0.0.1:3000`, log in as the student who owns ue1, and open Emulator.
+2. Open `http://127.0.0.1:3300`, log in as the student who owns ue1, and open Emulator. Grafana already uses port 3000, so the dashboard default is `DASHBOARD_WEB_PORT` 3300. If that variable is different, use it on both sides of the tunnel and in `OPEN5G_EMULATOR_ORIGINS`.
 3. The frame should show the Android screen. Open Chrome in the guest Android UI.
 4. On the guest, check the UE path from the ue1 netns. Do not publish a port to do this, and do not use a host ADB port:
 
@@ -139,7 +139,7 @@ This needs the lab guest, KVM, and an attached UE. CI does not run it.
 
    The SOCKS proof in the android-ue runbook still applies when that profile is up. This screen path does not move it.
 
-If the frame stays empty while the status says the screen is up, the usual lab check is whether Next forwarded the websocket upgrade and whether `OPEN5G_EMULATOR_ORIGINS` is exactly `http://127.0.0.1:3000`.
+If the frame stays empty while the status says the screen is up, the usual lab check is whether Next forwarded the websocket upgrade and whether `OPEN5G_EMULATOR_ORIGINS` is exactly `http://127.0.0.1:3300`.
 
 ## Phase 2
 

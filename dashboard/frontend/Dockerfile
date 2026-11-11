@@ -27,12 +27,12 @@ COPY --from=build /app/.next/static ./.next/static
 COPY proxy.mjs ./
 
 ENV NODE_ENV=production \
-    PORT=3000 \
+    PORT=3300 \
     OPEN5G_API_INTERNAL_URL=http://dashboard-api:8000 \
     NEXT_PUBLIC_API_BASE=/
 
 USER nextjs
 
-EXPOSE 3000
+EXPOSE 3300
 
 CMD ["node", "proxy.mjs"]

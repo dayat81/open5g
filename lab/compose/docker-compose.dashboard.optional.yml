@@ -39,9 +39,9 @@ services:
     depends_on: [dashboard-api]
     environment:
       OPEN5G_API_INTERNAL_URL: ${OPEN5G_API_INTERNAL_URL:-http://dashboard-api:8000}
-      PORT: "3000"
+      PORT: "${DASHBOARD_WEB_PORT:-3300}"
     ports:
-      - "${DASHBOARD_WEB_BIND:-127.0.0.1}:${DASHBOARD_WEB_PORT:-3000}:3000"
+      - "${DASHBOARD_WEB_BIND:-127.0.0.1}:${DASHBOARD_WEB_PORT:-3300}:${DASHBOARD_WEB_PORT:-3300}"
     networks: [web, dashboard]
 networks:
   dashboard:
