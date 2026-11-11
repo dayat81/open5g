@@ -1,4 +1,6 @@
-# Arsitektur lab5g-dev saat ini — 10 Nov 2026 17:25 WIB
+# Arsitektur lab5g-dev saat ini — 11 Nov 2026 10:20 WIB
+
+Status dokumen: 11 Nov 2026 10:20 WIB. Diagram dan catatan pertama tetap snapshot 10 Nov 2026 17:25 WIB.
 
 Sumber: inventori Lab Ops (read-only, 15:10 WIB), evidence PR #7 (deploy dashboard @ d74db7c, 17:05 WIB) dan PR #8 (Gate B fase 1, 17:01–17:09 WIB). Tanpa secret; IP yang tidak terverifikasi tidak dicantumkan.
 
@@ -54,3 +56,76 @@ flowchart LR
 - **Gate B:** OAI eNB/en-gNB 2026.w43 sempat diuji di rfsim (`10.99.13.0/24`) dan lulus S1 Setup serta EN-DC X2 Setup. Setelah itu dibongkar. OAI NO-GO; EN-DC penuh (X2 SgNB Addition, E-RAB Modification) masuk Fase 2.
 - **Akses:** komputer Netdrive, lalu host agen, lalu guest lab5g-dev. Tidak ada port yang dipublish ke luar guest; lab5g-vm hanya baca.
 - **Subnet yang tercatat:** s1mme `10.99.1.0/24`, s1u `10.99.2.0/24`, x2 `10.99.12.0/24`, rfsim `10.99.13.0/24` (tidak aktif). Subnet lain belum tercatat lengkap di inventori.
+
+## Android UE emulator dan egress SOCKS (PR #12 @ bc9aa4d)
+
+```mermaid
+flowchart LR
+  subgraph LAPTOP["Laptop operator (WSL, internet, tanpa VPN kantor)"]
+    SOCKS["ssh client<br/>reverse dynamic SOCKS"]
+  end
+  AGEN["host agen<br/>(SSH jump saja)"]
+  subgraph GUEST["Guest lab5g-dev (tanpa internet langsung)"]
+    subgraph RAN["RAN srsRAN 4G (ZMQ)"]
+      ENB["srsENB stok l5gd-enb"]
+      UE["srsUE stok l5gd-ue"]
+      ENB1["srsENB l5gd-enb1"]
+      subgraph NS["netns bersama ue1"]
+        UE1["srsUE ue1<br/>tun_srsue = UE1_ADDR/32"]
+        AND["Android emulator api-33<br/>DNS = PGW DNS, adb 127.0.0.1:15551"]
+      end
+    end
+    subgraph EPC["Open5GS v2.8.0 EPC CUPS"]
+      MME["MME"]
+      HSS["HSS"]
+      PCRF["PCRF"]
+      SGWC["SGW-C"]
+      SMF["SMF/PGW-C"]
+      SGWU["SGW-U"]
+      UPF["UPF/PGW-U<br/>ip rule hanya UE1/32"]
+      MDB[("MongoDB<br/>index imsi_1")]
+    end
+    subgraph DASH["Dashboard (PR #7 @ d87fd51)"]
+      WEB["web 127.0.0.1:3000<br/>login/profil, RBAC, CSRF"]
+      API["backend<br/>slicing APN/PCC"]
+      PG[("Postgres<br/>users, assignment, audit")]
+    end
+    subgraph EGR["Network egress --internal"]
+      CGNAT["cgnat<br/>nft: src pool UE, TCP 80/443<br/>bogon drop, rate limit, DNAT DNS"]
+      SIDE["sidecar egress<br/>tun2socks + CoreDNS (TCP)"]
+      GW["GW_IP:1080<br/>hanya dari CGNAT_IP"]
+    end
+  end
+  INET(("Internet<br/>IP publik = laptop"))
+
+  UE <-->|Uu ZMQ| ENB
+  UE1 <-->|Uu ZMQ| ENB1
+  AND -.- UE1
+  ENB -->|S1-MME| MME
+  ENB1 -->|S1-MME| MME
+  ENB -->|S1-U| SGWU
+  ENB1 -->|S1-U| SGWU
+  MME -->|S6a| HSS
+  MME -->|S11| SGWC
+  SGWC -->|S5-C| SMF
+  SGWC -->|Sxa| SGWU
+  SMF -->|Sxb| UPF
+  SMF -->|Gx| PCRF
+  SGWU -->|S5-U| UPF
+  HSS --- MDB
+  PCRF --- MDB
+  WEB --> API
+  API --> PG
+  API -->|provision/rollback IMSI uji| MDB
+  UPF -.->|SGi UE1| CGNAT
+  CGNAT -.-> SIDE
+  SIDE -.-> GW
+  GW -.->|ssh -R| AGEN
+  AGEN -.-> SOCKS
+  SOCKS -.-> INET
+```
+
+- Core dan dashboard tidak berubah; dashboard d87fd51 sudah ter-deploy di lab5g-dev.
+- Emulator memakai netns bersama ue1, sehingga semua trafik termasuk DNS lewat tun_srsue lalu EPC.
+- Jalur internet hanya untuk UE1 /32 lewat ip rule di UPF, lalu cgnat, tun2socks, dan tunnel SOCKS ke laptop operator. Jalur ini fail-closed dan hanya aktif dalam jendela uji yang disetujui Netdrive.
+- PR #12 belum di-merge.

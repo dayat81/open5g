@@ -7,7 +7,7 @@
 | [`prd/`](prd/PRD-v0.6.md) | Canonical PRD v0.6, roadmap, decisions, and risks. |
 | [`ux/`](ux/README.md) | Sanitized UX pack, included. Prototype is demo-only. |
 | [`design/`](design/memo-kelayakan-dashboard-lab-5g-parsial.md) | Feasibility memo and IA Markdown. |
-| [`architecture/LAB5G-DEV-CURRENT.md`](architecture/LAB5G-DEV-CURRENT.md) | Current lab5g-dev architecture snapshot, 10 Nov 2026. |
+| [`architecture/LAB5G-DEV-CURRENT.md`](architecture/LAB5G-DEV-CURRENT.md) | Current lab5g-dev architecture snapshot, 11 Nov 2026. |
 | [`pages/`](pages/historical/prd-lab-5g-nsa-dashboard-v0.4.INTERIM-SNAPSHOT.md) | Historical v0.4 snapshot only. Current PRD is v0.6. |
 | [`SOURCE-OF-TRUTH.md`](SOURCE-OF-TRUTH.md) | Which path wins when copies disagree. |
 | [`evidence/`](evidence/README.md) | NA-reported Gate A, Gate B, and PoC slicing summaries. |
