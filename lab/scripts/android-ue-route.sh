@@ -11,12 +11,57 @@ screen_allow_ok() {
   printf '%s\n' "$1" | awk -F. 'NF != 4 { exit 1 } { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i + 0 > 255) exit 1 }'
 }
 
+screen_rules_active() {
+  case "${ANDROID_UE_SCREEN_IMAGE:-}" in
+    ""|REPLACE_*) return 1 ;;
+  esac
+  return 0
+}
+
+screen_iface_for() {
+  local want=$1
+  local forced=${ANDROID_UE_SCREEN_IFACE:-}
+  if [ -n "$forced" ]; then
+    printf '%s\n' "$forced"
+    return 0
+  fi
+  ip -4 -o addr show | awk -v addr="$want" '$4 ~ "^" addr "/" { print $2; exit }'
+}
+
+screen_rule_line() {
+  local iface=$1
+  local port=$2
+  local allow=$3
+  case "$allow" in
+    ""|REPLACE_*)
+      printf 'iptables -I INPUT 1 -i %s -p tcp --dport %s -j DROP\n' "$iface" "$port"
+      ;;
+    *)
+      printf 'iptables -I INPUT 1 -i %s -p tcp -m multiport --dports %s,5555 ! -s %s -j DROP\n' "$iface" "$port" "$allow"
+      ;;
+  esac
+}
+
 if [ "${1:-}" = "--check-allow" ]; then
   if screen_allow_ok "${ANDROID_UE_SCREEN_ALLOW_FROM:-}"; then
     exit 0
   fi
   echo "android-ue-route: screen allow source must be one non-loopback IPv4 address" >&2
   exit 1
+fi
+
+if [ "${1:-}" = "--print-screen-rule" ]; then
+  if ! screen_rules_active; then
+    printf '%s\n' skipped
+    exit 0
+  fi
+  iface=$(screen_iface_for "${ANDROID_UE_SCREEN_ADDR:-}")
+  if [ -z "$iface" ] || [ "$iface" = "lo" ]; then
+    echo "android-ue-route: screen interface is missing" >&2
+    exit 1
+  fi
+  screen_rule_line "$iface" "${ANDROID_UE_SCREEN_PORT:-8000}" "${ANDROID_UE_SCREEN_ALLOW_FROM:-}"
+  exit 0
 fi
 
 tun=${ANDROID_UE_TUN:-tun_srsue}
@@ -34,6 +79,23 @@ done
 if ! ip -4 -o addr show dev "$tun" 2>/dev/null | grep -q ' inet '; then
   echo "android-ue-route: ${tun} has no IPv4 address after ${timeout_s}s" >&2
   exit 1
+fi
+
+# socat in the Android image binds 5555 on eth0. With two networks, eth0 is
+# not guaranteed to be uu. Move the uu address onto eth0 before the emulator starts.
+uu_addr=${ANDROID_UE_UU:-}
+if [ -n "$uu_addr" ]; then
+  uu_iface=$(ip -4 -o addr show | awk -v addr="$uu_addr" '$4 ~ "^" addr "/" { print $2; exit }')
+  if [ -n "$uu_iface" ] && [ "$uu_iface" != "eth0" ] && ip link show eth0 >/dev/null 2>&1; then
+    ip link set eth0 down
+    ip link set "$uu_iface" down
+    ip link set eth0 name open5g-tmp
+    ip link set "$uu_iface" name eth0
+    ip link set open5g-tmp name "$uu_iface"
+    ip link set eth0 up
+    ip link set "$uu_iface" up
+    echo "android-ue-route: ${uu_addr} is on eth0 so adb stays on the uu address"
+  fi
 fi
 
 route_line=$(ip -4 route get "$enb")
@@ -120,29 +182,39 @@ case "$enb_probe" in
     ;;
 esac
 
-screen_port=${ANDROID_UE_SCREEN_PORT:-8000}
-case "$screen_port" in
-  ''|*[!0-9]*)
-    echo "android-ue-route: screen port is not numeric" >&2
-    exit 1
-    ;;
-esac
-allow=${ANDROID_UE_SCREEN_ALLOW_FROM:-}
-case "$allow" in
-  ""|REPLACE_*)
-    iptables -I INPUT 1 -p tcp --dport "$screen_port" -j DROP
-    echo "android-ue-route: screen port ${screen_port} is closed until an allow source is set"
-    ;;
-  *)
-    if ! screen_allow_ok "$allow"; then
-      echo "android-ue-route: screen allow source is not a single IPv4 address" >&2
+if screen_rules_active; then
+  screen_port=${ANDROID_UE_SCREEN_PORT:-8000}
+  case "$screen_port" in
+    ''|*[!0-9]*)
+      echo "android-ue-route: screen port is not numeric" >&2
       exit 1
-    fi
-    iptables -I INPUT 1 -p tcp --dport "$screen_port" ! -s "$allow" -j DROP
-    iptables -I INPUT 1 -p tcp --dport 5555 ! -s "$allow" -j DROP
-    echo "android-ue-route: screen port ${screen_port} and 5555 accept only ${allow}"
-    ;;
-esac
+      ;;
+  esac
+  allow=${ANDROID_UE_SCREEN_ALLOW_FROM:-}
+  case "$allow" in
+    ""|REPLACE_*) ;;
+    *)
+      if ! screen_allow_ok "$allow"; then
+        echo "android-ue-route: screen allow source is not a single IPv4 address" >&2
+        exit 1
+      fi
+      ;;
+  esac
+  iface=$(screen_iface_for "${ANDROID_UE_SCREEN_ADDR:-}")
+  if [ -z "$iface" ] || [ "$iface" = "lo" ]; then
+    echo "android-ue-route: screen address has no non-loopback interface" >&2
+    exit 1
+  fi
+  case "$allow" in
+    ""|REPLACE_*)
+      iptables -I INPUT 1 -i "$iface" -p tcp --dport "$screen_port" -j DROP
+      ;;
+    *)
+      iptables -I INPUT 1 -i "$iface" -p tcp -m multiport --dports "${screen_port},5555" ! -s "$allow" -j DROP
+      ;;
+  esac
+  echo "android-ue-route: $(screen_rule_line "$iface" "$screen_port" "$allow")"
+fi
 
 ue_addr=$(ip -4 -o addr show dev "$tun" | awk '{ print $4; exit }')
 echo "android-ue-route: ${tun} ${ue_addr}; default via ${tun}; eNB ${enb} via ${dev}"

@@ -17,8 +17,8 @@ from starlette.testclient import WebSocketDenialResponse
 from starlette.websockets import WebSocketDisconnect
 
 from open5g_dashboard.api import HASHER, create_app
-from open5g_dashboard.db import apply_migrations
-from open5g_dashboard.emulator_http import create_screen_app
+from open5g_dashboard.db import apply_migrations, upsert_emulator_screen_status
+from open5g_dashboard.emulator_http import create_screen_app, record_screen_probes
 from open5g_dashboard.settings import Settings
 
 DATABASE_URL = os.environ.get("OPEN5G_TEST_DATABASE_URL", "postgresql:///open5g_test")
@@ -124,7 +124,7 @@ def env(upstream):
         apply_migrations(conn)
         conn.execute(
             """
-            TRUNCATE emulator_sessions, emulator_endpoints, audit_events, apply_targets, apply_jobs,
+            TRUNCATE emulator_screen_status, emulator_sessions, emulator_endpoints, audit_events, apply_targets, apply_jobs,
                      profile_versions, profiles, catalog_entries, sessions, imsi_assignments, users, groups
             RESTART IDENTITY CASCADE
             """
@@ -193,6 +193,9 @@ def env(upstream):
             },
         )
         assert stored.status_code == 200, stored.text
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True) as conn:
+        upsert_emulator_screen_status(conn, "ue1", "up")
+        upsert_emulator_screen_status(conn, "ue2", "up")
     return {
         "app": app,
         "settings": settings,
@@ -403,6 +406,22 @@ def test_websocket_without_the_csrf_ticket_is_rejected(env):
     denied = _denied(screen.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}))
     assert denied.status_code == 401
     assert env["hits"]["ws"] == 0
+
+
+def test_api_uses_the_listener_status_row(env):
+    status = env["student"].client.get("/api/emulator/ue1")
+    assert status.json()["screen"] == "up"
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True) as conn:
+        conn.execute("UPDATE emulator_screen_status SET checked_at = now() - interval '1 hour' WHERE ue_id = 'ue1'")
+    stale = env["student"].client.get("/api/emulator/ue1")
+    assert stale.status_code == 200
+    assert stale.json()["screen"] == "down"
+    blocked = env["student"].post("/api/emulator/ue1/session")
+    assert blocked.status_code == 503
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True) as conn:
+        record_screen_probes(conn, env["settings"])
+    fresh = env["student"].client.get("/api/emulator/ue1")
+    assert fresh.json()["screen"] == "up"
 
 
 def test_disabled_screen_stays_closed(env):

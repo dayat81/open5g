@@ -362,6 +362,32 @@ def emulator_endpoint(conn, ue_id: str):
     return conn.execute("SELECT * FROM emulator_endpoints WHERE ue_id = %s", (ue_id,)).fetchone()
 
 
+def upsert_emulator_screen_status(conn, ue_id: str, status: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO emulator_screen_status (ue_id, status, checked_at)
+        VALUES (%s, %s, now())
+        ON CONFLICT (ue_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            checked_at = now()
+        """,
+        (ue_id, status),
+    )
+
+
+def emulator_screen_is_up(conn, ue_id: str, stale_seconds: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM emulator_screen_status
+        WHERE ue_id = %s
+          AND status = 'up'
+          AND checked_at >= now() - (%s * interval '1 second')
+        """,
+        (ue_id, stale_seconds),
+    ).fetchone()
+    return row is not None
+
+
 def upsert_emulator_endpoint(conn, ue_id: str, assignment_id: str, host, port, apn, attach_ipv4):
     return conn.execute(
         """

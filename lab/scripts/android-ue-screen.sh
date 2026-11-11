@@ -1,5 +1,5 @@
 #!/bin/sh
-# ws-scrcpy sidecar entrypoint. Listens on the UE uu address only.
+# ws-scrcpy sidecar entrypoint. Listens on the UE address in l5gd-screen only.
 # No host publish, and no dependency on a host ADB port.
 set -eu
 

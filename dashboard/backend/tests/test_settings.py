@@ -35,6 +35,27 @@ def test_cors_origin_on_the_grafana_port_is_rejected(monkeypatch):
     assert Settings.from_env().cors_origins == ("http://127.0.0.1:3300",)
 
 
+def test_cors_origin_on_the_screen_port_is_rejected(monkeypatch):
+    _env(monkeypatch, OPEN5G_CORS_ORIGINS="http://localhost:3301")
+    with pytest.raises(RuntimeError, match="3301"):
+        Settings.from_env()
+
+
+def test_screen_origin_must_use_a_different_host(monkeypatch):
+    shared = {
+        "OPEN5G_EMULATOR_ENABLED": "1",
+        "OPEN5G_EMULATOR_ALLOWED_NETS": "192.0.2.0/24",
+        "OPEN5G_EMULATOR_ORIGINS": "http://127.0.0.1:3300",
+        "OPEN5G_EMULATOR_SCREEN_ORIGIN": "http://127.0.0.1:3301",
+    }
+    _env(monkeypatch, **shared)
+    with pytest.raises(RuntimeError, match="different host"):
+        Settings.from_env()
+    shared["OPEN5G_EMULATOR_SCREEN_ORIGIN"] = "http://localhost:3301"
+    _env(monkeypatch, **shared)
+    assert Settings.from_env().emulator_screen_origin == "http://localhost:3301"
+
+
 def test_real_looking_local_values_bind_loopback_by_default(monkeypatch):
     _env(monkeypatch)
     settings = Settings.from_env()

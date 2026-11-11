@@ -371,6 +371,24 @@ if ! ANDROID_UE_SCREEN_ALLOW_FROM=192.0.2.1 lab/scripts/android-ue-route.sh --ch
   echo "screen allow rejected a unicast address" >&2
   exit 1
 fi
+skipped=$(lab/scripts/android-ue-route.sh --print-screen-rule)
+if [ "$skipped" != "skipped" ]; then
+  echo "screen rule ran while the image is still a placeholder: ${skipped}" >&2
+  exit 1
+fi
+digest=$(python3 -c 'print("b"*64)')
+rule=$(ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy@sha256:${digest}" \
+  ANDROID_UE_SCREEN_IFACE=eth1 \
+  ANDROID_UE_SCREEN_ALLOW_FROM=192.0.2.1 \
+  ANDROID_UE_SCREEN_PORT=8000 \
+  lab/scripts/android-ue-route.sh --print-screen-rule)
+case "$rule" in
+  *" -i eth1 "*multiport\ --dports\ 8000,5555\ !\ -s\ 192.0.2.1*) ;;
+  *)
+    echo "screen rule is not bound to the screen interface: ${rule}" >&2
+    exit 1
+    ;;
+esac
 grep -q 'INCLUDE_ADB_SHELL": false' lab/images/ws-scrcpy/build.config.override.json
 grep -q '@sha256:' lab/images/ws-scrcpy/Dockerfile
 grep -q 'WS_SCRCPY_COMMIT=' lab/images/ws-scrcpy/Dockerfile

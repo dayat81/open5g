@@ -140,8 +140,11 @@ emit_user() {
       ANDROID_UE_ENB_UU: \${UE${n}_ENB_UU}
       ANDROID_UE_TUN: tun_srsue
       ANDROID_UE_ATTACH_TIMEOUT: \${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
+      ANDROID_UE_UU: \${UE${n}_UU}
       ANDROID_UE_SCREEN_PORT: \${ANDROID_UE_SCREEN_PORT:-8000}
       ANDROID_UE_SCREEN_ALLOW_FROM: \${ANDROID_UE_SCREEN_ALLOW_FROM:-}
+      ANDROID_UE_SCREEN_ADDR: \${UE${n}_SCREEN_ADDR:?UE${n}_SCREEN_ADDR}
+      ANDROID_UE_SCREEN_IMAGE: \${ANDROID_UE_SCREEN_IMAGE:-}
     volumes:
       - ../scripts/android-ue-route.sh:/opt/android-ue/android-ue-route.sh:ro
     depends_on:

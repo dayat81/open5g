@@ -19,13 +19,13 @@ describe("EmulatorScreen", () => {
         ues={[ue]}
         selectedId="ue1"
         showFrame
-        frameSrc="http://127.0.0.1:3301/emulator/ue1/"
+        frameSrc="http://localhost:3301/emulator/ue1/"
         note={null}
       />,
     );
     expect(screen.getByTestId("attach-ip").textContent).toBe("192.0.2.10");
     expect(screen.getByTestId("attach-apn").textContent).toBe("internet");
-    expect(screen.getByTestId("emulator-frame").getAttribute("src")).toBe("http://127.0.0.1:3301/emulator/ue1/");
+    expect(screen.getByTestId("emulator-frame").getAttribute("src")).toBe("http://localhost:3301/emulator/ue1/");
     expect(screen.getByRole("button", { name: "Sambungkan ulang" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /reset|wipe|hapus|factory/i })).toBeNull();
   });

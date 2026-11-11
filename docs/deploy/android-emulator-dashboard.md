@@ -10,25 +10,23 @@ The pinned image is `halimqarroum/docker-android:api-33`. Its Docker Hub descrip
 
 `budtmo/docker-android` is a different image. It is the one that documents `WEB_VNC=true`, noVNC on 6080, and VNC on 5900. It is not the image this overlay pins, so those variables are not used.
 
-The screen path is a ws-scrcpy sidecar (`NetrisTV/ws-scrcpy`) in the UE netns (`network_mode: service:ueN`). The sidecar writes a config that sets `server.host` to `UE*_UU` and `server.port` to `ANDROID_UE_SCREEN_PORT` (8000 in the example). `WS_SCRCPY_PATHNAME` is `/emulator/ueN`. ADB from the sidecar dials `127.0.0.1:5555` inside that netns. It does not use a host port, and it does not read `UE*_ADB_HOST_PORT` (that variable is gone; publishing on the internal `uu` network does not work).
+The screen path is a ws-scrcpy sidecar (`NetrisTV/ws-scrcpy`) in the UE netns (`network_mode: service:ueN`). The sidecar writes a config that sets `server.host` to `UE*_SCREEN_ADDR` on the internal network `l5gd-screen` and `server.port` to `ANDROID_UE_SCREEN_PORT` (8000 in the example). `WS_SCRCPY_PATHNAME` is `/emulator/ueN`. ADB from the sidecar dials `127.0.0.1:5555` inside that netns. It does not use a host port, and it does not read `UE*_ADB_HOST_PORT`.
 
-There is no VNC password because there is no VNC server. Do not invent one in git. The sidecar itself has no login. The dashboard session is the gate, and the listen address is the uu address only.
+There is no VNC password because there is no VNC server. Do not invent one in git. The sidecar itself has no login. The dashboard session is the gate, and the listen address is `UE*_SCREEN_ADDR` only.
 
 ## What is not published
 
 - The compose service `ueN-screen` has no `ports:` key.
 - The entrypoint refuses to bind `0.0.0.0`, `::`, or `127.0.0.0/8`.
-- The API process keeps its own listener on `127.0.0.1:8000`. Next listens on `127.0.0.1:3300`.
-- The browser never dials the uu address. It only talks to the dashboard origin.
+- `dashboard-api` is not published and is not attached to `uu` or `l5gd-screen`.
+- The browser talks to the dashboard on `WEB_PORT` (default 3300) and to the screen listener on `localhost:3301`. It never dials `l5gd-screen`.
 
-The API reaches the sidecar at the internal target. Set that with either of these, not with a host port:
+The screen listener, not the API, reaches the sidecar. Set the target with either of these, not with a host port:
 
-- `OPEN5G_EMULATOR_TARGETS=ue1=<UE1_UU>:8000,ue2=<UE2_UU>:8000`
+- `OPEN5G_EMULATOR_TARGETS=ue1=<UE1_SCREEN_ADDR>:8000,ue2=<UE2_SCREEN_ADDR>:8000`
 - or `internal_host` and `internal_port` on the `emulator_endpoints` row. A row wins over the env value for that UE.
 
-`<UE1_UU>` is the same address the UE container already has on the `uu` network. Copy it into the gitignored dashboard env. Do not commit the lab value.
-
-The API process has to route to that address. On the guest, the Docker bridge for `uu` is enough when the API runs on the host. A later containerized API must join the `uu` network and still must not publish the screen port.
+`<UE1_SCREEN_ADDR>` is the address on `l5gd-screen`, not `UE*_UU`. Copy it into the gitignored dashboard env. Do not commit the lab value. `adb connect` for the B2 check stays on `<UE1_UU>:5555`. The route script moves that address onto `eth0` before the emulator starts, because the image's `socat` binds whichever address lands on `eth0`.
 
 ## Build the sidecar image
 
@@ -50,52 +48,42 @@ Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE
      --env-file lab/compose/android-ue.env --profile android-ue up -d ue1-screen
    ```
 
-3. Create the dashboard row as an admin. `assignment_id` is the student's assignment. `internal_host` is optional when `OPEN5G_EMULATOR_TARGETS` already has the uu address. `attach_ipv4` and `apn` are the values to display. This call does not read the PGW and does not change it.
+3. Create the dashboard row as an admin, through the dashboard origin on `WEB_PORT` (default `http://127.0.0.1:3300`), not through the unpublished API. `assignment_id` is the student's assignment. `internal_host` is `<UE1_SCREEN_ADDR>`. `attach_ipv4` and `apn` are the values to display. This call does not read the PGW and does not change it.
 
-   ```bash
-   curl -sS -c /tmp/dash.ck -b /tmp/dash.ck \
-     -H 'content-type: application/json' \
-     -d '{"email":"<admin>","password":"<password>"}' \
-     http://127.0.0.1:8000/api/auth/login
-   ```
-
-   Take `csrf_token` from that JSON and the cookie, then PUT `/api/admin/emulator-endpoints/ue1` with `x-csrf-token`.
-
-4. Dashboard env, all gitignored:
+4. Dashboard API env stays the container env from the lab5g-dev dashboard runbook. Add the emulator values there. They are gitignored:
 
    ```bash
    OPEN5G_EMULATOR_ENABLED=1
    OPEN5G_EMULATOR_ORIGINS=http://127.0.0.1:3300
    OPEN5G_EMULATOR_IDLE_SECONDS=300
    OPEN5G_EMULATOR_TARGETS=ue1=<UE1_SCREEN_ADDR>:8000
-   ```
-
-   `OPEN5G_DATABASE_URL` and `OPEN5G_SESSION_PEPPER` stay as they are. Pepper is at least 32 characters and is not a VNC password.
-
-5. Start the API on loopback and Next on loopback. `OPEN5G_API_PROXY` is the API, seen only by the Next server. `NEXT_PUBLIC_API_BASE` is the browser origin so cookies stay on one host.
-
-   ```bash
    OPEN5G_EMULATOR_ALLOWED_NETS=<screen-subnet>
    OPEN5G_EMULATOR_SCREEN_PORT=8000
-   OPEN5G_EMULATOR_SCREEN_ORIGIN=http://127.0.0.1:3301
+   OPEN5G_EMULATOR_SCREEN_ORIGIN=http://localhost:3301
+   ```
+
+   `OPEN5G_CORS_ORIGINS` must not include port 3301. `OPEN5G_DATABASE_URL` inside the API container stays on `dashboard-postgres`. Pepper is at least 32 characters and is not a VNC password.
+
+5. The screen listener runs on the guest host, not in `dashboard-api`, and not on `uu`. Compose publishes Postgres only on `127.0.0.1:5432` so this process can use the same database. Its `OPEN5G_DATABASE_URL` is `postgresql://open5g:<same-password>@127.0.0.1:5432/open5g` with the same pepper and the same emulator values, plus:
+
+   ```bash
    OPEN5G_EMULATOR_SCREEN_HOST=127.0.0.1
    OPEN5G_EMULATOR_SCREEN_BIND_PORT=3301
    ```
 
-   `OPEN5G_EMULATOR_ORIGINS` is the dashboard origin on `WEB_PORT` (default 3300). Start the API and `python -m open5g_dashboard.screen` on the host. `npm run dev` listens on `WEB_PORT` (default 3300) and is not the screen listener. Do not put either process on the `uu` network. Port 3001 stays inside the web image for Next (`OPEN5G_NEXT_PORT`); the screen proxy does not use it. Build the web artifact with `OPEN5G_EMULATOR_SCREEN_ORIGIN` set so `frame-src` matches.
+   `npm run dev` listens on `WEB_PORT` (default 3300). It is not the screen listener. Port 3001 stays inside the web image for Next (`OPEN5G_NEXT_PORT`). Build the web artifact with `OPEN5G_EMULATOR_SCREEN_ORIGIN=http://localhost:3301` so `frame-src` matches. Then:
 
    ```bash
-   python -m open5g_dashboard
    python -m open5g_dashboard.screen
    ```
 
-   Smoke evidence, on the guest, is a `101 Switching Protocols` line in the screen-listener log plus `emulator_open` and `emulator_close` rows. CI does not prove the websocket upgrade.
+   The listener dials `<UE*_SCREEN_ADDR>:8000` and writes `up` or `down` to Postgres. The API reads that row and does not dial `l5gd-screen`. `ss -ltnp | grep 3301` must show only `127.0.0.1`. Smoke evidence is a `101 Switching Protocols` line in that listener's log. CI does not prove the websocket upgrade.
 
 ## Who can open a screen
 
 This is the same group rule as profile read. A student can open only a UE assigned to them. An instructor can open a UE only when their current group is that assignment's group. An admin can open every configured UE. Anyone else gets 403. No session gets 401. If an instructor's group membership changes, their open websocket is closed.
 
-The screen is a separate origin, `http://127.0.0.1:3301` (`python -m open5g_dashboard.screen`). The dashboard origin only mints a one-time exchange code. The iframe loads that port, which sets its own cookie and sends `Content-Security-Policy: frame-ancestors <dashboard origin>`. The dashboard sends `frame-src` for that origin only. Cookies are not separated by port: do not open Grafana (port 3000) and the dashboard in the same browser profile. Do not attach the dashboard API container to `uu` or `l5gd-screen`. The screen process runs on the guest host and dials `UE*_SCREEN_ADDR` on `l5gd-screen`. `ANDROID_UE_SCREEN_ALLOW_FROM` is the host address on that network; the UE netns accepts the screen port and ADB 5555 only from it.
+The screen origin is `http://localhost:3301`. The listener process binds `127.0.0.1:3301`. Those names do not share cookies. The dashboard origin only mints a one-time exchange code. The iframe loads `localhost:3301`, which sets its own cookie and sends `Content-Security-Policy: frame-ancestors <dashboard origin>`. The dashboard sends `frame-src` for that origin only. Do not open Grafana (port 3000) and the dashboard in the same browser profile: cookies are not separated by port. Do not attach `dashboard-api` to `uu` or `l5gd-screen`. `ANDROID_UE_SCREEN_ALLOW_FROM` is the host address on `l5gd-screen`. The INPUT drop is bound to that interface (`-i`), so loopback adb and `adb connect <UE_UU>:5555` from the `uu` gateway stay open. The rule is installed only when `ANDROID_UE_SCREEN_IMAGE` is a real image.
 
 One control session per UE. A second user gets **409 `emulator_control_busy`**. The holder can refresh; that replaces their own session and closes the previous one. A second session is not view-only: ws-scrcpy carries input and video on the same socket, and filtering part of it could grant control by mistake. The UI shows the busy status and does not open a second frame.
 
@@ -123,28 +111,28 @@ The dashboard then shows the attach address and APN with the screen down. It doe
 
 This needs the lab guest, KVM, and an attached UE. CI does not run it.
 
-1. From the laptop, tunnel only the dashboard port:
+1. From the laptop, tunnel the dashboard and the screen listener. Open the dashboard as `127.0.0.1` and the frame as `localhost`:
 
    ```bash
-   ssh -L 3300:127.0.0.1:3300 <guest>
+   ssh -L 3300:127.0.0.1:3300 -L 3301:127.0.0.1:3301 <guest>
    ```
 
-2. Open `http://127.0.0.1:3300`, log in as the student who owns ue1, and open Emulator. The dashboard listens on `WEB_PORT` (default 3300). Grafana already uses port 3000. Do not open Grafana and the dashboard in the same browser profile: cookies are not separated by port. If `WEB_PORT` is different, use it on both sides of the tunnel and in `OPEN5G_EMULATOR_ORIGINS`. Tunnel the screen origin separately when the frame should load: `ssh -L 3301:127.0.0.1:3301 <guest>`.
-3. The frame should show the Android screen. Open Chrome in the guest Android UI.
+2. Open `http://127.0.0.1:3300` in a browser profile that does not have Grafana open. Log in as the student who owns ue1, and open Emulator. The dashboard listens on `WEB_PORT` (default 3300). Grafana already uses port 3000. Do not open Grafana and the dashboard in the same browser profile: cookies are not separated by port. If `WEB_PORT` is different, use it on both sides of the tunnel and in `OPEN5G_EMULATOR_ORIGINS`.
+3. The frame should show the Android screen. The listener log should contain `101 Switching Protocols` for `/emulator/ue1/`. Open Chrome in the guest Android UI.
 4. On the guest, check the UE path from the ue1 netns. Do not publish a port to do this, and do not use a host ADB port:
 
    ```bash
    sudo docker exec l5gd-ue1 ping -c 3 -w 5 <SGI_OR_ECHO>
+   adb connect <UE1_UU>:5555 && adb -s <UE1_UU>:5555 get-state
    ```
 
    The SOCKS proof in the android-ue runbook still applies when that profile is up. This screen path does not move it.
 
-If the frame stays empty while the status says the screen is up, the usual lab check is whether Next forwarded the websocket upgrade and whether `OPEN5G_EMULATOR_ORIGINS` is exactly `http://127.0.0.1:3300`.
+Before `OPEN5G_EMULATOR_ENABLED=1`, the lab window for PR #12 stays on that branch's tree. This overlay adds `l5gd-screen` and an interface-scoped INPUT rule, so it is not the tree for that window.
 
 ## Phase 2
 
 - A real view-only watcher, after input and video can be split without granting control.
 - Read the attach address from `tun_srsue` instead of the value stored on the endpoint. Still no write to the PGW.
 - Start and stop the emulator from the dashboard.
-- Authenticate the sidecar. Today the uu address and the dashboard session are the controls.
-- Confirm the Next rewrite upgrades websockets on the guest image of Node that the lab runs.
+- Authenticate the sidecar. Today `l5gd-screen` and the dashboard session are the controls.

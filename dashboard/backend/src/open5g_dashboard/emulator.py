@@ -107,13 +107,14 @@ def _origin_key(origin: str) -> tuple[str, str, int] | None:
 
 
 def origins_are_isolated(screen_origin: str, dashboard_origins: tuple[str, ...]) -> bool:
-    """The screen URL must not be a dashboard origin. Cookies are not scoped by port."""
+    """Cookies ignore ports, so the screen hostname must differ from the dashboard host."""
 
     screen = _origin_key(screen_origin)
     if screen is None:
         return False
     for item in dashboard_origins:
-        if _origin_key(item) == screen:
+        other = _origin_key(item)
+        if other is not None and other[1] == screen[1]:
             return False
     return True
 

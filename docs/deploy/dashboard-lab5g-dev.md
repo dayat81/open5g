@@ -90,7 +90,7 @@ Dari root repositori, di guest atau di host build:
 docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile dashboard config
 ```
 
-Binary harus v2.29.7. Periksa bahwa hanya `dashboard-web` punya `ports`, dan binding-nya `127.0.0.1:3300:3300` kecuali `WEB_PORT` diubah. `dashboard-api` tidak punya port publish.
+Binary harus v2.29.7. Periksa bahwa `dashboard-web` mem-publish `127.0.0.1:3300:3300` kecuali `WEB_PORT` diubah, dan `dashboard-postgres` mem-publish `127.0.0.1:5432:5432` hanya untuk listener layar di host. `dashboard-api` tidak punya port publish.
 
 ## 5. Backup subscriber Mongo sebelum up
 

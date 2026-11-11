@@ -68,6 +68,18 @@ def screen_open(host: str, port: int, timeout: float) -> bool:
         return False
 
 
+def record_screen_probes(conn, settings: Settings) -> None:
+    """Dial each screen target from the listener and store up/down for the API."""
+
+    rows = {row["ue_id"]: row for row in db.list_emulator_endpoints(conn)}
+    for ue_id in sorted(set(rows) | set(settings.emulator_targets)):
+        target = _target_for(settings, ue_id, rows.get(ue_id))
+        status = "down"
+        if target is not None and screen_open(target[0], target[1], settings.emulator_probe_seconds):
+            status = "up"
+        db.upsert_emulator_screen_status(conn, ue_id, status)
+
+
 def _actor_from_user(user) -> Actor | None:
     if user is None:
         return None
@@ -176,7 +188,7 @@ def register_emulator(app: FastAPI, settings: Settings, hooks: DashboardHooks) -
         target = _target_for(settings, ue_id, row)
         if target is None:
             screen, detail = "down", "unconfigured"
-        elif screen_open(target[0], target[1], settings.emulator_probe_seconds):
+        elif db.emulator_screen_is_up(conn, ue_id, settings.emulator_status_stale_seconds):
             screen, detail = "up", "ready"
         else:
             screen, detail = "down", "unreachable"
@@ -318,7 +330,7 @@ def register_emulator(app: FastAPI, settings: Settings, hooks: DashboardHooks) -
             if not settings.emulator_screen_origin:
                 return hooks.fail(404, "emulator_disabled", "The screen origin is not configured")
             target = _target_for(settings, ue_id, row)
-            if target is None or not screen_open(target[0], target[1], settings.emulator_probe_seconds):
+            if target is None or not db.emulator_screen_is_up(conn, ue_id, settings.emulator_status_stale_seconds):
                 audit(conn, actor, owner, group, "emulator_open", f"emulator:{ue_id}", "denied", "emulator_down", _client_detail(request, ue_id))
                 return hooks.fail(503, "emulator_down", DOWN_MESSAGE)
             replaced = False

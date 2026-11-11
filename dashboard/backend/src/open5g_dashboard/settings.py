@@ -92,6 +92,7 @@ class Settings:
     cors_origins: tuple[str, ...] = ()
     bind_host: str = "127.0.0.1"
     bind_port: int = 8000
+    emulator_status_stale_seconds: int = 15
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -111,6 +112,8 @@ class Settings:
                 raise RuntimeError(
                     "OPEN5G_CORS_ORIGINS must not use port 3000; that port is Grafana. The dashboard web default is WEB_PORT 3300."
                 )
+            if _origin_port(origin) == "3301":
+                raise RuntimeError("OPEN5G_CORS_ORIGINS must not include the screen listener port 3301")
         secure = os.environ.get("OPEN5G_COOKIE_SECURE", "1") != "0"
         demo = os.environ.get("OPEN5G_ENABLE_DEMO_ROUTES", "0") == "1"
         enabled = os.environ.get("OPEN5G_EMULATOR_ENABLED", "0") == "1"
@@ -122,6 +125,7 @@ class Settings:
         screen_bind_port = _bounded_int(os.environ.get("OPEN5G_EMULATOR_SCREEN_BIND_PORT", "3301"), 1, 65535, "OPEN5G_EMULATOR_SCREEN_BIND_PORT")
         probe = _bounded_float(os.environ.get("OPEN5G_EMULATOR_PROBE_SECONDS", "0.5"), 0.05, 5.0, "OPEN5G_EMULATOR_PROBE_SECONDS")
         watch = _bounded_float(os.environ.get("OPEN5G_EMULATOR_WATCH_SECONDS", "5"), 0.05, 60.0, "OPEN5G_EMULATOR_WATCH_SECONDS")
+        stale = _bounded_int(os.environ.get("OPEN5G_EMULATOR_STATUS_STALE_SECONDS", "15"), 1, 300, "OPEN5G_EMULATOR_STATUS_STALE_SECONDS")
         screen_origin = os.environ.get("OPEN5G_EMULATOR_SCREEN_ORIGIN", "").strip().rstrip("/")
         screen_host = os.environ.get("OPEN5G_EMULATOR_SCREEN_HOST", "127.0.0.1").strip()
         if screen_bind_port in {3000, 3001}:  # Grafana keeps 3000; 3001 is Next inside the web image
@@ -134,7 +138,7 @@ class Settings:
             if not nets or not origins or not screen_origin:
                 raise RuntimeError("emulator allowlist, dashboard origins, and screen origin are required")
             if screen_host in {"", "0.0.0.0", "::"} or not origins_are_isolated(screen_origin, origins):
-                raise RuntimeError("the screen origin must differ from every dashboard origin")
+                raise RuntimeError("the screen origin must use a different host from the dashboard")
             if _origin_port(screen_origin) in {"3000", "3001"}:  # Grafana keeps 3000; 3001 is Next inside the web image
                 raise RuntimeError("the screen origin must not use port 3000 (Grafana) or 3001 (Next inside the web image)")
         mongo_database = os.environ.get("OPEN5G_MONGO_DATABASE", "open5gs").strip() or "open5gs"
@@ -170,4 +174,5 @@ class Settings:
             cors_origins=cors,
             bind_host=_bind_host(os.environ.get("OPEN5G_BIND_HOST", "127.0.0.1")),
             bind_port=_bind_port(os.environ.get("OPEN5G_BIND_PORT", "8000")),
+            emulator_status_stale_seconds=stale,
         )
