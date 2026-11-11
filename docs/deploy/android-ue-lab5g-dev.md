@@ -138,30 +138,44 @@ sudo bash lab/scripts/android-ue-up.sh \
 
 `--with-socks-egress` starts `cgnat`, then `egress` (tun2socks), then `egress-dns`. Both sidecars use `network_mode: service:cgnat`. In that netns the only default route is `dev tun0`. A host route to `<GW_IP>` exists so tun2socks can reach the tunnel. It is not a second default route. nft drops anything else that does not leave via tun0.
 
-The script saves the previous UPF default route under `/var/lib/open5g-android-ue` before replacing it with the cgnat address on SGi. A second run does not overwrite that file. If the route already points at cgnat and the file is missing, the script stops. The route exists only for this window. HSS, PCRF, and SMF configuration are not changed.
+Set `UE_POOL` to `<UE1_ADDR>/32` before this command. The script installs `ip rule from <UE1_ADDR>/32 lookup 1080` on the UPF and a default route only in that table. The main default route is not changed, so other UEs are not sent to the laptop. A second run does not add another rule. State is `/var/lib/open5g-android-ue/upf-rule.txt`. HSS, PCRF, and SMF configuration are not changed. The static address is the `ue.addr` written by the seed script.
 
 ### Proof
 
 Use an echo host Netdrive named. Mask the laptop address in anything that is committed.
 
 1. **Laptop address.** From the UE netns, `curl -4 --max-time 15 http://<echo>/` prints `<LAPTOP_PUBLIC_IP>`.
-2. **DNS leaves the UE tun.** `ping` alone is not the proof. In one terminal:
+2. **DNS leaves tun_srsue, and both DNS and curl fail when the tunnel is down.** `ping` alone is not the proof. In one terminal on the UE netns:
 
    ```bash
    sudo tcpdump -ni tun_srsue port 53
    ```
 
-   From the emulator, resolve a name (`adb -s 127.0.0.1:15551 shell ping -c 1 example.com`). tcpdump must show the query on `tun_srsue`. Stop the ssh tunnel and resolve again. The query must not be answered. Port 53 to `127.0.0.11` is rejected in the UE netns, so Docker's embedded resolver is not a second path.
+   From the emulator, resolve a name (`adb -s 127.0.0.1:15551 shell ping -c 1 example.com`). tcpdump must show the query on `tun_srsue`. Then stop the ssh tunnel and repeat both of these. Both must fail:
+
+   ```bash
+   adb -s 127.0.0.1:15551 shell ping -c 1 example.com
+   sudo docker exec l5gd-ue1 curl -4 --max-time 10 http://<echo>/
+   ```
+
+   Start the ssh command again. The query shows on `tun_srsue` again, and curl prints `<LAPTOP_PUBLIC_IP>`. Port 53 to `127.0.0.11` is rejected in the UE netns, so Docker's embedded resolver is not a second path.
 3. **Laptop LAN and localhost fail.** `curl -4 --max-time 5 http://<LAPTOP_LAN>/` fails. So does a destination in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or `127.0.0.0/8` that is not the UE's own stack. Write `<LAPTOP_LAN>` only in local notes.
 4. **Other ports fail.** `curl -4 --max-time 5 http://<echo>:8080/` fails. TCP is 80 and 443 only. Other UDP is rejected.
 5. **Kill switch.** Stop the ssh process. The same curl to the echo host fails. Start the ssh command again. The curl works again.
-6. **Listeners.** `sudo docker exec l5gd-cgnat nft list table ip cgnat` shows the policy. On the guest, `ss -ltn` shows `1080` only on `<GW_IP>`, not on `0.0.0.0` or `*`. `sudo iptables -S INPUT | grep 1080` shows the accept from `<CGNAT_IP>` and the drop.
+6. **Listeners and the persisted INPUT rule.** `sudo docker exec l5gd-cgnat nft list table ip cgnat` shows the policy. On the guest, `ss -ltn` shows `1080` only on `<GW_IP>`, not on `0.0.0.0` or `*`. Both of these show the accept from `<CGNAT_IP>` and the drop:
+
+   ```bash
+   sudo iptables -S INPUT | grep 1080
+   sudo iptables-save | grep 1080
+   ```
+
+   Reboot the guest and run them again. The rules are still there because `open5g-android-ue-iptables.service` restores `/var/lib/open5g-android-ue/input-1080.rules`. After rollback, both commands show no 1080 rule.
 
 Ping and iperf to the SGi server still do not prove this path. They never enter the tunnel.
 
 ### Phase 2
 
-autossh, full UDP, and IPv6. None of those are in this overlay. IPv6 forwarding on the cgnat netns is dropped.
+Not in this overlay: QCI 8, autossh, full UDP, IPv6, a GNU Radio multi-UE broker, dashboard control of the emulator, a screen path other than scrcpy, live Gx RAR, keeping USIM material out of the container environment, and a larger guest for a second emulator. Also later: deny the laptop WAN address and corporate VPN ranges, extra bogons, a cgnat input chain, and limiting the eNB TCP exception to the ZMQ ports. IPv6 forwarding on the cgnat netns is already dropped.
 
 ## Rollback
 
@@ -169,7 +183,7 @@ autossh, full UDP, and IPv6. None of those are in this overlay. IPv6 forwarding 
 sudo bash lab/scripts/android-ue-down.sh --env-file lab/compose/android-ue.env
 ```
 
-This kills the guest sshd listener on port 1080, deletes the INPUT rules for that port, restores `GatewayPorts` from the backup taken by `prepare`, restores the UPF default route, then stops the profile in UE-before-eNB order. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted.
+This kills the guest sshd listener on port 1080, deletes the INPUT rules, removes `open5g-android-ue-iptables.service` so a reboot does not put them back, restores `GatewayPorts` from the backup taken by `prepare`, deletes the UPF `/32` policy rule, then stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted.
 
 Set `ANDROID_UE_INSTALL_UPF_ROUTE` back to `0`.
 

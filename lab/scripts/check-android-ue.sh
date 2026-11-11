@@ -39,7 +39,7 @@ example=lab/compose/android-ue.env.example
 for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_CGNAT_IMAGE ANDROID_UE_EGRESS_NETWORK ANDROID_UE_TUN2SOCKS_IMAGE \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
-  ANDROID_UE_PGW_DNS; do
+  ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -215,7 +215,8 @@ fi
 echo "seed is insert-only"
 js=$(lab/scripts/android-ue-seed.sh --print-js)
 printf '%s\n' "$js" | grep -q 'insertOne'
-printf '%s\n' "$js" | grep -q 'countDocuments'
+printf '%s\n' "$js" | grep -q 'countDocuments({imsi: imsi})'
+printf '%s\n' "$js" | grep -q 'ANDROID_UE_SEED_ADDR'
 if printf '%s\n' "$js" | grep -Eq 'replaceOne|upsert'; then
   echo "seed program would overwrite an existing subscriber" >&2
   exit 1
@@ -226,24 +227,24 @@ lab/scripts/android-ue-tunnel.sh self-test
 grep -q 'android-ue-tunnel.sh" rollback' lab/scripts/android-ue-down.sh
 grep -q 'sport = :1080' lab/scripts/android-ue-tunnel.sh
 
-echo "UPF route is idempotent"
+echo "UPF policy rule is idempotent"
 # shellcheck source=android-ue-lib.sh
 . lab/scripts/android-ue-lib.sh
 upf_dir=$(mktemp -d)
-upf_file=$upf_dir/upf-default.txt
-decision=$(android_ue_upf_decide "default via 192.0.2.1 dev eth0" "192.0.2.9" "$upf_file")
+upf_file=$upf_dir/upf-rule.txt
+decision=$(android_ue_upf_rule_decide "0: from all lookup local" "192.0.2.50/32" "$upf_file")
 if [ "$decision" != "install" ]; then
   echo "UPF decide should install, got ${decision}" >&2
   exit 1
 fi
-printf '%s\n' "saved" >"$upf_file"
-decision=$(android_ue_upf_decide "default via 192.0.2.9 dev eth0" "192.0.2.9" "$upf_file")
+printf '%s\n' "from 192.0.2.50/32 lookup 1080" >"$upf_file"
+decision=$(android_ue_upf_rule_decide "100: from 192.0.2.50/32 lookup 1080" "192.0.2.50/32" "$upf_file")
 if [ "$decision" != "skip" ]; then
   echo "UPF decide should skip, got ${decision}" >&2
   exit 1
 fi
-if android_ue_upf_decide "default via 192.0.2.1 dev eth0" "192.0.2.9" "$upf_file" >/dev/null 2>&1; then
-  echo "UPF decide overwrote a saved route" >&2
+if android_ue_upf_rule_decide "0: from all lookup local" "192.0.2.50/32" "$upf_file" >/dev/null 2>&1; then
+  echo "UPF decide overwrote a saved policy rule" >&2
   exit 1
 fi
 rm -rf "$upf_dir"

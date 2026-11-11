@@ -40,20 +40,22 @@ if [ -f "$state/tunnel-prepared" ] || [ -f "$state/gatewayports.bak" ]; then
   fi
 fi
 
-if [ -f "$state/upf-default.txt" ]; then
+if [ -f "$state/upf-rule.txt" ]; then
   upf=$(get ANDROID_UE_UPF_CONTAINER)
-  prev=$(cat "$state/upf-default.txt")
-  if [ -z "$prev" ]; then
-    docker exec "$upf" ip route del default || true
-  elif printf '%s\n' "$prev" | grep -Eq '^default via [0-9.]+ dev [A-Za-z0-9._:-]+$'; then
-    # shellcheck disable=SC2086
-    docker exec "$upf" ip route replace $prev
-  else
-    echo "android-ue: saved UPF route is not a simple default route; left the UPF route unchanged" >&2
-    exit 1
-  fi
-  rm -f "$state/upf-default.txt"
-  echo "android-ue: restored the UPF default route"
+  rule=$(head -n 1 "$state/upf-rule.txt")
+  case "$rule" in
+    from\ */32\ lookup\ 1080)
+      # shellcheck disable=SC2086
+      docker exec "$upf" ip rule del $rule || true
+      docker exec "$upf" ip route del default table 1080 || true
+      ;;
+    *)
+      echo "android-ue: saved UPF rule is not a /32 lookup; left the UPF unchanged" >&2
+      rollback_rc=1
+      ;;
+  esac
+  rm -f "$state/upf-rule.txt"
+  echo "android-ue: removed the UPF policy rule. The main default route was not changed."
 fi
 
 # UE before eNB. srsRAN's ZMQ note asks for that order on the way down.

@@ -83,6 +83,49 @@ android_ue_input_rules() {
   printf '%s\n' "-p tcp -d ${gw} --dport 1080 -j DROP"
 }
 
+android_ue_write_iptables_persist() {
+  local etc_root=$1
+  local state=$2
+  local unit_dir restore
+  unit_dir="${etc_root}/etc/systemd/system"
+  restore="${state}/restore-input-1080.sh"
+  mkdir -p "$unit_dir" "$state"
+  cat >"$restore" <<EOF
+#!/bin/sh
+set -eu
+rules="${state}/input-1080.rules"
+pos=1
+while IFS= read -r spec; do
+  [ -n "\$spec" ] || continue
+  # shellcheck disable=SC2086
+  iptables -C INPUT \$spec 2>/dev/null || iptables -I INPUT "\$pos" \$spec
+  pos=\$((pos + 1))
+done < "\$rules"
+EOF
+  chmod 0755 "$restore"
+  cat >"${unit_dir}/open5g-android-ue-iptables.service" <<EOF
+[Unit]
+Description=Restore android-ue INPUT rules for port 1080
+After=network-pre.target
+Before=network.target
+
+[Service]
+Type=oneshot
+ExecStart=${restore}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+android_ue_remove_iptables_persist() {
+  local etc_root=$1
+  local state=$2
+  rm -f "${etc_root}/etc/systemd/system/open5g-android-ue-iptables.service"
+  rm -f "${state}/restore-input-1080.sh" "${state}/iptables.rules"
+}
+
 android_ue_tunnel_self_test() {
   local dir sshd backup
   dir=$(mktemp -d)
@@ -125,6 +168,26 @@ android_ue_tunnel_self_test() {
   pid=$(printf '%s\n' 'users:(("sshd",pid=4242,fd=3))' | android_ue_listener_pids)
   if [ "$pid" != "4242" ]; then
     echo "tunnel self-test: listener pid was not parsed" >&2
+    exit 1
+  fi
+  mkdir -p "$dir/state"
+  printf '%s\n' "-p tcp -d 192.0.2.10 --dport 1080 -j DROP" >"$dir/state/input-1080.rules"
+  android_ue_write_iptables_persist "$dir/root" "$dir/state"
+  if ! grep -q 'iptables -I INPUT' "$dir/state/restore-input-1080.sh"; then
+    echo "tunnel self-test: restore script does not reinstall the saved rules" >&2
+    exit 1
+  fi
+  if ! grep -q 'dport 1080' "$dir/state/input-1080.rules"; then
+    echo "tunnel self-test: saved rules do not mention port 1080" >&2
+    exit 1
+  fi
+  if ! grep -q 'WantedBy=multi-user.target' "$dir/root/etc/systemd/system/open5g-android-ue-iptables.service"; then
+    echo "tunnel self-test: systemd unit was not written" >&2
+    exit 1
+  fi
+  android_ue_remove_iptables_persist "$dir/root" "$dir/state"
+  if [ -f "$dir/root/etc/systemd/system/open5g-android-ue-iptables.service" ]; then
+    echo "tunnel self-test: systemd unit was not removed" >&2
     exit 1
   fi
   rm -rf "$dir"
@@ -253,9 +316,19 @@ if [ "$cmd" = "prepare" ]; then
       pos=$((pos + 1))
     done <"$state/input-1080.rules"
   fi
+  android_ue_write_iptables_persist "${ANDROID_UE_ETC_ROOT:-}" "$state"
+  if [ "$dry_run" -eq 0 ]; then
+    if command -v iptables-save >/dev/null 2>&1; then
+      iptables-save >"$state/iptables.rules"
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload
+      systemctl enable open5g-android-ue-iptables.service
+    fi
+  fi
   : >"$state/tunnel-prepared"
   reload_sshd
-  echo "android-ue-tunnel: GatewayPorts clientspecified, previous value saved, INPUT 1080 limited to the cgnat address"
+  echo "android-ue-tunnel: GatewayPorts clientspecified, previous value saved, INPUT 1080 persisted for the cgnat address"
   exit 0
 fi
 
@@ -274,6 +347,18 @@ if [ -f "$state/input-1080.rules" ]; then
     fi
   done <"$state/input-1080.rules"
   rm -f "$state/input-1080.rules"
+fi
+if [ "$dry_run" -eq 1 ]; then
+  echo "iptables-save and remove the persisted port 1080 unit"
+else
+  if command -v iptables-save >/dev/null 2>&1; then
+    iptables-save >"$state/iptables.rules" || true
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl disable open5g-android-ue-iptables.service >/dev/null 2>&1 || true
+    systemctl daemon-reload || true
+  fi
+  android_ue_remove_iptables_persist "${ANDROID_UE_ETC_ROOT:-}" "$state"
 fi
 if [ -f "$state/gatewayports.bak" ]; then
   android_ue_restore_gatewayports "$sshd_config" "$state/gatewayports.bak"

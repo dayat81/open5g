@@ -152,6 +152,15 @@ if [ "$with_socks" -eq 1 ]; then
   export ANDROID_UE_SOCKS_PROFILE=1
 fi
 
+if [ "$install_upf_route" -eq 1 ] && [ "$with_socks" -eq 1 ]; then
+  ue_addr=$(get "UE${n}_ADDR")
+  android_ue_reject_placeholder "UE${n}_ADDR" "$ue_addr"
+  if [ "$(get UE_POOL)" != "${ue_addr}/32" ]; then
+    echo "android-ue: UE_POOL must be ${ue_addr}/32 so other UEs are not steered to the laptop" >&2
+    exit 1
+  fi
+fi
+
 echo "android-ue: starting ${user} only. Core config is not modified."
 android_ue_compose "$root" "$env_file" up -d \
   "ue${n}" "enb${n}" "ue${n}-route" "android${n}"
@@ -206,14 +215,22 @@ if [ "$install_upf_route" -eq 1 ]; then
   android_ue_require_set ANDROID_UE_UPF_CONTAINER "$upf"
   cgnat_ip=$(get CGNAT_SGI_ADDR)
   android_ue_reject_placeholder CGNAT_SGI_ADDR "$cgnat_ip"
-  prev=$(docker exec "$upf" ip -4 route show default)
-  decision=$(android_ue_upf_decide "$prev" "$cgnat_ip" "$state/upf-default.txt")
+  ue_addr=$(get "UE${n}_ADDR")
+  tun_cidr=$(docker exec "l5gd-ue${n}" ip -4 -o addr show dev tun_srsue | awk '{ print $4; exit }')
+  tun_ip=${tun_cidr%%/*}
+  if [ "$tun_ip" != "$ue_addr" ]; then
+    echo "android-ue: tun_srsue has ${tun_ip:-no address}; the static UE address is ${ue_addr}" >&2
+    exit 1
+  fi
+  rules=$(docker exec "$upf" ip rule show)
+  decision=$(android_ue_upf_rule_decide "$rules" "${ue_addr}/32" "$state/upf-rule.txt")
   if [ "$decision" = "skip" ]; then
-    echo "android-ue: UPF default route is already via ${cgnat_ip}; saved route left unchanged"
+    echo "android-ue: UPF policy rule for ${ue_addr}/32 is already installed"
   else
-    printf '%s\n' "$prev" >"$state/upf-default.txt"
-    docker exec "$upf" ip route replace default via "$cgnat_ip"
-    echo "android-ue: UPF ${upf} default route now via ${cgnat_ip}. State is ${state}. Rollback restores the saved route."
+    docker exec "$upf" ip route replace default via "$cgnat_ip" table 1080
+    docker exec "$upf" ip rule add from "${ue_addr}/32" lookup 1080 priority 100
+    printf 'from %s/32 lookup 1080\n' "$ue_addr" >"$state/upf-rule.txt"
+    echo "android-ue: UPF steers only ${ue_addr}/32 via table 1080. The main default route was not changed."
   fi
 fi
 
