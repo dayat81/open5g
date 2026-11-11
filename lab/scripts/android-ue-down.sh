@@ -40,6 +40,13 @@ if [ -f "$state/tunnel-prepared" ] || [ -f "$state/gatewayports.bak" ]; then
   fi
 fi
 
+shopt -s nullglob
+for stale in "$state"/upf-enb-s1u-*.route; do
+  rm -f "$stale"
+  echo "android-ue: removed stale UPF route state ${stale}. No UPF route was changed."
+done
+shopt -u nullglob
+
 if [ -f "$state/upf-rule.txt" ]; then
   upf=$(get ANDROID_UE_UPF_CONTAINER)
   rule=$(head -n 1 "$state/upf-rule.txt")

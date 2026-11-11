@@ -57,6 +57,34 @@ android_ue_install_gtpu_route() {
   echo "android-ue: enb${n} reaches ${gtpu} via ${dev}"
 }
 
+android_ue_wait_route() {
+  local n=$1
+  local cid rc
+  cid="l5gd-ue${n}-route"
+  if ! rc=$(docker wait "$cid"); then
+    echo "android-ue: docker wait ${cid} failed" >&2
+    exit 1
+  fi
+  if [ "$rc" != "0" ]; then
+    echo "android-ue: ${cid} exited ${rc}" >&2
+    docker logs --tail 50 "$cid" >&2 || true
+    exit 1
+  fi
+  echo "android-ue: ${cid} exited 0"
+}
+
+android_ue_require_lo_ipv6() {
+  local n=$1
+  local pid
+  pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}")
+  if ! nsenter -t "$pid" -n ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
+    echo "android-ue: ::1 is missing on lo in the ue${n} netns" >&2
+    nsenter -t "$pid" -n ip -6 addr show dev lo >&2 || true
+    exit 1
+  fi
+  echo "android-ue: ue${n} lo still has ::1"
+}
+
 android_ue_probe_sgi() {
   local n=$1
   local ue pid probe
@@ -250,6 +278,8 @@ fi
 echo "android-ue: starting ${user} only. Core config is not modified."
 android_ue_compose "$root" "$env_file" up -d \
   "ue${n}" "enb${n}" "ue${n}-route"
+android_ue_wait_route "$n"
+android_ue_require_lo_ipv6 "$n"
 android_ue_install_gtpu_route "$n"
 android_ue_probe_sgi "$n"
 android_ue_compose "$root" "$env_file" up -d "android${n}"

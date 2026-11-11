@@ -296,8 +296,17 @@ if grep -E -q 'dev eth[0-9]' lab/scripts/android-ue-up.sh lab/scripts/android-ue
 fi
 gtpu_at=$(grep -n -F "android_ue_install_gtpu_route \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
 probe_at=$(grep -n -F "android_ue_probe_sgi \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
-if [ -z "$gtpu_at" ] || [ -z "$probe_at" ] || [ "$gtpu_at" -ge "$probe_at" ]; then
-  echo "SGi ping does not run after the eNB GTP-U route" >&2
+wait_at=$(grep -n -F "android_ue_wait_route \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+lo_at=$(grep -n -F "android_ue_require_lo_ipv6 \"\$n\"" lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+if [ -z "$wait_at" ] || [ -z "$lo_at" ] || [ -z "$gtpu_at" ] || [ -z "$probe_at" ] || [ "$wait_at" -ge "$lo_at" ] || [ "$lo_at" -ge "$gtpu_at" ] || [ "$gtpu_at" -ge "$probe_at" ]; then
+  echo "SGi ping does not run after the route container exits and ::1 is checked" >&2
+  exit 1
+fi
+grep -q 'inet6 ::1' lab/scripts/android-ue-route.sh
+grep -q 'docker wait' lab/scripts/android-ue-up.sh
+grep -q 'upf-enb-s1u' lab/scripts/android-ue-down.sh
+if grep -q 'ANDROID_UE_UPF_S1U_SUBNET' docs/deploy/android-ue-lab5g-dev.md docs/integration/android-ue-per-user.md; then
+  echo "ANDROID_UE_UPF_S1U_SUBNET is still documented" >&2
   exit 1
 fi
 grep -q 'ip6tables-nft' lab/scripts/android-ue-route.sh
@@ -534,6 +543,7 @@ cleanup_mount() {
   "${mount_compose[@]}" -p android-ue-mountcheck -f lab/compose/docker-compose.android-ue.optional.yml \
     -f "$mount_override" --env-file "$mount_env" --profile android-ue --profile socks-egress \
     rm -sf cgnat egress >/dev/null 2>&1 || true
+  "${docker_cmd[@]}" rm -f android-ue-egress-proc >/dev/null 2>&1 || true
   "${docker_cmd[@]}" network rm android-ue-mount-sgi android-ue-mount-egress >/dev/null 2>&1 || true
   rm -f "$mount_env" "$mount_override"
   rm -rf "$tmp"
@@ -604,4 +614,61 @@ if ! "${mount_compose[@]}" -p android-ue-mountcheck \
   exit 1
 fi
 echo "cgnat and egress mounts started"
+ci_image=open5g-android-ue-ci:local
+if ! "${docker_cmd[@]}" image inspect "$ci_image" >/dev/null 2>&1; then
+  "${docker_cmd[@]}" build -t "$ci_image" - <<'EOF'
+FROM alpine:3.20
+RUN apk add --no-cache nftables iproute2
+RUN printf '%s\n' '#!/bin/sh' 'ip tuntap add name tun0 mode tun' 'ip link set tun0 up' 'exec sleep 60' > /usr/bin/tun2socks && chmod 0755 /usr/bin/tun2socks
+EOF
+fi
+nft_err=$tmp/nft-container.err
+if "${docker_cmd[@]}" run --rm --network none --cap-add NET_ADMIN \
+  -v "$PWD/lab/config/cgnat:/etc/cgnat:ro" \
+  -v "$PWD/lab/scripts/render-cgnat.sh:/opt/cgnat/render-cgnat.sh:ro" \
+  -e UE_POOL=192.0.2.0/24 \
+  -e LAB_SUBNET=198.51.100.0/24 \
+  -e SOCKS_ADDR=192.0.2.10 \
+  -e CT_LIMIT=200 \
+  "$ci_image" \
+  /bin/sh -c '/opt/cgnat/render-cgnat.sh /etc/cgnat/cgnat.nft.template > /tmp/c.nft && nft -c -f /tmp/c.nft' \
+  >"$tmp/nft-container.out" 2>"$nft_err"; then
+  echo "cgnat container nft -c -f passed"
+else
+  if grep -q 'Operation not permitted' "$nft_err"; then
+    echo "cgnat container nft -c -f is not permitted here; checking the rendered ruleset on the host" >&2
+    UE_POOL=192.0.2.0/24 LAB_SUBNET=198.51.100.0/24 SOCKS_ADDR=192.0.2.10 CT_LIMIT=200 \
+      lab/scripts/render-cgnat.sh lab/config/cgnat/cgnat.nft.template >"$tmp/c.nft"
+    if ! nft -c -f "$tmp/c.nft" && ! sudo nft -c -f "$tmp/c.nft"; then
+      cat "$nft_err" >&2
+      echo "rendered ruleset did not pass nft -c" >&2
+      exit 1
+    fi
+    echo "host nft -c passed. The runner refused nft inside the container."
+  else
+    cat "$nft_err" >&2
+    echo "cgnat container nft -c -f failed" >&2
+    exit 1
+  fi
+fi
+egress_id=$("${docker_cmd[@]}" run -d --name android-ue-egress-proc --network android-ue-mount-egress --cap-add NET_ADMIN \
+  -v "$PWD/lab/scripts/android-ue-egress.sh:/opt/cgnat/android-ue-egress.sh:ro" \
+  -e ANDROID_UE_SOCKS_ADDR=198.51.100.10:1080 \
+  --device /dev/net/tun \
+  "$ci_image" \
+  /bin/sh /opt/cgnat/android-ue-egress.sh || true)
+if [ -z "$egress_id" ]; then
+  echo "egress sidecar did not start. tun2socks is not available and /dev/net/tun may be missing." >&2
+  echo "The mount check already proved the script is visible. This runner cannot keep the proxy process up." >&2
+else
+  sleep 1
+  if ! "${docker_cmd[@]}" inspect -f '{{.State.Running}}' android-ue-egress-proc | grep -qx true; then
+    "${docker_cmd[@]}" logs android-ue-egress-proc >&2 || true
+    "${docker_cmd[@]}" rm -f android-ue-egress-proc >/dev/null 2>&1 || true
+    echo "egress sidecar exited before its process was running" >&2
+    exit 1
+  fi
+  "${docker_cmd[@]}" rm -f android-ue-egress-proc >/dev/null
+  echo "egress sidecar process was running"
+fi
 echo "android-ue checks passed"

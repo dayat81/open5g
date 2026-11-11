@@ -74,9 +74,9 @@ sudo bash lab/scripts/android-ue-up.sh \
   --user ue1
 ```
 
-The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not change the UPF main default route. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. If legacy `ip6tables` has no filter table, it tries `ip6tables-nft`, and otherwise disables IPv6 in the UE netns. It does not load kernel modules.
+The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar before the emulator. It does not start `cgnat` and it does not change the UPF main default route. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. If legacy `ip6tables` has no filter table, it tries `ip6tables-nft`, and otherwise disables IPv6 only on interfaces other than `lo`. `::1` stays on `lo`. The script checks `ip -6 addr show dev lo` and stops if `::1` is missing. It does not load kernel modules.
 
-The eNB container has no `NET_ADMIN`. After the route sidecar exits, `up` uses `nsenter` from the host, the same way `lab-routes.sh` does for `l5gd-enb`. It finds the interface that holds `UE1_ENB_S1U` and installs `ANDROID_UE_SGWU_GTPU_ROUTE/32` on that interface. `ip route get` must show that device. A route on the UPF toward that S1-U address is not added. The lab capture showed the eNB route alone is enough for the SGi ping.
+`up` runs `docker wait l5gd-ue1-route` and continues only when that exit code is 0. The eNB container has no `NET_ADMIN`. After that wait, `up` uses `nsenter` from the host, the same way `lab-routes.sh` does for `l5gd-enb`. It finds the interface that holds `UE1_ENB_S1U` and installs `ANDROID_UE_SGWU_GTPU_ROUTE/32` on that interface. `ip route get` must show that device. A route on the UPF toward that S1-U address is not added. The lab capture showed the eNB route alone is enough for the SGi ping.
 
 `up` then runs `ping -c 3 -I tun_srsue <ANDROID_UE_SGI_PROBE>`. A failed ping stops `up` before `android1` starts. That ping is only meaningful before `--install-upf-route`. After that flag, the test UE is steered to cgnat, which drops the lab subnet, so a ping to the lab SGi server fails on purpose.
 
@@ -95,6 +95,8 @@ adb connect 127.0.0.1:15551
 ```
 
 Do not publish ADB or VNC on the libvirt bridge or the LAN. Do not attach a non-internal network to the UE. The image's socat already listens on the uu address, port 5555.
+
+The api-33 image already starts the emulator with `-no-snapshot` (`scripts/start-emulator.sh`) and its own boot watcher gives up after 300 seconds (`Error: Emulator failed to boot within 300 seconds` in `scripts/emulator-monitoring.sh`). On c8d3455, `sys.boot_completed` was still empty after about 7.5 minutes, so a longer wait would not have finished that boot. The log line `Unable to connect character device modem: address resolution failed for ::1` matches a netns where IPv6 loopback was removed. Keep `::1` on `lo`.
 
 ## Verification
 

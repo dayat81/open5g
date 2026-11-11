@@ -57,18 +57,29 @@ if command -v ip6tables >/dev/null 2>&1 && ip6tables -L >/dev/null 2>&1; then
 elif command -v ip6tables-nft >/dev/null 2>&1 && ip6tables-nft -L >/dev/null 2>&1; then
   install_guard 6 ip6tables-nft ANDROID_UE_GUARD6
 else
+  # Do not set disable_ipv6 on all, default, or lo. all removes ::1, and the
+  # emulator modem resolves that address. Drop IPv6 only on other interfaces.
   wrote=0
-  for key in all default lo; do
-    if [ -w "/proc/sys/net/ipv6/conf/${key}/disable_ipv6" ]; then
-      printf '1\n' >"/proc/sys/net/ipv6/conf/${key}/disable_ipv6"
+  for iface in $(ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
+    if [ "$iface" = "lo" ]; then
+      continue
+    fi
+    sys="/proc/sys/net/ipv6/conf/${iface}/disable_ipv6"
+    if [ -w "$sys" ]; then
+      printf '1\n' >"$sys"
       wrote=1
     fi
   done
   if [ "$wrote" -ne 1 ]; then
-    echo "android-ue-route: ip6tables has no filter table and IPv6 cannot be disabled" >&2
+    echo "android-ue-route: ip6tables has no filter table and IPv6 cannot be disabled on non-loopback interfaces" >&2
     exit 1
   fi
-  echo "android-ue-route: ip6tables filter table is unavailable; IPv6 is disabled in this netns"
+  echo "android-ue-route: ip6tables filter table is unavailable; IPv6 is disabled except on lo"
+fi
+if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
+  echo "android-ue-route: ::1 is missing on lo" >&2
+  ip -6 addr show dev lo >&2 || true
+  exit 1
 fi
 
 for _ in 1 2 3 4 5; do
