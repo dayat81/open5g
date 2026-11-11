@@ -1,0 +1,84 @@
+diff -ruN a/Dockerfile b/Dockerfile
+--- a/Dockerfile	2026-11-11 09:53:58.937633148 +0000
++++ b/Dockerfile	2026-11-11 09:57:36.777534749 +0000
+@@ -1,4 +1,4 @@
+-FROM eclipse-temurin:25
++FROM eclipse-temurin:25@sha256:83f4a7fc27df94dcc7b8de04d14cbbba8da14406f921e966969c3b09000aa507
+ 
+ ENV DEBIAN_FRONTEND noninteractive
+ 
+@@ -13,7 +13,7 @@
+ 	libxkbcommon-dev libgbm-dev libasound-dev libnss3 \
+ 	libxcursor1 libpulse-dev libxshmfence-dev \
+ 	xauth xvfb x11vnc fluxbox wmctrl libdbus-glib-1-2 socat \
+-	virt-manager
++	virt-manager python3 iproute2
+ 
+ 
+ # Docker labels.
+@@ -63,9 +63,6 @@
+ 	touch /root/.android/repositories.cfg && \
+ 	mkdir /data
+ 
+-# Exporting ADB keys.
+-COPY keys/* /root/.android/
+-
+ # The following layers will download the Android command-line tools
+ # to install the Android SDK, emulator and system images.
+ # It will then install the Android SDK and emulator.
+@@ -76,7 +73,9 @@
+ # Copy the container scripts in the image.
+ COPY scripts/start-emulator.sh /opt/
+ COPY scripts/emulator-monitoring.sh /opt/
++COPY scripts/open5g-preflight.sh /opt/
+ RUN chmod +x /opt/*.sh
+ 
+ # Set the entrypoint
+-ENTRYPOINT ["/opt/start-emulator.sh"]
+\ No newline at end of file
++ENTRYPOINT ["/opt/start-emulator.sh"]
++HEALTHCHECK --start-period=600s --interval=30s --timeout=10s --retries=3 CMD adb shell getprop sys.boot_completed | tr -d '\r' | grep -qx 1
+diff -ruN a/scripts/emulator-monitoring.sh b/scripts/emulator-monitoring.sh
+--- a/scripts/emulator-monitoring.sh	2026-11-11 09:53:58.937633148 +0000
++++ b/scripts/emulator-monitoring.sh	2026-11-11 09:57:36.777534749 +0000
+@@ -35,7 +35,8 @@
+   adb wait-for-device
+ 
+   # Waiting for the boot sequence to be completed.
+-  TIMEOUT=300
++  # Open5G: same default as ANDROID_UE_BOOT_TIMEOUT. The image used to exit at 300.
++  TIMEOUT=${BOOT_TIMEOUT:-600}
+   COUNTER=0
+   COMPLETED=$(adb shell getprop sys.boot_completed | tr -d '\r')
+   while [ "$COMPLETED" != "1" ]; do
+diff -ruN a/scripts/install-sdk.sh b/scripts/install-sdk.sh
+--- a/scripts/install-sdk.sh	2026-11-11 09:53:58.937633148 +0000
++++ b/scripts/install-sdk.sh	2026-11-11 09:57:36.777534749 +0000
+@@ -7,11 +7,12 @@
+ # install the SDK, platform tools and the emulator.
+ if [ "$INSTALL_ANDROID_SDK" == "1" ]; then
+   echo "Installing the Android SDK, platform tools and emulator ..."
+-  wget https://dl.google.com/android/repository/commandlinetools-linux-${CMD_LINE_VERSION}.zip -P /tmp && \
++  wget -O /tmp/commandlinetools.zip "https://dl.google.com/android/repository/commandlinetools-linux-${CMD_LINE_VERSION}.zip" && \
++  echo "bd1aa17c7ef10066949c88dc6c9c8d536be27f992a1f3b5a584f9bd2ba5646a0  /tmp/commandlinetools.zip" | sha256sum -c - && \
+   mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/ && \
+-  unzip -d $ANDROID_SDK_ROOT/cmdline-tools/ /tmp/commandlinetools-linux-${CMD_LINE_VERSION}.zip && \
++  unzip -d $ANDROID_SDK_ROOT/cmdline-tools/ /tmp/commandlinetools.zip && \
+   mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/ $ANDROID_SDK_ROOT/cmdline-tools/tools/ && \
+-  rm /tmp/commandlinetools-linux-${CMD_LINE_VERSION}.zip && \
++  rm /tmp/commandlinetools.zip && \
+   yes | sdkmanager --licenses && \
+   sdkmanager --install "$PACKAGE_PATH" "$ANDROID_PLATFORM_VERSION" platform-tools emulator
+ fi
+diff -ruN a/scripts/start-emulator.sh b/scripts/start-emulator.sh
+--- a/scripts/start-emulator.sh	2026-11-11 09:53:58.937633148 +0000
++++ b/scripts/start-emulator.sh	2026-11-11 09:57:36.777534749 +0000
+@@ -55,6 +55,8 @@
+   export GPU_MODE="swiftshader_indirect"
+ fi
+ 
++/opt/open5g-preflight.sh
++
+ # Asynchronously write updates on the standard output
+ # about the state of the boot sequence.
+ wait_for_boot &

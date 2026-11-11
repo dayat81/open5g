@@ -104,7 +104,7 @@ services:
         condition: service_started
 
   android1:
-    image: ${ANDROID_UE_ANDROID_IMAGE:?ANDROID_UE_ANDROID_IMAGE}
+    image: ${ANDROID_UE_ANDROID_IMAGE:-open5g-android-emulator:local}
     container_name: l5gd-android1
     restart: "no"
     profiles: ["android-ue"]
@@ -122,6 +122,8 @@ services:
       SKIP_AUTH: ${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
       DISABLE_ANIMATION: ${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
       EXTRA_FLAGS: "${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server ${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
+      BOOT_TIMEOUT: ${ANDROID_UE_BOOT_TIMEOUT:-600}
+      ANDROID_UE_IPV6_ANCHOR: ${ANDROID_UE_IPV6_ANCHOR:-1}
     depends_on:
       ue1-route:
         condition: service_completed_successfully
@@ -225,7 +227,7 @@ services:
         condition: service_started
 
   android2:
-    image: ${ANDROID_UE_ANDROID_IMAGE:?ANDROID_UE_ANDROID_IMAGE}
+    image: ${ANDROID_UE_ANDROID_IMAGE:-open5g-android-emulator:local}
     container_name: l5gd-android2
     restart: "no"
     profiles: ["android-ue"]
@@ -243,6 +245,8 @@ services:
       SKIP_AUTH: ${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
       DISABLE_ANIMATION: ${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
       EXTRA_FLAGS: "${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server ${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
+      BOOT_TIMEOUT: ${ANDROID_UE_BOOT_TIMEOUT:-600}
+      ANDROID_UE_IPV6_ANCHOR: ${ANDROID_UE_IPV6_ANCHOR:-1}
     depends_on:
       ue2-route:
         condition: service_completed_successfully

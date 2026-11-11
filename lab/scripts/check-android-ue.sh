@@ -16,6 +16,8 @@ scripts=(
   lab/scripts/android-ue-set-addr.sh
   lab/scripts/android-ue-tunnel.sh
   lab/scripts/check-android-ue.sh
+  lab/images/android-emulator/build.sh
+  lab/images/android-emulator/open5g-preflight.sh
 )
 sh_scripts=(
   lab/scripts/render-cgnat.sh
@@ -79,9 +81,10 @@ scan_paths=(
   docs/integration/android-ue-per-user.md
   docs/deploy/android-ue-lab5g-dev.md
   .github/workflows/android-ue.yml
+  lab/images/android-emulator
 )
 if grep -R -E -n --exclude-dir=.git \
-  -e '[0-9A-Fa-f]{32}' \
+  -e '(^|[^0-9A-Fa-f])[0-9A-Fa-f]{32}([^0-9A-Fa-f]|$)' \
   -e '(^|[^0-9])[0-9]{15}([^0-9]|$)' \
   "${scan_paths[@]}"; then
   echo "found a 32-hex value or a 15-digit IMSI/IMEI in android-ue files" >&2
@@ -303,13 +306,70 @@ if [ -z "$wait_at" ] || [ -z "$lo_at" ] || [ -z "$gtpu_at" ] || [ -z "$probe_at"
   echo "boot gate is not after the route wait, IPv6 check, and SGi probe" >&2
   exit 1
 fi
-grep -q 'fe80:' lab/scripts/android-ue-route.sh
+grep -q 'unreachable default' lab/scripts/android-ue-route.sh
+grep -q 'ANDROID_UE_IPV6_NO_FILTER_OK' lab/scripts/android-ue-route.sh
+grep -q '16#48' lab/scripts/android-ue-route.sh
+grep -q 'ANDROID_UE_BOOT_GATE' lab/scripts/android-ue-up.sh
 grep -q 'accept_ra' lab/scripts/android-ue-route.sh
 grep -q 'autoconf' lab/scripts/android-ue-route.sh
-if grep -q 'disable_ipv6' lab/scripts/android-ue-route.sh; then
-  echo "route script still disables IPv6" >&2
+if grep -F "printf '1" lab/scripts/android-ue-route.sh; then
+  echo "route script sets disable_ipv6 to 1" >&2
   exit 1
 fi
+if ! grep -q -F "printf '0" lab/scripts/android-ue-route.sh; then
+  echo "route script does not write disable_ipv6=0" >&2
+  exit 1
+fi
+grep -q 'forwarding' lab/scripts/android-ue-route.sh
+grep -q 'accept_ra autoconf forwarding' lab/scripts/android-ue-route.sh
+emu_at=$(grep -n -F 'emulator is already running' lab/scripts/android-ue-route.sh | head -n 1 | cut -d: -f1)
+lock_at=$(grep -n -x 'android_ue_route_ipv6_lock' lab/scripts/android-ue-route.sh | head -n 1 | cut -d: -f1)
+if [ -z "$emu_at" ] || [ -z "$lock_at" ] || [ "$emu_at" -ge "$lock_at" ]; then
+  echo "IPv6 lock is not after the emulator-already-running guard" >&2
+  exit 1
+fi
+again_at=$(grep -n -F 'refusing to run the route sidecar again' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+route_up_at=$(awk '/up -d \\$/ { print NR; exit }' lab/scripts/android-ue-up.sh)
+if [ -z "$again_at" ] || [ -z "$route_up_at" ] || [ "$again_at" -ge "$route_up_at" ]; then
+  echo "up starts the route sidecar after android is already running" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+grep -q 'disable_ipv6 on ${key}' lab/scripts/android-ue-up.sh
+grep -q 'accept_ra autoconf forwarding' lab/scripts/android-ue-up.sh
+grep -q 'ANDROID_UE_IPV6_NO_FILTER_OK:-0' lab/scripts/android-ue-route.sh
+
+echo "emulator image patch"
+image_root=lab/images/android-emulator
+if find "$image_root" -name 'adbkey' -o -name 'adbkey.pub' | grep -q .; then
+  echo "ADB keys are vendored" >&2
+  exit 1
+fi
+grep -q 'f569246983ee994aed06517bf8e06a3f10547b6d' "$image_root/NOTICE"
+grep -q '2026-05-07' "$image_root/NOTICE"
+grep -q 'sha256:83f4a7fc27df94dcc7b8de04d14cbbba8da14406f921e966969c3b09000aa507' "$image_root/patches/0001-open5g-boot.patch"
+grep -q 'bd1aa17c7ef10066949c88dc6c9c8d536be27f992a1f3b5a584f9bd2ba5646a0' "$image_root/patches/0001-open5g-boot.patch"
+grep -q 'HEALTHCHECK --start-period=600s' "$image_root/patches/0001-open5g-boot.patch"
+# shellcheck disable=SC2016
+grep -q 'TIMEOUT=${BOOT_TIMEOUT:-600}' "$image_root/patches/0001-open5g-boot.patch"
+grep -q '^-COPY keys/\*' "$image_root/patches/0001-open5g-boot.patch"
+grep -q 'AI_ADDRCONFIG' "$image_root/open5g-preflight.sh"
+grep -q 'fd00::1/128' "$image_root/open5g-preflight.sh"
+grep -q 'relying on fe80' "$image_root/open5g-preflight.sh"
+patched=$(mktemp -d)
+cp -a "$image_root/upstream/." "$patched/"
+patch -p1 -d "$patched" <"$image_root/patches/0001-open5g-boot.patch" >/dev/null
+if grep -q 'COPY keys' "$patched/Dockerfile"; then
+  echo "patched Dockerfile still copies ADB keys" >&2
+  exit 1
+fi
+pre_line=$(grep -n -F '/opt/open5g-preflight.sh' "$patched/scripts/start-emulator.sh" | head -n 1 | cut -d: -f1)
+emu_line=$(awk '/^emulator / { print NR; exit }' "$patched/scripts/start-emulator.sh")
+if [ -z "$pre_line" ] || [ -z "$emu_line" ] || [ "$pre_line" -ge "$emu_line" ]; then
+  echo "preflight does not run before the emulator" >&2
+  exit 1
+fi
+rm -rf "$patched"
 grep -q 'ANDROID_UE_BOOT_TIMEOUT' lab/scripts/android-ue-up.sh
 grep -q 'sys.boot_completed' lab/scripts/android-ue-up.sh
 grep -q 'emulator -accel-check' lab/scripts/android-ue-up.sh
@@ -391,16 +451,37 @@ if android_ue_addr_in_pool 192.0.2.10 198.51.100.0/24; then
   echo "an address outside the pool was accepted" >&2
   exit 1
 fi
-v6_ok=$'1: lo    inet6 ::1/128 scope host\n2: eth0    inet6 fe80::1/64 scope link'
-v6_loop=$'1: lo    inet6 ::1/128 scope host'
-if ! printf '%s\n' "$v6_ok" | android_ue_ipv6_lines_ok; then
-  echo "IPv6 check rejected ::1 plus a link-local address" >&2
+v6_proc=$(mktemp -d)
+v6_addr=$(printf 'fe80%028x' 1)
+printf '%s\n' "$v6_addr 02 40 20 80 eth0" >"$v6_proc/if_inet6"
+mkdir -p "$v6_proc/sys/eth0"
+printf '0x1003\n' >"$v6_proc/sys/eth0/flags"
+if ! android_ue_fe80_proc_ok "$v6_proc/if_inet6" "$v6_proc/sys"; then
+  echo "fe80 check rejected an UP permanent link-local address" >&2
   exit 1
 fi
-if printf '%s\n' "$v6_loop" | android_ue_ipv6_lines_ok; then
-  echo "IPv6 check accepted loopback alone" >&2
+printf '%s\n' "$v6_addr 02 40 20 40 eth0" >"$v6_proc/if_inet6"
+if android_ue_fe80_proc_ok "$v6_proc/if_inet6" "$v6_proc/sys"; then
+  echo "fe80 check accepted a tentative address" >&2
   exit 1
 fi
+printf '%s\n' "$v6_addr 02 40 20 08 eth0" >"$v6_proc/if_inet6"
+if android_ue_fe80_proc_ok "$v6_proc/if_inet6" "$v6_proc/sys"; then
+  echo "fe80 check accepted a dadfailed address" >&2
+  exit 1
+fi
+rm -rf "$v6_proc"
+if android_ue_android_image_ok 'halimqarroum/docker-android:api-33'; then
+  echo "registry image without a digest was accepted" >&2
+  exit 1
+fi
+android_ue_android_image_ok 'open5g-android-emulator:local'
+android_ue_android_image_ok 'example.invalid/android@sha256:0123456789abcdef'
+if android_ue_kvm_gid_ok 0 0 || android_ue_kvm_gid_ok abc 44; then
+  echo "KVM gid check accepted a bad value" >&2
+  exit 1
+fi
+android_ue_kvm_gid_ok 44 44
 
 echo "resolver is TCP-only"
 default_core=$(lab/scripts/render-corefile.sh)
@@ -486,7 +567,7 @@ grep -E -q 'container_name: l5gd-egress$' "$socks_rendered"
 grep -q 'container_name: l5gd-egress-dns' "$socks_rendered"
 grep -q 'service:cgnat' "$socks_rendered"
 grep -q 'REPLACE_CGNAT_EGRESS_ADDR' "$socks_rendered"
-if grep -E -n '[0-9A-Fa-f]{32}' "$rendered" "$socks_rendered"; then
+if grep -E -n '(^|[^0-9A-Fa-f])[0-9A-Fa-f]{32}([^0-9A-Fa-f]|$)' "$rendered" "$socks_rendered"; then
   echo "rendered compose contains a 32-hex USIM value" >&2
   exit 1
 fi

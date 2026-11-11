@@ -145,7 +145,7 @@ emit_user() {
         condition: service_started
 
   android${n}:
-    image: \${ANDROID_UE_ANDROID_IMAGE:?ANDROID_UE_ANDROID_IMAGE}
+    image: \${ANDROID_UE_ANDROID_IMAGE:-open5g-android-emulator:local}
     container_name: l5gd-android${n}
     restart: "no"
     profiles: ["android-ue"]
@@ -163,6 +163,8 @@ emit_user() {
       SKIP_AUTH: \${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
       DISABLE_ANIMATION: \${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
       EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server \${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
+      BOOT_TIMEOUT: \${ANDROID_UE_BOOT_TIMEOUT:-600}
+      ANDROID_UE_IPV6_ANCHOR: \${ANDROID_UE_IPV6_ANCHOR:-1}
     depends_on:
       ue${n}-route:
         condition: service_completed_successfully

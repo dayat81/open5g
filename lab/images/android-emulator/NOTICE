@@ -1,0 +1,14 @@
+Upstream source: https://github.com/HQarroum/docker-android
+Commit: f569246983ee994aed06517bf8e06a3f10547b6d
+Commit date: 2026-05-07T11:34:08Z
+Commit URL: https://github.com/HQarroum/docker-android/commit/f569246983ee994aed06517bf8e06a3f10547b6d
+License: MIT, in upstream/LICENSE
+
+The directory upstream/ is that commit's Dockerfile, LICENSE, and scripts,
+copied without modification. The upstream keys/ directory is not vendored.
+ADB keys are created at runtime or mounted from outside git.
+
+Open5G changes are patches/0001-open5g-boot.patch and open5g-preflight.sh.
+build.sh copies upstream/, applies the patch, and builds the image from this
+repository. The patch pins the base image and the Android command-line tools
+checksum, removes the ADB key copy, and runs the preflight before QEMU.

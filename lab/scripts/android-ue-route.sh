@@ -52,39 +52,88 @@ install_guard() {
 }
 
 install_guard 4 iptables ANDROID_UE_GUARD
-# Keep every IPv6 address, including ::1 and fe80. QEMU resolves ::1 with
-# AI_ADDRCONFIG, which ignores loopback unless some other IPv6 address exists.
-while IFS= read -r v6default; do
-  [ -n "$v6default" ] || continue
-  # shellcheck disable=SC2086
-  ip -6 route del $v6default || true
-done <<EOF
-$(ip -6 route show default 2>/dev/null || true)
-EOF
-for knob in accept_ra autoconf; do
-  for key in all default; do
-    sys="/proc/sys/net/ipv6/conf/${key}/${knob}"
+if ps -eo comm= 2>/dev/null | awk '$1 == "emulator" { found = 1 } END { exit found ? 0 : 1 }'; then
+  echo "android-ue-route: emulator is already running; not changing IPv6" >&2
+  exit 0
+fi
+# Keep addresses. disable_ipv6=0 on all, default, lo, and every interface.
+# accept_ra, autoconf, and forwarding are 0 on each non-lo interface too,
+# because all/default do not apply to interfaces that already exist.
+android_ue_route_ipv6_lock() {
+  local key iface knob sys
+  for key in all default lo; do
+    sys="/proc/sys/net/ipv6/conf/${key}/disable_ipv6"
     if [ -w "$sys" ]; then
       printf '0\n' >"$sys"
     fi
   done
-done
+  for iface in $(ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
+    sys="/proc/sys/net/ipv6/conf/${iface}/disable_ipv6"
+    if [ -w "$sys" ]; then
+      printf '0\n' >"$sys"
+    fi
+    if [ "$iface" = "lo" ]; then
+      continue
+    fi
+    for knob in accept_ra autoconf forwarding; do
+      sys="/proc/sys/net/ipv6/conf/${iface}/${knob}"
+      if [ -w "$sys" ]; then
+        printf '0\n' >"$sys"
+      fi
+    done
+  done
+}
+android_ue_route_ipv6_lock
+while read -r route; do
+  [ -n "$route" ] || continue
+  # shellcheck disable=SC2086
+  ip -6 route del $route
+done < <(ip -6 route show default || true)
+ip -6 route replace unreachable default metric 1
 if command -v ip6tables >/dev/null 2>&1 && ip6tables -L >/dev/null 2>&1; then
   install_guard 6 ip6tables ANDROID_UE_GUARD6
 elif command -v ip6tables-nft >/dev/null 2>&1 && ip6tables-nft -L >/dev/null 2>&1; then
   install_guard 6 ip6tables-nft ANDROID_UE_GUARD6
+elif [ "${ANDROID_UE_IPV6_NO_FILTER_OK:-0}" = "1" ]; then
+  echo "android-ue-route: ip6tables is missing and ANDROID_UE_IPV6_NO_FILTER_OK=1. The unreachable default route remains." >&2
 else
-  echo "android-ue-route: ip6tables is unavailable. IPv6 addresses stay, and there is no IPv6 default route." >&2
-fi
-v6_lines=$(ip -6 -o addr show 2>/dev/null || true)
-if ! printf '%s\n' "$v6_lines" | grep -q 'inet6 ::1'; then
-  echo "android-ue-route: ::1 is missing on lo" >&2
-  printf '%s\n' "$v6_lines" >&2
+  echo "android-ue-route: ip6tables and ip6tables-nft are missing. Refusing to continue. Set ANDROID_UE_IPV6_NO_FILTER_OK=1 only for a netns check." >&2
   exit 1
 fi
-if ! printf '%s\n' "$v6_lines" | grep 'inet6 fe80:' | grep -vq ' lo '; then
-  echo "android-ue-route: no non-loopback IPv6 address; QEMU cannot resolve ::1" >&2
-  printf '%s\n' "$v6_lines" >&2
+if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
+  echo "android-ue-route: ::1 is missing on lo" >&2
+  exit 1
+fi
+android_ue_route_fe80_ok() {
+  local addr _idx _plen _scope flags name iflag deadline
+  deadline=$((SECONDS + 15))
+  while [ "$SECONDS" -le "$deadline" ]; do
+    while read -r addr _idx _plen _scope flags name; do
+      case "$addr" in
+        fe80*) ;;
+        *) continue ;;
+      esac
+      if [ "$name" = "lo" ]; then
+        continue
+      fi
+      flags=$((16#$flags))
+      # IFA_F_TENTATIVE 0x40 and IFA_F_DADFAILED 0x08.
+      if [ $((flags & 16#48)) -ne 0 ]; then
+        continue
+      fi
+      iflag=$(cat "/sys/class/net/${name}/flags" 2>/dev/null || echo 0)
+      iflag=$((iflag))
+      if [ $((iflag & 1)) -eq 1 ]; then
+        return 0
+      fi
+    done < /proc/net/if_inet6
+    sleep 1
+  done
+  return 1
+}
+if ! android_ue_route_fe80_ok; then
+  echo "android-ue-route: no UP interface has a non-tentative fe80 address" >&2
+  ip -6 addr show scope link >&2 || true
   exit 1
 fi
 

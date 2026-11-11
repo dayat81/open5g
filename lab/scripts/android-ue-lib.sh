@@ -115,29 +115,47 @@ sys.exit(0 if left // shift == right // shift else 1)
 PY
 }
 
-# stdin: ip -6 -o addr show. Succeeds only when lo has ::1 and another
-# interface has a link-local address. glibc AI_ADDRCONFIG ignores lo.
-android_ue_ipv6_lines_ok() {
-  local line iface has_lo=0 has_link=0
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    iface=$(printf '%s\n' "$line" | awk '{ print $2 }')
-    case "$line" in
-      *'inet6 ::1'*)
-        if [ "$iface" = "lo" ]; then
-          has_lo=1
-        fi
-        ;;
+# Args: /proc/net/if_inet6 contents file, sysfs net root.
+# A usable fe80 is not lo, not tentative (0x40), not dadfailed (0x08), and IFF_UP.
+android_ue_fe80_proc_ok() {
+  local procfile=$1
+  local sysroot=$2
+  local addr _idx _plen _scope flags name iflag
+  while read -r addr _idx _plen _scope flags name; do
+    case "$addr" in
+      fe80*) ;;
+      *) continue ;;
     esac
-    case "$line" in
-      *'inet6 fe80:'*)
-        if [ "$iface" != "lo" ]; then
-          has_link=1
-        fi
-        ;;
-    esac
-  done
-  [ "$has_lo" -eq 1 ] && [ "$has_link" -eq 1 ]
+    if [ "$name" = "lo" ]; then
+      continue
+    fi
+    flags=$((16#$flags))
+    if [ $((flags & 16#48)) -ne 0 ]; then
+      continue
+    fi
+    iflag=$(cat "${sysroot}/${name}/flags" 2>/dev/null || echo 0)
+    iflag=$((iflag))
+    if [ $((iflag & 1)) -eq 1 ]; then
+      return 0
+    fi
+  done <"$procfile"
+  return 1
+}
+
+android_ue_android_image_ok() {
+  local image=$1
+  case "$image" in
+    open5g-android-emulator:local) return 0 ;;
+    *@sha256:[0-9A-Fa-f]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+android_ue_kvm_gid_ok() {
+  local want=$1
+  local have=$2
+  printf '%s\n' "$want" | grep -Eq '^[1-9][0-9]*$' || return 1
+  [ "$want" = "$have" ]
 }
 
 android_ue_reject_placeholder() {
