@@ -21,6 +21,8 @@ Stop here until each line is true. The design doc lists the same blockers for Ne
 
 - Explicit approval to use lab5g-dev. The core is already up from its own compose file (`name: lab5g-dev`). This runbook does not start it and does not edit `lab/config/examples/open5gs/`.
 - `/dev/kvm` exists in the guest (nested virtualization). `ls -l /dev/kvm`.
+- `ip6_tables` and `ip6table_filter` are already loaded (`lsmod`). The srsRAN image uses legacy ip6tables, and the host does not load them by itself. `android-ue-up.sh` checks with `lsmod` and `modprobe -n` and stops if they are missing. It does not load them. Load them by hand before up: `sudo modprobe ip6_tables ip6table_filter`.
+- `ANDROID_UE_MEM_LIMIT` is at least `ANDROID_UE_MEMORY` plus 1536 MiB. The default is `4096m` for `ANDROID_UE_MEMORY=2048`. A 2560 MiB limit OOM-kills api-33. `up` refuses a smaller limit.
 - Images are already loaded: `gradiant/srsran-4g:25_10`, `halimqarroum/docker-android:api-33`, and a local cgnat image that contains `nft`, `ip`, `awk`, and `sh`. No pulls.
 - `adb` and `scrcpy` are installed on the guest from the mirror.
 - One new test IMSI is inserted with `lab/scripts/android-ue-seed.sh`. That script stops if the IMSI is already in Mongo. It does not replace an existing subscriber. Do not run it during the dashboard PR #7 test window. Ki and OPc stay in the gitignored env. Do not reuse the stock srsUE's IMSI. Do not `drop` the subscriber collection.
@@ -41,7 +43,7 @@ cp lab/compose/android-ue.env.example lab/compose/android-ue.env
 chmod 600 lab/compose/android-ue.env
 ```
 
-Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the new test subscriber. Set `ANDROID_UE_PGW_DNS` to the DNS address the SMF/PGW gives that UE. It must not be `127.0.0.11`. Set `ANDROID_UE_EGRESS_NETWORK` to the network created above. Leave `ANDROID_UE_CGNAT_IMAGE` as a placeholder until the cgnat step, then set it to the mirrored image name. Leave `ANDROID_UE_ALLOW_SECOND=0` and `ANDROID_UE_INSTALL_UPF_ROUTE=0`.
+Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the new test subscriber. Set `ANDROID_UE_PGW_DNS` to the DNS address the SMF/PGW gives that UE. It must not be `127.0.0.11`. Set `ANDROID_UE_EGRESS_NETWORK` to the network created above. Set `ANDROID_UE_SGWU_S1U_ADDR` to the SGW-U S1-U address and `ANDROID_UE_SGWU_S5_ADDR` to the SGW-U S5 address. Leave `ANDROID_UE_CGNAT_IMAGE` as a placeholder until the cgnat step, then set it to the mirrored image name. Leave `ANDROID_UE_ALLOW_SECOND=0` and `ANDROID_UE_INSTALL_UPF_ROUTE=0`. Keep `ANDROID_UE_EXTRA_FLAGS` as `-no-metrics -no-audio -partition-size 2048`. The api-33 emulator rejects `-partition-size=2048`.
 
 ```bash
 sudo bash lab/scripts/android-ue-seed.sh --env-file lab/compose/android-ue.env --user ue1
@@ -57,7 +59,7 @@ Leave `android-ue-seed.sh` insert-only. When the test IMSI is already in Mongo a
 sudo bash lab/scripts/android-ue-set-addr.sh --env-file lab/compose/android-ue.env --user ue1
 ```
 
-The backup is `/var/lib/open5g-android-ue/subscriber-ue1.json`, mode 0600. Rollback unsets that field and does not delete the subscriber:
+The backup is `/var/lib/open5g-android-ue/subscriber-ue1.json`, mode 0600. Rollback puts back the address stored in that backup, or unsets the field when the backup had none. It does not delete the subscriber. The address must be inside `UE_POOL` and unused by any other subscriber. The seed script applies the same two checks before it inserts.
 
 ```bash
 sudo bash lab/scripts/android-ue-set-addr.sh --env-file lab/compose/android-ue.env --user ue1 --rollback
@@ -73,9 +75,13 @@ sudo bash lab/scripts/android-ue-up.sh \
   --user ue1
 ```
 
-The script checks `/dev/kvm`, rejects `REPLACE_` USIM values, and starts only `ue1`, `enb1`, the route sidecar, and `android1`. It does not start `cgnat` and it does not touch the UPF. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address, installs the default route and the OUTPUT drop, then exits. The emulator starts only after that exit is 0.
+The script checks `/dev/kvm`, the ip6 modules, and the memory headroom, rejects `REPLACE_` USIM values, and starts only `ue1`, `enb1`, the route sidecar, and `android1`. It does not start `cgnat` and it does not touch the UPF. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address, installs the default route and the OUTPUT drop, redirects TCP 5555 to `127.0.0.1:5555`, then exits. The emulator starts only after that exit is 0.
 
-Give the emulator time to boot, then:
+`up` then adds a `/32` route on `enb1` for `ANDROID_UE_SGWU_S5_ADDR` via the interface that holds the eNB S1-U address. Stock `lab-routes.sh` installs that route only on `l5gd-enb`. Without it, GTP-U replies sourced from the SGW-U S5 address fail reverse-path filtering, so attach can succeed while a ping from the UE netns to the SGi server does not. `up` pings the SGW-U S1-U address from `enb1` and the SGi server from `ue1`. Both must succeed.
+
+It then waits until `adb connect 127.0.0.1:15551` can read `sys.boot_completed=1` (`ANDROID_UE_BOOT_TIMEOUT`, default 600 seconds). On timeout it prints `ss -ltnp` for that port, `ss -ltnp` inside the UE netns, and the last emulator logs. The publish `127.0.0.1:15551:5555` is on `ue1`, because `android1` uses `network_mode: service:ue1` and Compose ignores ports on that service. HQarroum's ADB port is 5555. The emulator itself listens on `127.0.0.1:5555`, and the image's socat binds only `eth0`, so the route sidecar redirects published traffic to that loopback port.
+
+After `up` returns:
 
 ```bash
 adb connect 127.0.0.1:15551
@@ -126,7 +132,7 @@ sudo docker network inspect -f '{{.Internal}}' <ANDROID_UE_EGRESS_NETWORK>
 
 That prints `true`. The up script refuses `--with-socks-egress` otherwise.
 
-Prepare the guest before the tunnel. This writes `/etc/ssh/sshd_config.d/00-open5g-android-ue.conf` (backing up that file first), reloads sshd, and checks `sshd -T -C user=<tunnel user>` until the effective value is `clientspecified`. If `systemctl reload ssh` fails while `ssh.socket` is active, prepare starts `ssh`. It backs up `authorized_keys` and adds one line, `restrict,port-forwarding,permitlisten="<GW_IP>:1080"`, for `ANDROID_UE_TUNNEL_PUBKEY`. That option needs OpenSSH 7.8 or newer. The public key in the example is a placeholder. Do not commit a real key. It also installs two INPUT rules, with no destination address, and a systemd unit that puts them back after reboot: accept TCP 1080 on the egress bridge from `CGNAT_EGRESS_ADDR`, then drop every other packet to 1080. `<GW_IP>` comes from `ANDROID_UE_SOCKS_ADDR`. `CGNAT_EGRESS_ADDR` is cgnat's address on the egress network, not `CGNAT_SGI_ADDR`. Do not commit them.
+Prepare the guest before the tunnel. This writes `/etc/ssh/sshd_config.d/00-open5g-android-ue.conf` (backing up that file first), reloads sshd, and checks `sshd -T -C user=<tunnel user>` until the effective value is `clientspecified`. If `systemctl reload ssh` fails while `ssh.socket` is active, prepare starts `ssh`. It backs up `authorized_keys` and adds one line, `restrict,port-forwarding,permitlisten="<GW_IP>:1080"`, for `ANDROID_UE_TUNNEL_PUBKEY`. That option needs OpenSSH 7.8 or newer. Prepare refuses the key if that same public key is already present without those options, and it changes ownership of `~/.ssh` and `authorized_keys` to the tunnel user. The public key in the example is a placeholder. Do not commit a real key. It also installs two INPUT rules, with no destination address, and a systemd unit that puts them back after reboot: accept TCP 1080 on the egress bridge from `CGNAT_EGRESS_ADDR`, then drop every other packet to 1080. `<GW_IP>` comes from `ANDROID_UE_SOCKS_ADDR`. `CGNAT_EGRESS_ADDR` is cgnat's address on the egress network, not `CGNAT_SGI_ADDR`. Do not commit them.
 
 ```bash
 sudo bash lab/scripts/android-ue-tunnel.sh prepare --env-file lab/compose/android-ue.env
@@ -200,7 +206,7 @@ Not in this overlay: QCI 8, autossh, full UDP, IPv6, a GNU Radio multi-UE broker
 sudo bash lab/scripts/android-ue-down.sh --env-file lab/compose/android-ue.env
 ```
 
-This restores the ssh drop-in and reloads sshd first, then removes only the tunnel `authorized_keys` line (the backup is taken by `prepare`; other keys stay), kills the guest listener on port 1080, deletes the INPUT rules, and removes `open5g-android-ue-iptables.service` so a reboot does not put them back. It then deletes the UPF `/32` policy rule and stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted. Unsetting `ue.addr` is the `--rollback` command in the existing-IMSI section, not this script.
+This restores the ssh drop-in and reloads sshd first, then removes only the tunnel `authorized_keys` line (the backup is taken by `prepare`; other keys stay), kills the guest listener on port 1080, deletes the INPUT rules, and removes `open5g-android-ue-iptables.service` so a reboot does not put them back. It then deletes the UPF `/32` policy rule and stops the profile in UE-before-eNB order. It does not change the UPF main default route. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted. Restoring the previous `ue.addr` is the `--rollback` command in the existing-IMSI section, not this script.
 
 Set `ANDROID_UE_INSTALL_UPF_ROUTE` back to `0`.
 

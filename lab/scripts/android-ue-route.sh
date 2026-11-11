@@ -54,6 +54,18 @@ install_guard() {
 install_guard 4 iptables ANDROID_UE_GUARD
 install_guard 6 ip6tables ANDROID_UE_GUARD6
 
+# HQarroum's emulator listens on 127.0.0.1:5555. Its socat binds eth0 only, and
+# Docker publishes the UE service to that address. Redirect arrivals on 5555
+# to the loopback listener. Locally generated packets are not in PREROUTING.
+if [ ! -w /proc/sys/net/ipv4/conf/all/route_localnet ]; then
+  echo "android-ue-route: cannot set route_localnet; published ADB cannot reach 127.0.0.1:5555" >&2
+  exit 1
+fi
+printf '1\n' >/proc/sys/net/ipv4/conf/all/route_localnet
+if ! iptables -t nat -C PREROUTING -p tcp --dport 5555 -j DNAT --to-destination 127.0.0.1:5555 2>/dev/null; then
+  iptables -t nat -A PREROUTING -p tcp --dport 5555 -j DNAT --to-destination 127.0.0.1:5555
+fi
+
 for _ in 1 2 3 4 5; do
   ip route replace "${enb}/32" dev "$dev"
   ip route replace default dev "$tun"

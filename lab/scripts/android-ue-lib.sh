@@ -58,6 +58,90 @@ android_ue_require_set() {
   fi
 }
 
+android_ue_mib() {
+  local raw=$1
+  local n
+  case "$raw" in
+    ''|*[!0-9mMgG]*)
+      return 1
+      ;;
+  esac
+  case "$raw" in
+    *g|*G)
+      n=${raw%[gG]}
+      printf '%s\n' "$((n * 1024))"
+      ;;
+    *m|*M)
+      printf '%s\n' "${raw%[mM]}"
+      ;;
+    *)
+      printf '%s\n' "$raw"
+      ;;
+  esac
+}
+
+android_ue_addr_in_pool() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+addr, pool = sys.argv[1], sys.argv[2]
+def ip4(text):
+    parts = text.split(".")
+    if len(parts) != 4:
+        return None
+    value = 0
+    for part in parts:
+        if not part.isdigit():
+            return None
+        number = int(part)
+        if number > 255:
+            return None
+        value = value * 256 + number
+    return value
+if "/" not in pool:
+    sys.exit(1)
+net, bits = pool.split("/", 1)
+if not bits.isdigit():
+    sys.exit(1)
+width = int(bits)
+if width > 32:
+    sys.exit(1)
+left, right = ip4(addr), ip4(net)
+if left is None or right is None:
+    sys.exit(1)
+if width == 0:
+    sys.exit(0)
+shift = 1 << (32 - width)
+sys.exit(0 if left // shift == right // shift else 1)
+PY
+}
+
+android_ue_ip6_preflight() {
+  local modules_file=${ANDROID_UE_MODULES_FILE:-/proc/modules}
+  local have_tables=0 have_filter=0 probe_ok=0
+  if [ -r "$modules_file" ] && grep -q '^ip6_tables ' "$modules_file"; then
+    have_tables=1
+  fi
+  if [ -r "$modules_file" ] && grep -q '^ip6table_filter ' "$modules_file"; then
+    have_filter=1
+  fi
+  if [ "$have_tables" -eq 1 ] && [ "$have_filter" -eq 1 ]; then
+    return 0
+  fi
+  if [ -n "${ANDROID_UE_MODPROBE_N_OK:-}" ]; then
+    probe_ok=$ANDROID_UE_MODPROBE_N_OK
+  elif command -v modprobe >/dev/null 2>&1 \
+    && modprobe -n ip6_tables >/dev/null 2>&1 \
+    && modprobe -n ip6table_filter >/dev/null 2>&1; then
+    probe_ok=1
+  fi
+  if [ "$probe_ok" -eq 1 ]; then
+    echo "android-ue: ip6_tables and ip6table_filter are not loaded. The srsRAN image uses legacy ip6tables. Load them before up: modprobe ip6_tables ip6table_filter. This script does not load kernel modules." >&2
+  else
+    echo "android-ue: ip6_tables and ip6table_filter are not available. Legacy ip6tables in the UE netns cannot start." >&2
+  fi
+  return 1
+}
+
 android_ue_reject_placeholder() {
   local name=$1
   local value=$2

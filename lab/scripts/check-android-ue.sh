@@ -42,7 +42,8 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_CGNAT_IMAGE ANDROID_UE_EGRESS_NETWORK ANDROID_UE_TUN2SOCKS_IMAGE \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
-  ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY; do
+  ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
+  ANDROID_UE_SGWU_S1U_ADDR ANDROID_UE_SGWU_S5_ADDR; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -240,6 +241,8 @@ case "$exec_line" in
     ;;
 esac
 printf '%s\n' "$exec_line" | grep -q -- '-e ANDROID_UE_SEED_KI'
+printf '%s\n' "$js" | grep -q 'ANDROID_UE_SEED_POOL'
+printf '%s\n' "$js" | grep -q 'slice.session.ue.addr'
 if grep -q 'updateOne' lab/scripts/android-ue-seed.sh; then
   echo "seed is no longer insert-only" >&2
   exit 1
@@ -249,6 +252,9 @@ echo "existing subscriber address"
 addr_js=$(lab/scripts/android-ue-set-addr.sh --print-js)
 printf '%s\n' "$addr_js" | grep -q 'updateOne'
 printf '%s\n' "$addr_js" | grep -F -q "\$set"
+printf '%s\n' "$addr_js" | grep -q 'modifiedCount'
+printf '%s\n' "$addr_js" | grep -q 'ANDROID_UE_SEED_POOL'
+printf '%s\n' "$addr_js" | grep -q 'slice.session.ue.addr'
 printf '%s\n' "$addr_js" | grep -q 'arrayFilters'
 printf '%s\n' "$addr_js" | grep -q 'upsert: false'
 if printf '%s\n' "$addr_js" | grep -Eq 'insertOne|upsert: true'; then
@@ -257,6 +263,7 @@ if printf '%s\n' "$addr_js" | grep -Eq 'insertOne|upsert: true'; then
 fi
 unset_js=$(lab/scripts/android-ue-set-addr.sh --print-unset)
 printf '%s\n' "$unset_js" | grep -F -q "\$unset"
+printf '%s\n' "$unset_js" | grep -q 'ANDROID_UE_SEED_OLD_ADDR'
 printf '%s\n' "$unset_js" | grep -q 'upsert: false'
 addr_exec=$(ANDROID_UE_SEED_ADDR=not-in-argv-marker lab/scripts/android-ue-set-addr.sh --print-exec)
 case "$addr_exec" in
@@ -274,6 +281,19 @@ grep -q 'CGNAT_EGRESS_ADDR' lab/scripts/android-ue-tunnel.sh
 grep -q 'sshd -T -C' lab/scripts/android-ue-tunnel.sh
 grep -q 'ssh.socket' lab/scripts/android-ue-tunnel.sh
 grep -q 'permitlisten=' lab/scripts/android-ue-tunnel.sh
+grep -q 'without the tunnel options' lab/scripts/android-ue-tunnel.sh
+grep -q '127.0.0.1:5555' lab/scripts/android-ue-route.sh
+extra_flags=$(awk -F= '$1 == "ANDROID_UE_EXTRA_FLAGS" { sub(/^[^=]*=/, ""); print; exit }' lab/compose/android-ue.env.example)
+case "$extra_flags" in
+  *partition-size=*)
+    echo "example still passes -partition-size= to the emulator" >&2
+    exit 1
+    ;;
+esac
+if grep -q '2560m' lab/compose/docker-compose.android-ue.optional.yml; then
+  echo "emulator mem_limit is still 2560m" >&2
+  exit 1
+fi
 if grep -q 'CGNAT_SGI_ADDR' lab/scripts/android-ue-tunnel.sh; then
   echo "port 1080 rules still use the SGi address" >&2
   exit 1
@@ -300,6 +320,38 @@ if android_ue_upf_rule_decide "0: from all lookup local" "192.0.2.50/32" "$upf_f
   exit 1
 fi
 rm -rf "$upf_dir"
+
+echo "memory, pool, and ip6 preflight"
+if [ "$(android_ue_mib 4096m)" != "4096" ] || [ "$(android_ue_mib 2048)" != "2048" ]; then
+  echo "memory size parser failed" >&2
+  exit 1
+fi
+if [ "$(( $(android_ue_mib 2048) + 1536 ))" -gt "$(android_ue_mib 2560m)" ]; then
+  :
+else
+  echo "2560 MiB was accepted as enough headroom for 2048" >&2
+  exit 1
+fi
+if [ "$(( $(android_ue_mib 2048) + 1536 ))" -le "$(android_ue_mib 4096m)" ]; then
+  :
+else
+  echo "4096 MiB was rejected as headroom for 2048" >&2
+  exit 1
+fi
+android_ue_addr_in_pool 192.0.2.10 192.0.2.0/24
+android_ue_addr_in_pool 192.0.2.10 192.0.2.10/32
+if android_ue_addr_in_pool 192.0.2.10 198.51.100.0/24; then
+  echo "an address outside the pool was accepted" >&2
+  exit 1
+fi
+mod_ok=$(mktemp)
+mod_missing=$(mktemp)
+printf '%s\n' 'ip6_tables 1 0' 'ip6table_filter 1 0' >"$mod_ok"
+printf '%s\n' 'ip_tables 1 0' >"$mod_missing"
+ANDROID_UE_MODULES_FILE=$mod_ok android_ue_ip6_preflight
+ip6_msg=$(ANDROID_UE_MODULES_FILE=$mod_missing ANDROID_UE_MODPROBE_N_OK=1 android_ue_ip6_preflight 2>&1 || true)
+printf '%s\n' "$ip6_msg" | grep -q 'does not load kernel modules'
+rm -f "$mod_ok" "$mod_missing"
 
 echo "resolver is TCP-only"
 default_core=$(lab/scripts/render-corefile.sh)

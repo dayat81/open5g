@@ -19,6 +19,95 @@ usage() {
   exit 2
 }
 
+android_ue_ipv4() {
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+android_ue_install_s1u_return() {
+  local n=$1
+  local enb s1u sgw_s5 dev
+  enb="l5gd-enb${n}"
+  s1u=$(get "UE${n}_ENB_S1U")
+  sgw_s5=$(get ANDROID_UE_SGWU_S5_ADDR)
+  android_ue_reject_placeholder "UE${n}_ENB_S1U" "$s1u"
+  android_ue_reject_placeholder ANDROID_UE_SGWU_S5_ADDR "$sgw_s5"
+  if ! android_ue_ipv4 "$s1u" || ! android_ue_ipv4 "$sgw_s5"; then
+    echo "android-ue: S1-U addresses must be IPv4" >&2
+    exit 1
+  fi
+  dev=$(docker exec "$enb" ip -4 -o addr show | awk -v ip="$s1u" 'index($4, ip "/") == 1 { print $2; exit }')
+  if [ -z "$dev" ]; then
+    echo "android-ue: enb${n} has no interface with its S1-U address" >&2
+    exit 1
+  fi
+  docker exec "$enb" ip route replace "${sgw_s5}/32" dev "$dev"
+  echo "android-ue: enb${n} reaches the SGW-U S5 address via ${dev}"
+}
+
+android_ue_probe_data_plane() {
+  local n=$1
+  local enb ue sgw_s1u sgi
+  enb="l5gd-enb${n}"
+  ue="l5gd-ue${n}"
+  sgw_s1u=$(get ANDROID_UE_SGWU_S1U_ADDR)
+  sgi=$(get SGI_SERVER)
+  android_ue_reject_placeholder ANDROID_UE_SGWU_S1U_ADDR "$sgw_s1u"
+  android_ue_require_set SGI_SERVER "$sgi"
+  if ! android_ue_ipv4 "$sgw_s1u" || ! android_ue_ipv4 "$sgi"; then
+    echo "android-ue: probe addresses must be IPv4" >&2
+    exit 1
+  fi
+  if ! docker exec "$enb" ping -c 3 -w 5 "$sgw_s1u"; then
+    echo "android-ue: GTP-U peer ping from enb${n} failed" >&2
+    docker exec "$enb" ip -4 route >&2 || true
+    docker exec "$enb" ip -4 addr >&2 || true
+    exit 1
+  fi
+  if ! docker exec "$ue" ping -c 3 -w 5 "$sgi"; then
+    echo "android-ue: SGi ping from ue${n} failed" >&2
+    docker exec "$ue" ip -4 route >&2 || true
+    docker exec "$enb" ip -4 route >&2 || true
+    exit 1
+  fi
+  echo "android-ue: GTP-U peer ping and SGi ping succeeded"
+}
+
+android_ue_wait_boot() {
+  local n=$1
+  local port container ue timeout deadline completed
+  port=$(get "UE${n}_ADB_HOST_PORT")
+  container="l5gd-android${n}"
+  ue="l5gd-ue${n}"
+  timeout=${ANDROID_UE_BOOT_TIMEOUT:-600}
+  if ! printf '%s\n' "$port" | grep -Eq '^[0-9]+$'; then
+    echo "android-ue: UE${n}_ADB_HOST_PORT is not a port" >&2
+    exit 1
+  fi
+  if ! command -v adb >/dev/null 2>&1; then
+    echo "android-ue: adb is not installed on this host" >&2
+    exit 1
+  fi
+  deadline=$((SECONDS + timeout))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if adb connect "127.0.0.1:${port}" 2>&1 | grep -E -q 'connected to|already connected'; then
+      completed=$(adb -s "127.0.0.1:${port}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+      if [ "$completed" = "1" ]; then
+        echo "android-ue: emulator boot_completed on 127.0.0.1:${port}"
+        return 0
+      fi
+    fi
+    sleep 5
+  done
+  echo "android-ue: emulator did not reach boot_completed within ${timeout}s" >&2
+  echo "android-ue: host listeners on ${port}:" >&2
+  ss -ltnp "sport = :${port}" >&2 || true
+  echo "android-ue: UE netns listeners:" >&2
+  docker exec "$ue" ss -ltnp >&2 || true
+  echo "android-ue: emulator log:" >&2
+  docker logs --tail 80 "$container" >&2 || true
+  exit 1
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --env-file)
@@ -109,6 +198,33 @@ if [ ! -e /dev/kvm ]; then
   echo "android-ue: /dev/kvm is missing. Nested KVM is a Lab Ops prerequisite." >&2
   exit 1
 fi
+if ! android_ue_ip6_preflight; then
+  exit 1
+fi
+mem_raw=$(get ANDROID_UE_MEMORY)
+limit_raw=$(get ANDROID_UE_MEM_LIMIT)
+if [ -z "$limit_raw" ]; then
+  limit_raw=4096m
+fi
+if ! mem_mib=$(android_ue_mib "$mem_raw"); then
+  echo "android-ue: ANDROID_UE_MEMORY is not a size in MiB" >&2
+  exit 1
+fi
+if ! limit_mib=$(android_ue_mib "$limit_raw"); then
+  echo "android-ue: ANDROID_UE_MEM_LIMIT is not a size" >&2
+  exit 1
+fi
+if [ "$limit_mib" -lt $((mem_mib + 1536)) ]; then
+  echo "android-ue: ANDROID_UE_MEM_LIMIT (${limit_mib} MiB) is below ANDROID_UE_MEMORY (${mem_mib} MiB) plus 1536 MiB headroom" >&2
+  exit 1
+fi
+flags=$(get ANDROID_UE_EXTRA_FLAGS)
+case "$flags" in
+  *partition-size=*)
+    echo "android-ue: ANDROID_UE_EXTRA_FLAGS uses -partition-size= which api-33 rejects. Use -partition-size <MiB>." >&2
+    exit 1
+    ;;
+esac
 
 need_net() {
   local name=$1
@@ -169,6 +285,9 @@ fi
 echo "android-ue: starting ${user} only. Core config is not modified."
 android_ue_compose "$root" "$env_file" up -d \
   "ue${n}" "enb${n}" "ue${n}-route" "android${n}"
+android_ue_install_s1u_return "$n"
+android_ue_probe_data_plane "$n"
+android_ue_wait_boot "$n"
 
 if [ "$with_cgnat" -eq 1 ]; then
   android_ue_reject_placeholder ANDROID_UE_CGNAT_IMAGE "$(get ANDROID_UE_CGNAT_IMAGE)"

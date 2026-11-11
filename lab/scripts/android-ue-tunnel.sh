@@ -110,8 +110,14 @@ android_ue_install_authorized_key() {
   local file=$1
   local state=$2
   local line=$3
-  local dir
+  local owner=${4:-}
+  local dir blob uid gid
   dir=$(dirname -- "$file")
+  blob=$(printf '%s\n' "$line" | awk '{ print $3 }')
+  if [ -f "$file" ] && [ -n "$blob" ] && grep -F "$blob" "$file" | grep -Fvx "$line" | grep -q .; then
+    echo "android-ue-tunnel: this public key is already in authorized_keys without the tunnel options" >&2
+    return 1
+  fi
   mkdir -p "$dir" "$state"
   if [ -f "$file" ]; then
     cp "$file" "$state/authorized_keys.bak"
@@ -123,6 +129,11 @@ android_ue_install_authorized_key() {
   chmod 0600 "$file"
   if ! grep -Fqx "$line" "$file"; then
     printf '%s\n' "$line" >>"$file"
+  fi
+  if [ -n "$owner" ] && id "$owner" >/dev/null 2>&1; then
+    uid=$(id -u "$owner")
+    gid=$(id -g "$owner")
+    chown "${uid}:${gid}" "$dir" "$file"
   fi
   printf '%s\n' "$line" >"$state/authorized_keys.entry"
   printf '%s\n' "$file" >"$state/authorized_keys.path"
@@ -320,7 +331,7 @@ android_ue_tunnel_self_test() {
     exit 1
   fi
 
-  local rules pid drop keyfile
+  local rules pid drop keyfile dup
   rules=$(android_ue_input_rules br-egress 192.0.2.40)
   printf '%s\n' "$rules" | grep -q -- '-i br-egress -p tcp -s 192.0.2.40 --dport 1080 -j ACCEPT'
   printf '%s\n' "$rules" | grep -q -- '-p tcp --dport 1080 -j DROP'
@@ -346,8 +357,15 @@ android_ue_tunnel_self_test() {
   mkdir -p "$dir/home/tunnel/.ssh" "$dir/state"
   keyfile=$dir/home/tunnel/.ssh/authorized_keys
   printf '%s\n' 'ssh-ed25519 AAAATEST existing' >"$keyfile"
+  dup=$dir/home/tunnel/.ssh/dup
+  printf '%s\n' 'ssh-ed25519 AAAATUNNEL someone' >"$dup"
+  if android_ue_install_authorized_key "$dup" "$dir/state-dup" \
+    "$(android_ue_tunnel_key_line 192.0.2.10 'ssh-ed25519 AAAATUNNEL tunnel')" "$(id -un)" >/dev/null 2>&1; then
+    echo "tunnel self-test: a duplicate public key was accepted" >&2
+    exit 1
+  fi
   android_ue_install_authorized_key "$keyfile" "$dir/state" \
-    "$(android_ue_tunnel_key_line 192.0.2.10 'ssh-ed25519 AAAATEST tunnel')"
+    "$(android_ue_tunnel_key_line 192.0.2.10 'ssh-ed25519 AAAATUNNEL tunnel')" "$(id -un)"
   if ! grep -q 'permitlisten="192.0.2.10:1080"' "$keyfile"; then
     echo "tunnel self-test: tunnel key was not added" >&2
     exit 1
@@ -598,8 +616,11 @@ if [ "$cmd" = "prepare" ]; then
     exit 1
   fi
   android_ue_install_dropin "${ANDROID_UE_ETC_ROOT:-}" "$state"
-  android_ue_install_authorized_key "$keys_path" "$state" \
-    "$(android_ue_tunnel_key_line "$gw" "$tunnel_key")"
+  if ! android_ue_install_authorized_key "$keys_path" "$state" \
+    "$(android_ue_tunnel_key_line "$gw" "$tunnel_key")" "$tunnel_user"; then
+    android_ue_restore_dropin "${ANDROID_UE_ETC_ROOT:-}" "$state"
+    exit 1
+  fi
   android_ue_input_rules "$egress_if" "$egress_ip" >"$state/input-1080.rules"
   if [ "$dry_run" -eq 0 ]; then
     pos=1

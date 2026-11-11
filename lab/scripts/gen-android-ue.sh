@@ -152,7 +152,7 @@ emit_user() {
     restart: "no"
     profiles: ["android-ue"]
     cpus: 2.0
-    mem_limit: 2560m
+    mem_limit: \${ANDROID_UE_MEM_LIMIT:-4096m}
     shm_size: "1gb"
     network_mode: "service:ue${n}"
     devices:
