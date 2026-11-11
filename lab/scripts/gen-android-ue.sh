@@ -77,6 +77,8 @@ emit_user() {
       APN: \${APN:?APN}
       ENABLE_NAT: "false"
       ZMQ: "false"
+    dns:
+      - \${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}
     volumes:
       - ../config/ran/android-ue.conf.template:/etc/srsran/ue.conf:ro
     networks:
@@ -160,7 +162,7 @@ emit_user() {
       CORES: \${ANDROID_UE_CORES:?ANDROID_UE_CORES}
       SKIP_AUTH: \${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
       DISABLE_ANIMATION: \${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
-      EXTRA_FLAGS: \${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS}
+      EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS} -dns-server \${ANDROID_UE_PGW_DNS:?ANDROID_UE_PGW_DNS}"
     depends_on:
       ue${n}-route:
         condition: service_completed_successfully

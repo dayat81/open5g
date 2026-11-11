@@ -16,7 +16,7 @@ jobs:
           curl -fsSL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64"
           chmod +x /tmp/docker-compose
           /tmp/docker-compose version
-      - name: Check shellcheck, nft, compose profiles, and TCP-only DNS
+      - name: Check shellcheck, nft, DNS, seed, tunnel rollback, and UPF route
         env:
           ANDROID_UE_COMPOSE_BIN: /tmp/docker-compose
           ANDROID_UE_REQUIRE_COMPOSE_VERSION: 2.29.7

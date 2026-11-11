@@ -52,7 +52,7 @@ case "$user" in
 esac
 
 root=$(android_ue_root)
-state=${ANDROID_UE_STATE_DIR:-/tmp/open5g-android-ue-state}
+state=$(android_ue_state_dir)
 get() { android_ue_env_get "$env_file" "$1"; }
 n=${user#ue}
 
@@ -207,13 +207,14 @@ if [ "$install_upf_route" -eq 1 ]; then
   cgnat_ip=$(get CGNAT_SGI_ADDR)
   android_ue_reject_placeholder CGNAT_SGI_ADDR "$cgnat_ip"
   prev=$(docker exec "$upf" ip -4 route show default)
-  if [ -n "$prev" ] && ! printf '%s\n' "$prev" | grep -Eq '^default via [0-9.]+ dev [A-Za-z0-9._:-]+$'; then
-    echo "android-ue: UPF default route is not a single simple route; not changing it" >&2
-    exit 1
+  decision=$(android_ue_upf_decide "$prev" "$cgnat_ip" "$state/upf-default.txt")
+  if [ "$decision" = "skip" ]; then
+    echo "android-ue: UPF default route is already via ${cgnat_ip}; saved route left unchanged"
+  else
+    printf '%s\n' "$prev" >"$state/upf-default.txt"
+    docker exec "$upf" ip route replace default via "$cgnat_ip"
+    echo "android-ue: UPF ${upf} default route now via ${cgnat_ip}. State is ${state}. Rollback restores the saved route."
   fi
-  printf '%s\n' "$prev" >"$state/upf-default.txt"
-  docker exec "$upf" ip route replace default via "$cgnat_ip"
-  echo "android-ue: UPF ${upf} default route now via ${cgnat_ip}. Rollback restores the saved route."
 fi
 
 echo "android-ue: ${user} is up. ADB on this guest is 127.0.0.1:$(get "UE${n}_ADB_HOST_PORT"). Core containers were not restarted."

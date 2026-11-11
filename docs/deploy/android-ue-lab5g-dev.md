@@ -23,7 +23,7 @@ Stop here until each line is true. The design doc lists the same blockers for Ne
 - `/dev/kvm` exists in the guest (nested virtualization). `ls -l /dev/kvm`.
 - Images are already loaded: `gradiant/srsran-4g:25_10`, `halimqarroum/docker-android:api-33`, and a local cgnat image that contains `nft`, `ip`, `awk`, and `sh`. No pulls.
 - `adb` and `scrcpy` are installed on the guest from the mirror.
-- One new test IMSI is seeded with the existing subscriber `replaceOne` (`infra/roles/subscribers/templates/seed-subscriber.js.j2`). Ki and OPc stay in the vault and in the gitignored env. Do not reuse the stock srsUE's IMSI. Do not `drop` the subscriber collection.
+- One new test IMSI is inserted with `lab/scripts/android-ue-seed.sh`. That script stops if the IMSI is already in Mongo. It does not replace an existing subscriber. Do not run it during the dashboard PR #7 test window. Ki and OPc stay in the gitignored env. Do not reuse the stock srsUE's IMSI. Do not `drop` the subscriber collection.
 - Stock `l5gd-enb` and `l5gd-ue` are stopped if the guest cannot spare another eNB and UE (2 CPU and 2048 MiB each in this overlay, plus the emulator).
 - The S1-MME, S1-U, uu, and SGi networks already exist (`lab5g-dev_s1mme`, `lab5g-dev_s1u`, `lab5g-dev_uu`, `lab5g-dev_sgi` in the example).
 - Egress network: until Netdrive approves a path, create it internal. That is not internet access.
@@ -41,7 +41,11 @@ cp lab/compose/android-ue.env.example lab/compose/android-ue.env
 chmod 600 lab/compose/android-ue.env
 ```
 
-Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the seeded test subscriber. Set `ANDROID_UE_EGRESS_NETWORK` to the network created above. Leave `ANDROID_UE_CGNAT_IMAGE` as a placeholder until the cgnat step, then set it to the mirrored image name. Leave `ANDROID_UE_ALLOW_SECOND=0` and `ANDROID_UE_INSTALL_UPF_ROUTE=0`.
+Set `UE1_IMSI`, `UE1_KI`, `UE1_OPC`, and `UE1_IMEI` to the new test subscriber. Set `ANDROID_UE_PGW_DNS` to the DNS address the SMF/PGW gives that UE. It must not be `127.0.0.11`. Set `ANDROID_UE_EGRESS_NETWORK` to the network created above. Leave `ANDROID_UE_CGNAT_IMAGE` as a placeholder until the cgnat step, then set it to the mirrored image name. Leave `ANDROID_UE_ALLOW_SECOND=0` and `ANDROID_UE_INSTALL_UPF_ROUTE=0`.
+
+```bash
+sudo bash lab/scripts/android-ue-seed.sh --env-file lab/compose/android-ue.env --user ue1
+```
 
 `lab/compose/android-ue.env` is gitignored. Do not commit it.
 
@@ -108,16 +112,13 @@ sudo docker network inspect -f '{{.Internal}}' <ANDROID_UE_EGRESS_NETWORK>
 
 That prints `true`. The up script refuses `--with-socks-egress` otherwise.
 
-On the guest sshd, set `GatewayPorts clientspecified` and reload sshd. This repo does not edit sshd and does not deploy that change. Without it, sshd will not bind `<GW_IP>:1080`.
-
-Allow guest INPUT on TCP 1080 only from the cgnat container address:
+Prepare the guest before the tunnel. This backs up the current `GatewayPorts` value, sets `clientspecified`, and installs the INPUT rules. `<GW_IP>` and `<CGNAT_IP>` come from the gitignored env (`ANDROID_UE_SOCKS_ADDR` and `CGNAT_SGI_ADDR`). Do not commit them.
 
 ```bash
-sudo iptables -I INPUT 1 -p tcp -d <GW_IP> --dport 1080 -s <CGNAT_IP> -j ACCEPT
-sudo iptables -I INPUT 2 -p tcp -d <GW_IP> --dport 1080 -j DROP
+sudo bash lab/scripts/android-ue-tunnel.sh prepare --env-file lab/compose/android-ue.env
 ```
 
-`<GW_IP>` and `<CGNAT_IP>` stay in the gitignored env and in this local shell. Do not commit them.
+The state directory is `/var/lib/open5g-android-ue` unless `ANDROID_UE_STATE_DIR` is set. Do not use `/tmp` for it. A second prepare refuses to overwrite the backup.
 
 From WSL, open the reverse dynamic forward. The laptop ssh client is the SOCKS peer. Nothing else on the guest should listen on 1080.
 
@@ -137,18 +138,24 @@ sudo bash lab/scripts/android-ue-up.sh \
 
 `--with-socks-egress` starts `cgnat`, then `egress` (tun2socks), then `egress-dns`. Both sidecars use `network_mode: service:cgnat`. In that netns the only default route is `dev tun0`. A host route to `<GW_IP>` exists so tun2socks can reach the tunnel. It is not a second default route. nft drops anything else that does not leave via tun0.
 
-The script saves the previous UPF default route under `/tmp/open5g-android-ue-state/` before replacing it with the cgnat address on SGi. That route exists only for this window. Rollback restores the saved route. HSS, PCRF, and SMF configuration are not changed.
+The script saves the previous UPF default route under `/var/lib/open5g-android-ue` before replacing it with the cgnat address on SGi. A second run does not overwrite that file. If the route already points at cgnat and the file is missing, the script stops. The route exists only for this window. HSS, PCRF, and SMF configuration are not changed.
 
 ### Proof
 
 Use an echo host Netdrive named. Mask the laptop address in anything that is committed.
 
 1. **Laptop address.** From the UE netns, `curl -4 --max-time 15 http://<echo>/` prints `<LAPTOP_PUBLIC_IP>`.
-2. **DNS.** From the emulator, `adb -s 127.0.0.1:15551 shell ping -c 1 example.com` resolves. The resolver is TCP-only and does not log the query.
+2. **DNS leaves the UE tun.** `ping` alone is not the proof. In one terminal:
+
+   ```bash
+   sudo tcpdump -ni tun_srsue port 53
+   ```
+
+   From the emulator, resolve a name (`adb -s 127.0.0.1:15551 shell ping -c 1 example.com`). tcpdump must show the query on `tun_srsue`. Stop the ssh tunnel and resolve again. The query must not be answered. Port 53 to `127.0.0.11` is rejected in the UE netns, so Docker's embedded resolver is not a second path.
 3. **Laptop LAN and localhost fail.** `curl -4 --max-time 5 http://<LAPTOP_LAN>/` fails. So does a destination in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or `127.0.0.0/8` that is not the UE's own stack. Write `<LAPTOP_LAN>` only in local notes.
 4. **Other ports fail.** `curl -4 --max-time 5 http://<echo>:8080/` fails. TCP is 80 and 443 only. Other UDP is rejected.
 5. **Kill switch.** Stop the ssh process. The same curl to the echo host fails. Start the ssh command again. The curl works again.
-6. **Listeners.** `sudo docker exec l5gd-cgnat nft list table ip cgnat` shows the policy. On the guest, `ss -ltn` shows `1080` only on `<GW_IP>`, not on `0.0.0.0` or `*`.
+6. **Listeners.** `sudo docker exec l5gd-cgnat nft list table ip cgnat` shows the policy. On the guest, `ss -ltn` shows `1080` only on `<GW_IP>`, not on `0.0.0.0` or `*`. `sudo iptables -S INPUT | grep 1080` shows the accept from `<CGNAT_IP>` and the drop.
 
 Ping and iperf to the SGi server still do not prove this path. They never enter the tunnel.
 
@@ -162,7 +169,7 @@ autossh, full UDP, and IPv6. None of those are in this overlay. IPv6 forwarding 
 sudo bash lab/scripts/android-ue-down.sh --env-file lab/compose/android-ue.env
 ```
 
-This stops the profile in UE-before-eNB order, removes those containers, and restores the UPF default route if this runbook changed it. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate `replaceOne` or delete, done by hand, and only for the test IMSI.
+This kills the guest sshd listener on port 1080, deletes the INPUT rules for that port, restores `GatewayPorts` from the backup taken by `prepare`, restores the UPF default route, then stops the profile in UE-before-eNB order. It does not stop the core, does not remove external networks, and does not delete the test subscriber. Removing that subscriber is a separate delete, done by hand, and only for the test IMSI that was inserted.
 
 Set `ANDROID_UE_INSTALL_UPF_ROUTE` back to `0`.
 

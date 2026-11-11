@@ -77,6 +77,8 @@ The Android guest does not see `tun_srsue`. QEMU user-mode networking (SLIRP) in
 
 The uu network is the core compose network marked `internal: true`, so even a packet that escaped the OUTPUT filter still cannot be routed to the internet by Docker. The filter is there so a later non-internal network on this netns would not become a bypass. The emulator is not given `NET_ADMIN` or `/dev/net/tun`, so it cannot undo the route.
 
+The emulator does not use Docker's embedded resolver at `127.0.0.11`. Compose sets `dns:` on the UE service, and the emulator is started with `-dns-server` set to `ANDROID_UE_PGW_DNS`, the address the SMF/PGW gives the UE. The UE guard rejects UDP and TCP port 53 to `127.0.0.11` before it accepts loopback. A query has to leave on `tun_srsue`.
+
 Policy routing (`ip rule`) was the other option. It is the wrong default here: one netns and one default route is the thing an operator can read. A second table would only be needed if srsUE itself had to keep a different default, and it does not.
 
 ## CGNAT on SGi

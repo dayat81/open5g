@@ -28,9 +28,17 @@ if [ -z "$env_file" ] || [ ! -f "$env_file" ]; then
 fi
 
 root=$(android_ue_root)
-state=${ANDROID_UE_STATE_DIR:-/tmp/open5g-android-ue-state}
+state=$(android_ue_state_dir)
 get() { android_ue_env_get "$env_file" "$1"; }
 export ANDROID_UE_SOCKS_PROFILE=1
+rollback_rc=0
+
+if [ -f "$state/tunnel-prepared" ] || [ -f "$state/gatewayports.bak" ]; then
+  if ! bash "$script_dir/android-ue-tunnel.sh" rollback --state-dir "$state" --sshd-config "${ANDROID_UE_SSHD_CONFIG:-/etc/ssh/sshd_config}"; then
+    echo "android-ue: tunnel rollback failed" >&2
+    rollback_rc=1
+  fi
+fi
 
 if [ -f "$state/upf-default.txt" ]; then
   upf=$(get ANDROID_UE_UPF_CONTAINER)
@@ -56,3 +64,4 @@ android_ue_compose "$root" "$env_file" rm -f \
   android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat || true
 rm -f "$state/cgnat-ues.txt"
 echo "android-ue: profile stopped. Core, Mongo, and subscriber documents were not changed."
+exit "$rollback_rc"

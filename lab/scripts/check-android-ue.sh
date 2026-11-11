@@ -12,6 +12,8 @@ scripts=(
   lab/scripts/android-ue-down.sh
   lab/scripts/android-ue-enb.sh
   lab/scripts/android-ue-route.sh
+  lab/scripts/android-ue-seed.sh
+  lab/scripts/android-ue-tunnel.sh
   lab/scripts/check-android-ue.sh
 )
 sh_scripts=(
@@ -36,7 +38,8 @@ echo "placeholders"
 example=lab/compose/android-ue.env.example
 for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_CGNAT_IMAGE ANDROID_UE_EGRESS_NETWORK ANDROID_UE_TUN2SOCKS_IMAGE \
-  ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET; do
+  ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
+  ANDROID_UE_PGW_DNS; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -64,6 +67,8 @@ scan_paths=(
   lab/scripts/android-ue-lib.sh
   lab/scripts/android-ue-up.sh
   lab/scripts/android-ue-down.sh
+  lab/scripts/android-ue-seed.sh
+  lab/scripts/android-ue-tunnel.sh
   lab/scripts/check-android-ue.sh
   docs/integration/android-ue-per-user.md
   docs/deploy/android-ue-lab5g-dev.md
@@ -128,6 +133,8 @@ for needle in (
     "ct count over 200",
     "1250 kbytes/second",
     "log prefix \"cgnat-fwd-drop \"",
+    "maxseg size set rt mtu",
+    "127.0.0.11",
 ):
     if needle not in text:
         errors.append("missing " + needle)
@@ -186,6 +193,60 @@ fi
 if [ "$nft_rc" -eq 2 ]; then
   echo "rendered ruleset passed the fallback syntax checker"
 fi
+meter_line=$(grep -n 'meter ue_bw_out' "$tmp/cgnat.nft" | head -n 1 | cut -d: -f1)
+est_line=$(grep -n 'ct state established,related accept' "$tmp/cgnat.nft" | head -n 1 | cut -d: -f1)
+if [ -z "$meter_line" ] || [ -z "$est_line" ] || [ "$meter_line" -ge "$est_line" ]; then
+  echo "per-UE meter is not before the established rule" >&2
+  exit 1
+fi
+if ! grep -q 'meter ue_bw_in' "$tmp/cgnat.nft"; then
+  echo "return-path meter is missing" >&2
+  exit 1
+fi
+
+echo "emulator DNS"
+dns_line=$(grep -n '127.0.0.11' lab/scripts/android-ue-route.sh | head -n 1 | cut -d: -f1)
+lo_line=$(grep -n -- '-o lo -j ACCEPT' lab/scripts/android-ue-route.sh | head -n 1 | cut -d: -f1)
+if [ -z "$dns_line" ] || [ -z "$lo_line" ] || [ "$dns_line" -ge "$lo_line" ]; then
+  echo "Docker DNS port 53 is not rejected before loopback accept" >&2
+  exit 1
+fi
+
+echo "seed is insert-only"
+js=$(lab/scripts/android-ue-seed.sh --print-js)
+printf '%s\n' "$js" | grep -q 'insertOne'
+printf '%s\n' "$js" | grep -q 'countDocuments'
+if printf '%s\n' "$js" | grep -Eq 'replaceOne|upsert'; then
+  echo "seed program would overwrite an existing subscriber" >&2
+  exit 1
+fi
+
+echo "tunnel rollback"
+lab/scripts/android-ue-tunnel.sh self-test
+grep -q 'android-ue-tunnel.sh" rollback' lab/scripts/android-ue-down.sh
+grep -q 'sport = :1080' lab/scripts/android-ue-tunnel.sh
+
+echo "UPF route is idempotent"
+# shellcheck source=android-ue-lib.sh
+. lab/scripts/android-ue-lib.sh
+upf_dir=$(mktemp -d)
+upf_file=$upf_dir/upf-default.txt
+decision=$(android_ue_upf_decide "default via 192.0.2.1 dev eth0" "192.0.2.9" "$upf_file")
+if [ "$decision" != "install" ]; then
+  echo "UPF decide should install, got ${decision}" >&2
+  exit 1
+fi
+printf '%s\n' "saved" >"$upf_file"
+decision=$(android_ue_upf_decide "default via 192.0.2.9 dev eth0" "192.0.2.9" "$upf_file")
+if [ "$decision" != "skip" ]; then
+  echo "UPF decide should skip, got ${decision}" >&2
+  exit 1
+fi
+if android_ue_upf_decide "default via 192.0.2.1 dev eth0" "192.0.2.9" "$upf_file" >/dev/null 2>&1; then
+  echo "UPF decide overwrote a saved route" >&2
+  exit 1
+fi
+rm -rf "$upf_dir"
 
 echo "resolver is TCP-only"
 corefile=lab/config/cgnat/Corefile
@@ -244,6 +305,12 @@ grep -q 'service:ue2' "$rendered"
 grep -q 'container_name: l5gd-android1' "$rendered"
 grep -q 'container_name: l5gd-cgnat' "$rendered"
 grep -q 'android-ue' "$rendered"
+grep -q 'REPLACE_ANDROID_UE_PGW_DNS' "$rendered"
+grep -q -- '-dns-server' "$rendered"
+if grep -q '127.0.0.11' "$rendered"; then
+  echo "compose config sends DNS to 127.0.0.11" >&2
+  exit 1
+fi
 if grep -E -q 'container_name: l5gd-egress$' "$rendered"; then
   echo "socks egress service is present without the socks-egress profile" >&2
   exit 1

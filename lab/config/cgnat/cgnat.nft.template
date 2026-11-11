@@ -12,12 +12,16 @@ table ip cgnat {
 
     chain forward {
         type filter hook forward priority 0; policy drop;
+        tcp flags syn / syn,rst tcp option maxseg size set rt mtu
+        ip daddr 127.0.0.11 udp dport 53 drop
+        ip daddr 127.0.0.11 tcp dport 53 drop
+        ip saddr __UE_POOL__ meter ue_bw_out size 1024 { ip saddr timeout 60s limit rate over 1250 kbytes/second } counter drop
+        ip daddr __UE_POOL__ meter ue_bw_in size 1024 { ip daddr timeout 60s limit rate over 1250 kbytes/second } counter drop
         ct state established,related accept
         iifname "tun0" ip daddr __UE_POOL__ accept
         ip saddr != __UE_POOL__ drop
         ip saddr __UE_POOL__ ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16, 100.64.0.0/10, 224.0.0.0/4, 0.0.0.0/8 } drop
         ip saddr __UE_POOL__ ip daddr __LAB_SUBNET__ drop
-        ip saddr __UE_POOL__ meter ue_bw size 1024 { ip saddr timeout 60s limit rate over 1250 kbytes/second } log prefix "cgnat-rate " limit rate 4/minute drop
         ip saddr __UE_POOL__ meter ue_ct size 1024 { ip saddr ct count over __CT_LIMIT__ } drop
         ip saddr __UE_POOL__ oifname "tun0" tcp dport { 80, 443 } accept
         ip saddr __UE_POOL__ tcp dport != { 80, 443 } reject with tcp reset

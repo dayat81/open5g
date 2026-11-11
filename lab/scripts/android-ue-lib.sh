@@ -6,6 +6,38 @@ android_ue_root() {
   CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd
 }
 
+android_ue_state_dir() {
+  printf '%s\n' "${ANDROID_UE_STATE_DIR:-/var/lib/open5g-android-ue}"
+}
+
+# Prints install or skip. Refuses to overwrite a saved UPF route.
+android_ue_upf_decide() {
+  local current=$1
+  local cgnat_ip=$2
+  local state_file=$3
+  local via_cgnat=0
+  case "$current" in
+    "default via ${cgnat_ip} dev "*) via_cgnat=1 ;;
+  esac
+  if [ -f "$state_file" ]; then
+    if [ "$via_cgnat" -eq 1 ]; then
+      echo skip
+      return 0
+    fi
+    echo "android-ue: ${state_file} already exists and the UPF default is not via the cgnat address" >&2
+    return 1
+  fi
+  if [ "$via_cgnat" -eq 1 ]; then
+    echo "android-ue: UPF default already points at cgnat and no previous route was saved" >&2
+    return 1
+  fi
+  if [ -n "$current" ] && ! printf '%s\n' "$current" | grep -Eq '^default via [0-9.]+ dev [A-Za-z0-9._:-]+$'; then
+    echo "android-ue: UPF default route is not a single simple route; not changing it" >&2
+    return 1
+  fi
+  echo install
+}
+
 android_ue_env_get() {
   local file=$1
   local key=$2
