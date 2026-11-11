@@ -162,6 +162,8 @@ emit_user() {
     network_mode: "service:ue${n}"
     devices:
       - "/dev/kvm:/dev/kvm"
+    group_add:
+      - "\${ANDROID_UE_KVM_GID:?ANDROID_UE_KVM_GID}"
     entrypoint: ["/bin/bash", "/opt/android-ue/android-ue-adb-bind.sh"]
     environment:
       ANDROID_UE_UU: \${UE${n}_UU}
