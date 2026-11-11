@@ -26,6 +26,7 @@ export function EmulatorScreen({
   ues,
   selectedId,
   showFrame,
+  frameSrc,
   note,
   onSelect,
   onReconnect,
@@ -34,6 +35,7 @@ export function EmulatorScreen({
   ues: EmulatorUe[];
   selectedId: string | null;
   showFrame: boolean;
+  frameSrc?: string | null;
   note: string | null;
   onSelect?: (ueId: string) => void;
   onReconnect?: (ueId: string) => void;
@@ -42,6 +44,7 @@ export function EmulatorScreen({
   const frame =
     mode === "api" &&
     showFrame &&
+    Boolean(frameSrc) &&
     selected !== null &&
     selected.screen === "up" &&
     selected.control !== "busy";
@@ -98,7 +101,7 @@ export function EmulatorScreen({
             <iframe
               className="emulator-frame"
               title={`Layar ${selected.ue_id}`}
-              src={`/emulator/${selected.ue_id}/`}
+              src={frameSrc ?? undefined}
               data-testid="emulator-frame"
             />
           ) : null}
@@ -112,6 +115,7 @@ export function EmulatorPage({ mode, apiBase }: { mode: "demo" | "api"; apiBase:
   const [ues, setUes] = useState<EmulatorUe[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showFrame, setShowFrame] = useState(false);
+  const [frameSrc, setFrameSrc] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
   const root = apiBase.replace(/\/$/, "");
@@ -170,15 +174,24 @@ export function EmulatorPage({ mode, apiBase }: { mode: "demo" | "api"; apiBase:
       }
       if (response.status === 409) {
         setShowFrame(false);
+        setFrameSrc(null);
         setNote("UE ini sedang dikontrol sesi lain.");
         return;
       }
       if (!response.ok) {
         setShowFrame(false);
+        setFrameSrc(null);
         setNote("Layar emulator tidak berjalan. Hanya status yang ditampilkan.");
         return;
       }
+      const opened = (await response.json()) as { screen_url?: string };
+      if (!opened.screen_url) {
+        setShowFrame(false);
+        setFrameSrc(null);
+        return;
+      }
       setNote(null);
+      setFrameSrc(opened.screen_url);
       setShowFrame(true);
     })();
     return () => {
@@ -188,7 +201,7 @@ export function EmulatorPage({ mode, apiBase }: { mode: "demo" | "api"; apiBase:
 
   if (mode === "demo") {
     return (
-      <EmulatorScreen mode="demo" ues={[]} selectedId={null} showFrame={false} note="Mode demo tidak membuka layar." onReconnect={() => undefined} />
+      <EmulatorScreen mode="demo" ues={[]} selectedId={null} showFrame={false} frameSrc={null} note="Mode demo tidak membuka layar." onReconnect={() => undefined} />
     );
   }
 
@@ -198,9 +211,11 @@ export function EmulatorPage({ mode, apiBase }: { mode: "demo" | "api"; apiBase:
       ues={ues}
       selectedId={selectedId}
       showFrame={showFrame}
+      frameSrc={frameSrc}
       note={note}
       onSelect={(ueId) => {
         setShowFrame(false);
+        setFrameSrc(null);
         setNote(null);
         setSelectedId(ueId);
       }}

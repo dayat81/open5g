@@ -75,21 +75,31 @@ Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE
 5. Start the API on loopback and Next on loopback. `OPEN5G_API_PROXY` is the API, seen only by the Next server. `NEXT_PUBLIC_API_BASE` is the browser origin so cookies stay on one host.
 
    ```bash
-   python -m open5g_dashboard
-   OPEN5G_API_PROXY=http://127.0.0.1:8000 \
-     NEXT_PUBLIC_API_BASE=http://127.0.0.1:3000 \
-     npx next dev -H 127.0.0.1 -p 3000
+   OPEN5G_EMULATOR_ALLOWED_NETS=<uu-subnet>
+   OPEN5G_EMULATOR_SCREEN_PORT=8000
+   OPEN5G_EMULATOR_SCREEN_ORIGIN=http://127.0.0.2:3001
+   OPEN5G_EMULATOR_SCREEN_HOST=127.0.0.2
+   OPEN5G_EMULATOR_SCREEN_BIND_PORT=3001
    ```
 
-   Next rewrites `/api` and `/emulator` to the API, including the websocket upgrade. Confirm that upgrade on the guest; it is not proven in CI.
+   Start the API and the screen listener on the host, not `next dev`, and not inside the `uu` network. Build the web artifact with `OPEN5G_EMULATOR_SCREEN_ORIGIN` set so `frame-src` matches.
+
+   ```bash
+   python -m open5g_dashboard
+   python -m open5g_dashboard.screen
+   ```
+
+   Smoke evidence, on the guest, is a `101 Switching Protocols` line in the screen-listener log plus `emulator_open` and `emulator_close` rows. CI does not prove the websocket upgrade.
 
 ## Who can open a screen
 
-A student can open only a UE whose assignment owner is that student. An admin or an instructor can open every configured UE. Anyone else gets 403. No session gets 401.
+This is the same group rule as profile read. A student can open only a UE assigned to them. An instructor can open a UE only when their current group is that assignment's group. An admin can open every configured UE. Anyone else gets 403. No session gets 401. If an instructor's group membership changes, their open websocket is closed.
+
+The screen is not served on the dashboard origin. Cookies ignore ports, so `127.0.0.1:3000` and `127.0.0.1:3001` would share cookies. The screen listener binds `127.0.0.2:3001` (`python -m open5g_dashboard.screen`). The dashboard origin only mints a one-time exchange code. The iframe loads that other host, which sets its own cookie and sends `Content-Security-Policy: frame-ancestors <dashboard origin>`. The dashboard sends `frame-src` for that host only. Do not attach the dashboard API container to the `uu` network. The screen process runs on the guest host and reaches `UE*_UU` through the Docker bridge. `ANDROID_UE_SCREEN_ALLOW_FROM` is that host address; the UE netns accepts the screen port and ADB 5555 only from it.
 
 One control session per UE. A second user gets **409 `emulator_control_busy`**. The holder can refresh; that replaces their own session and closes the previous one. A second session is not view-only: ws-scrcpy carries input and video on the same socket, and filtering part of it could grant control by mistake. The UI shows the busy status and does not open a second frame.
 
-The websocket upgrade also checks `Origin` against `OPEN5G_EMULATOR_ORIGINS`. A missing or foreign origin is 403. The upgrade also needs the path-scoped HttpOnly cookie minted by the CSRF-checked `POST /api/emulator/<ue_id>/session`, or the same session's `x-csrf-token` header. Idle time defaults to 300 seconds. Open and close are rows in `audit_events` (`emulator_open`, `emulator_close`) with the user, the `ue_id`, and `at`.
+The screen websocket checks `Origin` against `OPEN5G_EMULATOR_SCREEN_ORIGIN`. A missing or foreign origin is 403. The browser gets there with a one-time code from the CSRF-checked `POST /api/emulator/<ue_id>/session`; the screen host then sets its own HttpOnly cookie. Idle time is 300 seconds of no client input. Video frames do not refresh it. A session also ends 3600 seconds after it opened. Logout, a group change, or an assignment change closes it. Open and close are rows in `audit_events` (`emulator_open`, `emulator_close`) with the user, the `ue_id`, and `at`.
 
 ## Disable
 

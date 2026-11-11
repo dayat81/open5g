@@ -21,9 +21,13 @@ CREATE TABLE emulator_sessions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     ue_id text NOT NULL,
     actor_id uuid NOT NULL REFERENCES users (id),
-    token_hash text NOT NULL UNIQUE,
+    dashboard_session_id uuid REFERENCES sessions (id) ON DELETE SET NULL,
+    token_hash text UNIQUE,
+    exchange_hash text UNIQUE,
+    exchange_expires_at timestamptz,
+    exchange_used_at timestamptz,
     opened_at timestamptz NOT NULL DEFAULT now(),
-    last_active_at timestamptz NOT NULL DEFAULT now(),
+    last_client_at timestamptz NOT NULL DEFAULT now(),
     closed_at timestamptz,
     close_reason text
 );

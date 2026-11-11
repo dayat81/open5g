@@ -372,6 +372,13 @@ if [ "$install_upf_route" -eq 1 ]; then
 fi
 
 if android_ue_screen_enabled; then
+  if ! android_ue_screen_image_ok "$(get ANDROID_UE_SCREEN_IMAGE)"; then
+    echo "android-ue: ANDROID_UE_SCREEN_IMAGE must be pinned with @sha256" >&2
+    exit 1
+  fi
+  if ! ANDROID_UE_SCREEN_ALLOW_FROM="$(get ANDROID_UE_SCREEN_ALLOW_FROM)" bash "$script_dir/android-ue-route.sh" --check-allow; then
+    exit 1
+  fi
   android_ue_compose "$root" "$env_file" up -d "ue${n}-screen"
   echo "android-ue: screen sidecar is up on the uu address. No host port is published."
 else

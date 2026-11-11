@@ -254,6 +254,9 @@ def create_app(settings: Settings) -> FastAPI:
             session, error = require_user(conn, request, mutating=True)
             if error:
                 return error
+            actor = actor_from(session)
+            for row in db.close_emulator_sessions_for_actor(conn, actor.id, "logout"):
+                audit(conn, actor, None, actor.group_id, "emulator_close", f"emulator:{row['ue_id']}", "allowed", "logout", {"ue_id": row["ue_id"], "mode": "control"})
             db.delete_session(conn, session["session_id"])
         response = JSONResponse({"status": "logged_out"})
         response.delete_cookie("open5g_session", path="/")

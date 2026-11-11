@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from psycopg.types.json import Json
@@ -410,15 +411,66 @@ def emulator_session_open(conn, session_id: str):
     ).fetchone()
 
 
-def insert_emulator_session(conn, ue_id: str, actor_id: str, token_hash: str):
+def insert_emulator_session(conn, ue_id: str, actor_id: str, dashboard_session_id: str, exchange_hash: str, exchange_expires_at):
     return conn.execute(
         """
-        INSERT INTO emulator_sessions (ue_id, actor_id, token_hash)
-        VALUES (%s, %s, %s)
+        INSERT INTO emulator_sessions (
+            ue_id, actor_id, dashboard_session_id, exchange_hash, exchange_expires_at
+        )
+        VALUES (%s, %s, %s, %s, %s)
         RETURNING *
         """,
-        (ue_id, actor_id, token_hash),
+        (ue_id, actor_id, dashboard_session_id, exchange_hash, exchange_expires_at),
     ).fetchone()
+
+
+def emulator_session_by_exchange(conn, exchange_hash: str):
+    return conn.execute(
+        """
+        SELECT * FROM emulator_sessions
+        WHERE exchange_hash = %s
+          AND closed_at IS NULL
+          AND exchange_used_at IS NULL
+          AND exchange_expires_at > now()
+        """,
+        (exchange_hash,),
+    ).fetchone()
+
+
+def claim_emulator_exchange(conn, session_id: str, token_hash: str):
+    return conn.execute(
+        """
+        UPDATE emulator_sessions
+        SET exchange_used_at = now(), token_hash = %s, last_client_at = now()
+        WHERE id = %s AND closed_at IS NULL AND exchange_used_at IS NULL
+        RETURNING *
+        """,
+        (token_hash, session_id),
+    ).fetchone()
+
+
+def dashboard_session_alive(conn, session_id: str | None) -> bool:
+    if not session_id:
+        return False
+    row = conn.execute("SELECT expires_at FROM sessions WHERE id = %s", (session_id,)).fetchone()
+    if row is None:
+        return False
+    expires = row["expires_at"]
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return expires > datetime.now(timezone.utc)
+
+
+def close_emulator_sessions_for_actor(conn, actor_id: str, reason: str):
+    return conn.execute(
+        """
+        UPDATE emulator_sessions
+        SET closed_at = now(), close_reason = %s
+        WHERE actor_id = %s AND closed_at IS NULL
+        RETURNING *
+        """,
+        (reason, actor_id),
+    ).fetchall()
 
 
 def close_emulator_session(conn, session_id: str, reason: str):
@@ -437,18 +489,19 @@ def touch_emulator_session(conn, session_id: str) -> None:
     conn.execute(
         """
         UPDATE emulator_sessions
-        SET last_active_at = now()
+        SET last_client_at = now()
         WHERE id = %s AND closed_at IS NULL
         """,
         (session_id,),
     )
 
 
-def idle_emulator_sessions(conn, cutoff):
+def expired_emulator_sessions(conn, idle_cutoff, absolute_cutoff):
     return conn.execute(
         """
         SELECT * FROM emulator_sessions
-        WHERE closed_at IS NULL AND last_active_at <= %s
+        WHERE closed_at IS NULL
+          AND (last_client_at <= %s OR opened_at <= %s)
         """,
-        (cutoff,),
+        (idle_cutoff, absolute_cutoff),
     ).fetchall()

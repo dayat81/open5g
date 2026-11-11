@@ -6,37 +6,65 @@ import hashlib
 import ipaddress
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 UE_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
-_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
-_DROP_QUERY = {"ticket", "csrf", "password", "token", "vnc_password"}
-UNSPECIFIED_HOSTS = {"", "0.0.0.0", "::", "::0", "*"}
+_DROP_QUERY = {"ticket", "csrf", "password", "token", "vnc_password", "code"}
+EXCHANGE_SECONDS = 60
 
 
 def token_hash(pepper: str, token: str) -> str:
     return hashlib.sha256(f"{pepper}:{token}".encode()).hexdigest()
 
 
-def validate_screen_host(host: str) -> str:
-    """A destination the API may dial. Not an unspecified bind address."""
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
-    cleaned = host.strip()
-    if cleaned in UNSPECIFIED_HOSTS:
-        raise ValueError("emulator target host must not be an unspecified address")
+
+def session_expired(
+    opened_at: datetime,
+    last_client_at: datetime,
+    now: datetime,
+    idle_seconds: int,
+    max_age_seconds: int,
+) -> str | None:
+    """Idle follows client input only. Upstream video frames are not an argument."""
+
+    opened_at = _aware(opened_at)
+    last_client_at = _aware(last_client_at)
+    now = _aware(now)
+    if now - opened_at >= timedelta(seconds=max_age_seconds):
+        return "absolute_timeout"
+    if now - last_client_at >= timedelta(seconds=idle_seconds):
+        return "idle_timeout"
+    return None
+
+
+def target_allowed(host: str, port: int, nets: tuple[str, ...], screen_port: int) -> tuple[str, int]:
+    if port != screen_port or port < 1 or port > 65535:
+        raise ValueError("emulator target port is not the screen port")
     try:
-        address = ipaddress.ip_address(cleaned)
-    except ValueError:
-        labels = cleaned.split(".")
-        if not labels or len(cleaned) > 253 or any(_LABEL_RE.fullmatch(label) is None for label in labels):
-            raise ValueError("emulator target host is not a usable address") from None
-        return cleaned
+        address = ipaddress.ip_address(host.strip())
+    except ValueError as exc:
+        raise ValueError("emulator target host must be an IPv4 address") from exc
     if not isinstance(address, ipaddress.IPv4Address) or address.is_unspecified:
         raise ValueError("emulator target host must not be an unspecified address")
-    return str(address)
+    if not nets:
+        raise ValueError("emulator target allowlist is empty")
+    networks = []
+    for item in nets:
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError as exc:
+            raise ValueError("emulator target allowlist is not a network") from exc
+    if not any(address in network and isinstance(network, ipaddress.IPv4Network) for network in networks):
+        raise ValueError("emulator target is outside the allowlist")
+    return str(address), port
 
 
-def parse_targets(raw: str) -> dict[str, tuple[str, int]]:
+def parse_targets(raw: str, nets: tuple[str, ...] = (), screen_port: int = 8000) -> dict[str, tuple[str, int]]:
     found: dict[str, tuple[str, int]] = {}
     if not raw.strip():
         return found
@@ -53,12 +81,9 @@ def parse_targets(raw: str) -> dict[str, tuple[str, int]]:
             or not port_text.isdigit()
         ):
             raise ValueError("emulator target must be ue_id=host:port")
-        port = int(port_text)
-        if port < 1 or port > 65535:
-            raise ValueError("emulator target port is out of range")
         if ue_id in found:
             raise ValueError("emulator target is duplicated")
-        found[ue_id] = (validate_screen_host(host), port)
+        found[ue_id] = target_allowed(host, int(port_text), nets, screen_port)
     return found
 
 
@@ -67,6 +92,21 @@ def origin_allowed(origin: str | None, allowed: tuple[str, ...]) -> bool:
         return False
     normal = origin.rstrip("/")
     return normal in {item.rstrip("/") for item in allowed}
+
+
+def origins_are_isolated(screen_origin: str, dashboard_origins: tuple[str, ...]) -> bool:
+    """Cookies ignore ports, so the screen host must differ from the dashboard host."""
+
+    screen = urlparse(screen_origin)
+    if screen.scheme not in {"http", "https"} or not screen.hostname:
+        return False
+    if screen.hostname in {"0.0.0.0", "::"}:
+        return False
+    for item in dashboard_origins:
+        other = urlparse(item)
+        if other.hostname and other.hostname == screen.hostname:
+            return False
+    return True
 
 
 def clean_path(path: str) -> str | None:
@@ -99,13 +139,6 @@ def build_upstream(host: str, port: int, ue_id: str, path: str, query: str, sche
 
 
 def rewrite_location(value: str, upstream_base: str, public_prefix: str) -> str:
-    """Turn an absolute upstream redirect into a same-origin path.
-
-    The sidecar already serves under `/emulator/<ue_id>`, so stripping the
-    origin keeps that path. `public_prefix` is only used when the redirect
-    has no path.
-    """
-
     base = upstream_base.rstrip("/")
     if not value.startswith(base):
         return value
@@ -126,8 +159,4 @@ def parse_attach_ipv4(value: str) -> str:
 
 
 def is_idle(last_active: datetime, now: datetime, idle_seconds: int) -> bool:
-    if last_active.tzinfo is None:
-        last_active = last_active.replace(tzinfo=timezone.utc)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    return now - last_active >= timedelta(seconds=idle_seconds)
+    return session_expired(last_active, last_active, now, idle_seconds, 10**9) == "idle_timeout"

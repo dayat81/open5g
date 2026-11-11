@@ -4,6 +4,21 @@
 # and drop other new output so the emulator cannot bypass the EPC.
 set -euo pipefail
 
+screen_allow_ok() {
+  case "$1" in
+    ""|REPLACE_*|0.0.0.0|127.*|0.*) return 1 ;;
+  esac
+  printf '%s\n' "$1" | awk -F. 'NF != 4 { exit 1 } { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i + 0 > 255) exit 1 }'
+}
+
+if [ "${1:-}" = "--check-allow" ]; then
+  if screen_allow_ok "${ANDROID_UE_SCREEN_ALLOW_FROM:-}"; then
+    exit 0
+  fi
+  echo "android-ue-route: screen allow source must be one non-loopback IPv4 address" >&2
+  exit 1
+fi
+
 tun=${ANDROID_UE_TUN:-tun_srsue}
 enb=${ANDROID_UE_ENB_UU:?ANDROID_UE_ENB_UU}
 timeout_s=${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
@@ -102,6 +117,30 @@ case "$enb_probe" in
   *"dev ${tun}"*)
     echo "android-ue-route: eNB route points at ${tun}: ${enb_probe}" >&2
     exit 1
+    ;;
+esac
+
+screen_port=${ANDROID_UE_SCREEN_PORT:-8000}
+case "$screen_port" in
+  ''|*[!0-9]*)
+    echo "android-ue-route: screen port is not numeric" >&2
+    exit 1
+    ;;
+esac
+allow=${ANDROID_UE_SCREEN_ALLOW_FROM:-}
+case "$allow" in
+  ""|REPLACE_*)
+    iptables -I INPUT 1 -p tcp --dport "$screen_port" -j DROP
+    echo "android-ue-route: screen port ${screen_port} is closed until an allow source is set"
+    ;;
+  *)
+    if ! screen_allow_ok "$allow"; then
+      echo "android-ue-route: screen allow source is not a single IPv4 address" >&2
+      exit 1
+    fi
+    iptables -I INPUT 1 -p tcp --dport "$screen_port" ! -s "$allow" -j DROP
+    iptables -I INPUT 1 -p tcp --dport 5555 ! -s "$allow" -j DROP
+    echo "android-ue-route: screen port ${screen_port} and 5555 accept only ${allow}"
     ;;
 esac
 

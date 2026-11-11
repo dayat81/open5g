@@ -115,6 +115,10 @@ sys.exit(0 if left // shift == right // shift else 1)
 PY
 }
 
+android_ue_screen_image_ok() {
+  printf '%s\n' "$1" | grep -Eq '@sha256:[0-9A-Fa-f]{64}([^0-9A-Fa-f]|$)'
+}
+
 android_ue_reject_placeholder() {
   local name=$1
   local value=$2

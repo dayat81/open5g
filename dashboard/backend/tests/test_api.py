@@ -1,6 +1,7 @@
 """HTTP authorization and apply behavior against PostgreSQL."""
 
 import json
+import os
 import secrets
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from open5g_dashboard.api import HASHER, create_app
 from open5g_dashboard.db import apply_migrations
 from open5g_dashboard.settings import Settings
 
-DATABASE_URL = "postgresql:///open5g_test"
+DATABASE_URL = os.environ.get("OPEN5G_TEST_DATABASE_URL", "postgresql:///open5g_test")
 PEPPER = "test-pepper-not-a-secret-value-32b"
 PLANTED_KI = "PLANTED-KI-VALUE-not-a-real-key"
 

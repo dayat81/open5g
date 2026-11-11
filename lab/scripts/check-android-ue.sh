@@ -45,7 +45,7 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
   ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
   ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE \
-  ANDROID_UE_SCREEN_IMAGE; do
+  ANDROID_UE_SCREEN_IMAGE ANDROID_UE_SCREEN_ALLOW_FROM; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -361,6 +361,17 @@ if ! ANDROID_UE_SCREEN_BIND=192.0.2.32 lab/scripts/android-ue-screen.sh --check-
   echo "screen bind rejected a unicast address" >&2
   exit 1
 fi
+if ANDROID_UE_SCREEN_ALLOW_FROM=0.0.0.0 lab/scripts/android-ue-route.sh --check-allow; then
+  echo "screen allow accepted 0.0.0.0" >&2
+  exit 1
+fi
+if ! ANDROID_UE_SCREEN_ALLOW_FROM=192.0.2.1 lab/scripts/android-ue-route.sh --check-allow; then
+  echo "screen allow rejected a unicast address" >&2
+  exit 1
+fi
+grep -q 'INCLUDE_ADB_SHELL": false' lab/images/ws-scrcpy/build.config.override.json
+grep -q '@sha256:' lab/images/ws-scrcpy/Dockerfile
+grep -q 'WS_SCRCPY_COMMIT=' lab/images/ws-scrcpy/Dockerfile
 extra_flags=$(awk -F= '$1 == "ANDROID_UE_EXTRA_FLAGS" { sub(/^[^=]*=/, ""); print; exit }' lab/compose/android-ue.env.example)
 case "$extra_flags" in
   *partition-size=*)
@@ -380,6 +391,15 @@ fi
 echo "UPF policy rule is idempotent"
 # shellcheck source=android-ue-lib.sh
 . lab/scripts/android-ue-lib.sh
+digest=$(python3 -c 'print("a"*64)')
+if ! android_ue_screen_image_ok "example.invalid/ws-scrcpy@sha256:${digest}"; then
+  echo "pinned screen image was rejected" >&2
+  exit 1
+fi
+if android_ue_screen_image_ok "example.invalid/ws-scrcpy:test"; then
+  echo "unpinned screen image was accepted" >&2
+  exit 1
+fi
 upf_dir=$(mktemp -d)
 upf_file=$upf_dir/upf-rule.txt
 decision=$(android_ue_upf_rule_decide "0: from all lookup local" "192.0.2.50/32" "$upf_file")

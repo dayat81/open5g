@@ -1,5 +1,6 @@
 """RBAC and proxy behavior for /emulator. The upstream is a local stub, not a core."""
 
+import os
 import socket
 import threading
 import time
@@ -13,12 +14,14 @@ from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import WebSocketDenialResponse
+from starlette.websockets import WebSocketDisconnect
 
 from open5g_dashboard.api import HASHER, create_app
 from open5g_dashboard.db import apply_migrations
+from open5g_dashboard.emulator_http import create_screen_app
 from open5g_dashboard.settings import Settings
 
-DATABASE_URL = "postgresql:///open5g_test"
+DATABASE_URL = os.environ.get("OPEN5G_TEST_DATABASE_URL", "postgresql:///open5g_test")
 PEPPER = "test-pepper-not-a-secret-value-32b"
 
 
@@ -30,9 +33,14 @@ def _settings(port: int) -> Settings:
         enable_demo_routes=False,
         emulator_enabled=True,
         emulator_targets={},
-        emulator_origins=("http://testserver",),
+        emulator_origins=("http://127.0.0.1:3000",),
         emulator_idle_seconds=300,
         emulator_probe_seconds=0.4,
+        emulator_allowed_nets=("127.0.0.1/32",),
+        emulator_screen_port=port,
+        emulator_screen_origin="http://testserver",
+        emulator_max_age_seconds=3600,
+        emulator_watch_seconds=0.2,
     )
 
 
@@ -63,8 +71,12 @@ def _upstream_app(hits: dict[str, int]) -> Starlette:
     async def socket(websocket):
         hits["ws"] += 1
         await websocket.accept()
-        message = await websocket.receive_text()
-        await websocket.send_text("echo:" + message)
+        try:
+            while True:
+                message = await websocket.receive_text()
+                await websocket.send_text("echo:" + message)
+        except WebSocketDisconnect:
+            return
 
     return Starlette(
         routes=[
@@ -195,6 +207,16 @@ def env(upstream):
     }
 
 
+def _screen(env, opened):
+    screen = TestClient(create_screen_app(env["settings"]))
+    url = opened.json()["screen_url"]
+    path = url.split("http://testserver", 1)[1]
+    response = screen.get(path, follow_redirects=False)
+    assert response.status_code == 302, response.text
+    assert "frame-ancestors http://127.0.0.1:3000" in response.headers["content-security-policy"]
+    return screen
+
+
 def _denied(call):
     with pytest.raises(WebSocketDenialResponse) as caught:
         with call:
@@ -210,8 +232,9 @@ def test_anonymous_is_rejected_before_the_screen(env):
     assert status.status_code == 401
     opened = bare.post("/api/emulator/ue1/session")
     assert opened.status_code == 401
-    denied = _denied(bare.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}))
+    denied = _denied(TestClient(create_screen_app(env["settings"])).websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}))
     assert denied.status_code == 401
+    assert bare.get("/emulator/ue1/index.html").status_code == 404
     assert env["hits"]["ws"] == 0
     assert env["hits"]["http"] == 0
 
@@ -222,9 +245,6 @@ def test_user_cannot_open_another_users_ue(env):
     assert status.json()["error"]["code"] == "not_owner"
     opened = env["other"].post("/api/emulator/ue1/session")
     assert opened.status_code == 403
-    denied = _denied(env["other"].client.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}))
-    assert denied.status_code == 403
-    assert denied.json()["error"]["code"] == "not_owner"
     listing = env["student"].client.get("/api/emulator")
     assert listing.status_code == 200
     assert [item["ue_id"] for item in listing.json()] == ["ue1"]
@@ -236,7 +256,10 @@ def test_user_cannot_open_another_users_ue(env):
     assert body["screen"] == "up"
     assert "internal_host" not in body
     instructor = env["instructor"].client.get("/api/emulator/ue2")
-    assert instructor.status_code == 200
+    assert instructor.status_code == 403
+    assert instructor.json()["error"]["code"] == "cross_group_forbidden"
+    own = env["instructor"].client.get("/api/emulator/ue1")
+    assert own.status_code == 200
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         row = conn.execute(
             "SELECT actor_id::text, resource FROM audit_events WHERE reason = 'not_owner' AND resource = 'emulator:ue1'"
@@ -248,17 +271,17 @@ def test_wrong_origin_is_rejected_and_second_control_session_is_busy(env):
     first = env["student"].post("/api/emulator/ue1/session")
     assert first.status_code == 200, first.text
     assert first.json()["mode"] == "control"
-    denied = _denied(env["student"].client.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://evil.example"}))
+    screen = _screen(env, first)
+    denied = _denied(screen.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://evil.example"}))
     assert denied.status_code == 403
     assert denied.json()["error"]["code"] == "origin_rejected"
     assert env["hits"]["ws"] == 0
-    missing = _denied(env["instructor"].client.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}))
-    assert missing.status_code == 409
-    assert missing.json()["error"]["code"] == "emulator_control_busy"
+    missing = _denied(TestClient(create_screen_app(env["settings"])).websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}))
+    assert missing.status_code == 401
     second = env["instructor"].post("/api/emulator/ue1/session")
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "emulator_control_busy"
-    page = env["student"].client.get("/emulator/ue1/index.html")
+    page = screen.get("/emulator/ue1/index.html")
     assert page.status_code == 200, page.text
     assert page.text == "screen:index.html"
     assert "127.0.0.1" not in page.text
@@ -269,27 +292,37 @@ def test_wrong_origin_is_rejected_and_second_control_session_is_busy(env):
         open_rows = conn.execute("SELECT actor_id::text FROM emulator_sessions WHERE ue_id = 'ue1' AND closed_at IS NULL").fetchall()
     assert len(open_rows) == 1
     assert open_rows[0]["actor_id"] == env["student_id"]
-    with env["student"].client.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}) as socket:
+    fresh = _screen(env, again)
+    with fresh.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}) as socket:
         socket.send_text("ping")
         assert socket.receive_text() == "echo:ping"
-    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
-        still_open = conn.execute("SELECT 1 FROM emulator_sessions WHERE ue_id = 'ue1' AND closed_at IS NULL").fetchall()
-        closed = conn.execute(
-            """
-            SELECT close_reason FROM emulator_sessions
-            WHERE ue_id = 'ue1' AND closed_at IS NOT NULL
-            ORDER BY closed_at DESC
-            """
-        ).fetchone()
-        audited = conn.execute(
-            """
-            SELECT reason FROM audit_events
-            WHERE action = 'emulator_close' AND resource = 'emulator:ue1' AND reason = %s
-            """,
-            (closed["close_reason"],),
-        ).fetchone()
+    still_open = [{"?column?": 1}]
+    closed = None
+    audited = None
+    for _ in range(20):
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            still_open = conn.execute(
+                "SELECT 1 FROM emulator_sessions WHERE ue_id = 'ue1' AND closed_at IS NULL"
+            ).fetchall()
+            closed = conn.execute(
+                """
+                SELECT close_reason FROM emulator_sessions
+                WHERE ue_id = 'ue1' AND closed_at IS NOT NULL
+                ORDER BY closed_at DESC
+                """
+            ).fetchone()
+            if closed is not None and not still_open:
+                audited = conn.execute(
+                    """
+                    SELECT reason FROM audit_events
+                    WHERE action = 'emulator_close' AND resource = 'emulator:ue1' AND reason = %s
+                    """,
+                    (closed["close_reason"],),
+                ).fetchone()
+                break
+        time.sleep(0.05)
     assert still_open == []
-    assert closed["close_reason"] in {"client_close", "upstream_closed"}
+    assert closed["close_reason"] in {"client_close", "upstream_closed", "idle_timeout"}
     assert audited is not None
 
 
@@ -297,7 +330,7 @@ def test_idle_session_is_closed_and_a_down_screen_is_status_only(env):
     first = env["student"].post("/api/emulator/ue1/session")
     assert first.status_code == 200, first.text
     with psycopg.connect(DATABASE_URL) as conn:
-        conn.execute("UPDATE emulator_sessions SET last_active_at = now() - interval '2 hours' WHERE closed_at IS NULL")
+        conn.execute("UPDATE emulator_sessions SET last_client_at = now() - interval '2 hours' WHERE closed_at IS NULL")
     taken = env["instructor"].post("/api/emulator/ue1/session")
     assert taken.status_code == 200, taken.text
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
@@ -308,17 +341,8 @@ def test_idle_session_is_closed_and_a_down_screen_is_status_only(env):
     closed = env["instructor"].post("/api/emulator/ue1/session/close")
     assert closed.status_code == 200
     assert closed.json()["closed"] is True
-    down = env["admin"].put(
-        "/api/admin/emulator-endpoints/ue1",
-        {
-            "assignment_id": _assignment_id(env),
-            "internal_host": "127.0.0.1",
-            "internal_port": 1,
-            "apn": "internet",
-            "attach_ipv4": "192.0.2.10",
-        },
-    )
-    assert down.status_code == 200, down.text
+    with psycopg.connect(DATABASE_URL) as conn:
+        conn.execute("UPDATE emulator_endpoints SET internal_host = NULL, internal_port = NULL WHERE ue_id = 'ue1'")
     status = env["student"].client.get("/api/emulator/ue1")
     assert status.status_code == 200
     assert status.json()["screen"] == "down"
@@ -345,14 +369,39 @@ def _assignment_id(env) -> str:
         return str(conn.execute("SELECT assignment_id FROM emulator_endpoints WHERE ue_id = 'ue1'").fetchone()["assignment_id"])
 
 
+def test_instructor_socket_closes_when_their_group_changes(env):
+    opened = env["instructor"].post("/api/emulator/ue1/session")
+    assert opened.status_code == 200, opened.text
+    screen = _screen(env, opened)
+    with screen.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}) as socket:
+        socket.send_text("ping")
+        assert socket.receive_text() == "echo:ping"
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET group_id = (SELECT id FROM groups WHERE name = 'kelas-b')
+                WHERE email = 'instructor-a@example.test'
+                """
+            )
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_text()
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        reason = conn.execute(
+            "SELECT close_reason FROM emulator_sessions WHERE ue_id = 'ue1' ORDER BY opened_at DESC LIMIT 1"
+        ).fetchone()
+    assert reason["close_reason"] == "revoked"
+
+
 def test_websocket_without_the_csrf_ticket_is_rejected(env):
     opened = env["student"].post("/api/emulator/ue1/session")
     assert opened.status_code == 200, opened.text
-    bare = TestClient(env["app"])
-    bare.cookies.set("open5g_session", env["student"].client.cookies.get("open5g_session"))
-    denied = _denied(bare.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}))
-    assert denied.status_code == 403
-    assert denied.json()["error"]["code"] == "csrf_required"
+    screen = TestClient(create_screen_app(env["settings"]))
+    bad = screen.get("/emulator/ue1/exchange?code=not-a-real-code")
+    assert bad.status_code == 403
+    assert bad.json()["error"]["code"] == "csrf_required"
+    denied = _denied(screen.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}))
+    assert denied.status_code == 401
     assert env["hits"]["ws"] == 0
 
 

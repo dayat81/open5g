@@ -13,10 +13,19 @@ const ue: EmulatorUe = {
 
 describe("EmulatorScreen", () => {
   it("shows attach status and a screen when the emulator is up", () => {
-    render(<EmulatorScreen mode="api" ues={[ue]} selectedId="ue1" showFrame note={null} />);
+    render(
+      <EmulatorScreen
+        mode="api"
+        ues={[ue]}
+        selectedId="ue1"
+        showFrame
+        frameSrc="http://127.0.0.2:3001/emulator/ue1/"
+        note={null}
+      />,
+    );
     expect(screen.getByTestId("attach-ip").textContent).toBe("192.0.2.10");
     expect(screen.getByTestId("attach-apn").textContent).toBe("internet");
-    expect(screen.getByTestId("emulator-frame").getAttribute("src")).toBe("/emulator/ue1/");
+    expect(screen.getByTestId("emulator-frame").getAttribute("src")).toBe("http://127.0.0.2:3001/emulator/ue1/");
     expect(screen.getByRole("button", { name: "Sambungkan ulang" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /reset|wipe|hapus|factory/i })).toBeNull();
   });
