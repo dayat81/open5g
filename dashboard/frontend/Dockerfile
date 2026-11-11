@@ -27,12 +27,16 @@ COPY --from=build /app/.next/static ./.next/static
 COPY proxy.mjs ./
 
 ENV NODE_ENV=production \
-    PORT=3000 \
+    WEB_PORT=3300 \
+    PORT=3300 \
     OPEN5G_API_INTERNAL_URL=http://dashboard-api:8000 \
     NEXT_PUBLIC_API_BASE=/
 
 USER nextjs
 
-EXPOSE 3000
+EXPOSE 3300
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "const p=process.env.WEB_PORT||process.env.PORT||'3300'; fetch('http://127.0.0.1:'+p+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "proxy.mjs"]

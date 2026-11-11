@@ -3,7 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1 -p ${WEB_PORT:-3300}",
+    "start": "node proxy.mjs",
     "build": "next build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

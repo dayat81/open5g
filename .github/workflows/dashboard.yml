@@ -75,3 +75,9 @@ jobs:
           curl -fsSL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64"
           chmod +x /tmp/docker-compose
           /tmp/docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile dashboard config --quiet
+          rendered="$(/tmp/docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile dashboard config)"
+          printf '%s\n' "$rendered" | grep -q 3300
+          if printf '%s\n' "$rendered" | grep -E '(^|[^0-9])3000([^0-9]|$)'; then  # Grafana keeps 3000
+            echo "rendered compose still mentions port 3000; that port is Grafana" >&2
+            exit 1
+          fi
