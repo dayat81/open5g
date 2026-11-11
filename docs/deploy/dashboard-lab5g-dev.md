@@ -77,10 +77,10 @@ Opsional di shell, bukan di file yang di-commit:
 
 ```bash
 export DASHBOARD_WEB_BIND=127.0.0.1
-export DASHBOARD_WEB_PORT=3300
+export WEB_PORT=3300
 ```
 
-Default bind web sudah `127.0.0.1:3300`.
+Default bind web sudah `127.0.0.1:3300`. Port 3000 tetap untuk Grafana, jadi dashboard tidak memakainya.
 
 ## 4. Cek file Compose
 
@@ -90,7 +90,7 @@ Dari root repositori, di guest atau di host build:
 docker-compose -f lab/compose/docker-compose.dashboard.optional.yml --profile dashboard config
 ```
 
-Binary harus v2.29.7. Periksa bahwa hanya `dashboard-web` punya `ports`, dan binding-nya `127.0.0.1:${DASHBOARD_WEB_PORT}:${DASHBOARD_WEB_PORT}` (default `127.0.0.1:3300:3300`) kecuali variabel di atas diubah. `dashboard-api` tidak punya port publish.
+Binary harus v2.29.7. Periksa bahwa hanya `dashboard-web` punya `ports`, dan binding-nya `127.0.0.1:3300:3300` kecuali `WEB_PORT` diubah. `dashboard-api` tidak punya port publish.
 
 ## 5. Backup subscriber Mongo sebelum up
 
@@ -165,7 +165,7 @@ Buka `http://127.0.0.1:3300`. Jangan mem-publish port web ke alamat selain loopb
 
 ## 8. Smoke test
 
-Jendela ini hanya memakai akun uji dan IMSI uji. Bukan akun operasional dan bukan IMSI pelanggan. Prosedur ini tidak mengganti pagar di kode. Ganti port di tunnel bila `DASHBOARD_WEB_PORT` bukan 3300. Grafana sudah memakai 3000.
+Jendela ini hanya memakai akun uji dan IMSI uji. Bukan akun operasional dan bukan IMSI pelanggan. Prosedur ini tidak mengganti pagar di kode. Ganti port di perintah curl bila `WEB_PORT` bukan 3300.
 
 Permintaan arsitek, wajib selama jendela uji: jangan membuat akun instructor, dan jangan menjalankan seed apa pun (Ansible atau cara lain). Subscriber uji harus sudah ada di Mongo sebelum jendela ini. Dashboard tidak membuat dokumen subscriber baru.
 

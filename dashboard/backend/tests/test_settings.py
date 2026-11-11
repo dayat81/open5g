@@ -27,6 +27,14 @@ def test_placeholder_pepper_and_database_url_are_rejected(monkeypatch):
         Settings.from_env()
 
 
+def test_cors_origin_on_the_grafana_port_is_rejected(monkeypatch):
+    _env(monkeypatch, OPEN5G_CORS_ORIGINS="http://127.0.0.1:3000")  # Grafana owns this port
+    with pytest.raises(RuntimeError, match="Grafana"):
+        Settings.from_env()
+    _env(monkeypatch, OPEN5G_CORS_ORIGINS="http://127.0.0.1:3300")
+    assert Settings.from_env().cors_origins == ("http://127.0.0.1:3300",)
+
+
 def test_real_looking_local_values_bind_loopback_by_default(monkeypatch):
     _env(monkeypatch)
     settings = Settings.from_env()

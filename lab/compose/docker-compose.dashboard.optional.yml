@@ -3,6 +3,7 @@
 # Container env comes from dashboard.env.example, then dashboard.env when that file exists.
 # dashboard.env is gitignored. Startup still rejects REPLACE_ placeholders.
 # Only dashboard-web publishes a port, and only on 127.0.0.1 unless DASHBOARD_WEB_BIND is set.
+# WEB_PORT defaults to 3300. Port 3000 stays with Grafana.
 # Reach the UI with an SSH tunnel to that address. The API is not published.
 name: lab5g-dev-dashboard
 services:
@@ -39,9 +40,10 @@ services:
     depends_on: [dashboard-api]
     environment:
       OPEN5G_API_INTERNAL_URL: ${OPEN5G_API_INTERNAL_URL:-http://dashboard-api:8000}
-      PORT: "${DASHBOARD_WEB_PORT:-3300}"
+      WEB_PORT: ${WEB_PORT:-3300}
+      PORT: ${WEB_PORT:-3300}
     ports:
-      - "${DASHBOARD_WEB_BIND:-127.0.0.1}:${DASHBOARD_WEB_PORT:-3300}:${DASHBOARD_WEB_PORT:-3300}"
+      - "${DASHBOARD_WEB_BIND:-127.0.0.1}:${WEB_PORT:-3300}:${WEB_PORT:-3300}"
     networks: [web, dashboard]
 networks:
   dashboard:

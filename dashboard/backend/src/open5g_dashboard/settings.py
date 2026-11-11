@@ -41,6 +41,18 @@ def _csv(raw: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _origin_port(origin: str) -> str | None:
+    raw = origin.strip()
+    if "://" not in raw:
+        return None
+    host = raw.split("://", 1)[1].split("/", 1)[0]
+    if host.startswith("[") and "]" in host:
+        host = host.split("]", 1)[1]
+    if ":" not in host:
+        return None
+    return host.rsplit(":", 1)[1]
+
+
 def _bounded_float(raw: str, low: float, high: float, name: str) -> float:
     try:
         value = float(raw)
@@ -94,6 +106,11 @@ class Settings:
         cors = _csv(os.environ.get("OPEN5G_CORS_ORIGINS", ""))
         if "*" in cors:
             raise RuntimeError("OPEN5G_CORS_ORIGINS must list explicit origins")
+        for origin in cors:
+            if _origin_port(origin) == "3000":  # Grafana keeps this port
+                raise RuntimeError(
+                    "OPEN5G_CORS_ORIGINS must not use port 3000; that port is Grafana. The dashboard web default is WEB_PORT 3300."
+                )
         secure = os.environ.get("OPEN5G_COOKIE_SECURE", "1") != "0"
         demo = os.environ.get("OPEN5G_ENABLE_DEMO_ROUTES", "0") == "1"
         enabled = os.environ.get("OPEN5G_EMULATOR_ENABLED", "0") == "1"

@@ -3,7 +3,11 @@ import http from "node:http";
 import { URL } from "node:url";
 
 const listenHost = process.env.OPEN5G_WEB_HOST || "0.0.0.0";
-const listenPort = Number(process.env.PORT || 3300);
+const listenPort = Number(process.env.WEB_PORT || process.env.PORT || 3300);
+if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535 || listenPort === 3000) { // Grafana keeps 3000
+  process.stderr.write("WEB_PORT must be a TCP port other than 3000 (Grafana). Default is 3300.\n");
+  process.exit(1);
+}
 const nextPort = Number(process.env.OPEN5G_NEXT_PORT || 3001);
 const apiBase = new URL(process.env.OPEN5G_API_INTERNAL_URL || "http://dashboard-api:8000");
 

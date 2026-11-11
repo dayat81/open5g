@@ -95,3 +95,5 @@ dashboard_apn_allowlist: ''
 dashboard_cors_origins: ''
 dashboard_bind_host: 127.0.0.1
 dashboard_bind_port: 8000
+# Host port for dashboard-web. Port 3000 is Grafana in this lab.
+dashboard_web_port: 3300
