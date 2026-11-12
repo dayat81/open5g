@@ -54,6 +54,15 @@ emit_user() {
     cpus: 2.0
     mem_limit: 2048m
     cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv6.conf.all.accept_ra: "0"
+      net.ipv6.conf.all.autoconf: "0"
+      net.ipv6.conf.all.forwarding: "0"
+      net.ipv6.conf.all.disable_ipv6: "0"
+      net.ipv6.conf.default.accept_ra: "0"
+      net.ipv6.conf.default.autoconf: "0"
+      net.ipv6.conf.default.forwarding: "0"
+      net.ipv6.conf.default.disable_ipv6: "0"
     devices:
       - "/dev/net/tun:/dev/net/tun"
     command:

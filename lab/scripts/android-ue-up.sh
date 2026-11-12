@@ -73,17 +73,101 @@ android_ue_wait_route() {
   echo "android-ue: ${cid} exited 0"
 }
 
+android_ue_ue_pid() {
+  local n=$1
+  local name shown pid
+  name="l5gd-ue${n}"
+  case "$name" in
+    l5gd-ue1|l5gd-ue2) ;;
+    *)
+      echo "android-ue: refusing to change sysctls outside l5gd-ue1 and l5gd-ue2" >&2
+      exit 1
+      ;;
+  esac
+  shown=$(docker inspect -f '{{.Name}} {{.State.Pid}}' "$name")
+  case "$shown" in
+    "/${name} "[1-9]*) ;;
+    *)
+      echo "android-ue: refusing to change sysctls; ${name} is not the UE container (${shown:-missing})" >&2
+      exit 1
+      ;;
+  esac
+  pid=${shown##* }
+  printf '%s\n' "$pid"
+}
+
+android_ue_require_host_tools() {
+  if ! command -v nsenter >/dev/null 2>&1; then
+    echo "android-ue: nsenter is missing on the host" >&2
+    exit 1
+  fi
+  if ! command -v ip >/dev/null 2>&1; then
+    echo "android-ue: ip is missing on the host" >&2
+    exit 1
+  fi
+  if ! command -v sysctl >/dev/null 2>&1; then
+    echo "android-ue: sysctl is missing on the host" >&2
+    exit 1
+  fi
+}
+
 android_ue_netns_read() {
   local pid=$1
   local path=$2
-  # -m uses the container mount namespace. -n alone would read the host /proc and /sys.
-  nsenter -t "$pid" -n -m cat "$path"
+  # -m selects the container filesystem so /bin/cat is the container binary.
+  # /proc/sys/net itself follows the network namespace of this process.
+  nsenter -t "$pid" -n -m /bin/cat "$path"
+}
+
+# Host sysctl, target netns only. Do not enter the mount namespace: the
+# container /proc/sys is often read-only, while the host one is writable and
+# still addresses the caller's network namespace.
+android_ue_host_sysctl_set() {
+  local pid=$1
+  local key=$2
+  local value=$3
+  local path got
+  if ! nsenter -t "$pid" -n sysctl -w "${key}=${value}" >/dev/null; then
+    echo "android-ue: host sysctl ${key}=${value} failed" >&2
+    return 1
+  fi
+  path=/proc/sys/$(printf '%s\n' "$key" | tr '.' '/')
+  got=$(android_ue_netns_read "$pid" "$path" 2>/dev/null || echo missing)
+  if [ "$got" != "$value" ]; then
+    echo "android-ue: ${key} is ${got}, expected ${value}" >&2
+    return 1
+  fi
+}
+
+# Interfaces that exist before attach (eth0, and l5gd-screen when present)
+# do not inherit all/default. Set them from the host before the route sidecar
+# reads them. tun_srsue is set later, after it exists.
+android_ue_preset_existing_iface_sysctls() {
+  local n=$1
+  local pid iface knob
+  pid=$(android_ue_ue_pid "$n")
+  for key in all default; do
+    for knob in accept_ra autoconf forwarding; do
+      android_ue_host_sysctl_set "$pid" "net.ipv6.conf.${key}.${knob}" 0
+    done
+  done
+  while IFS= read -r iface; do
+    [ -n "$iface" ] || continue
+    if [ "$iface" = lo ] || [ "$iface" = tun_srsue ]; then
+      continue
+    fi
+    for knob in accept_ra autoconf forwarding; do
+      android_ue_host_sysctl_set "$pid" "net.ipv6.conf.${iface}.${knob}" 0
+    done
+  done < <(nsenter -t "$pid" -n ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1)
+  echo "android-ue: host set accept_ra, autoconf, and forwarding on existing ue${n} interfaces"
 }
 
 android_ue_require_ipv6() {
   local n=$1
   local pid link addrs iface knob val key
-  pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}")
+  android_ue_require_host_tools
+  pid=$(android_ue_ue_pid "$n")
   if ! nsenter -t "$pid" -n ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
     echo "android-ue: ::1 is missing on lo in the ue${n} netns" >&2
     exit 1
@@ -106,6 +190,23 @@ android_ue_require_ipv6() {
     echo "android-ue: ue${n} still has a usable IPv6 default route" >&2
     exit 1
   fi
+  for key in all default; do
+    for knob in accept_ra autoconf forwarding; do
+      android_ue_host_sysctl_set "$pid" "net.ipv6.conf.${key}.${knob}" 0
+    done
+    android_ue_host_sysctl_set "$pid" "net.ipv6.conf.${key}.disable_ipv6" 0
+  done
+  android_ue_host_sysctl_set "$pid" "net.ipv6.conf.lo.disable_ipv6" 0
+  android_ue_host_sysctl_set "$pid" "net.ipv6.conf.dummy0.disable_ipv6" 0
+  while IFS= read -r iface; do
+    [ -n "$iface" ] || continue
+    if [ "$iface" = lo ]; then
+      continue
+    fi
+    for knob in accept_ra autoconf forwarding; do
+      android_ue_host_sysctl_set "$pid" "net.ipv6.conf.${iface}.${knob}" 0
+    done
+  done < <(nsenter -t "$pid" -n ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1)
   for key in all default lo dummy0; do
     val=$(android_ue_netns_read "$pid" "/proc/sys/net/ipv6/conf/${key}/disable_ipv6" 2>/dev/null || echo missing)
     if [ "$val" != "0" ]; then
@@ -124,6 +225,12 @@ android_ue_require_ipv6() {
         exit 1
       fi
     done
+  done
+  for chain in ANDROID_UE_GUARD ANDROID_UE_IN4; do
+    if ! nsenter -t "$pid" -n iptables -S "$chain" >/dev/null 2>&1; then
+      echo "android-ue: iptables chain ${chain} is missing in the UE netns" >&2
+      exit 1
+    fi
   done
   echo "android-ue: ue${n} has ::1, a dummy0 ULA, and IPv6 is fail-closed"
 }
@@ -457,8 +564,11 @@ if docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null | grep 
   exit 1
 fi
 echo "android-ue: starting ${user} only. Core config is not modified."
+android_ue_require_host_tools
+android_ue_compose "$root" "$env_file" up -d "ue${n}"
+android_ue_preset_existing_iface_sysctls "$n"
 android_ue_compose "$root" "$env_file" up -d \
-  "ue${n}" "enb${n}" "ue${n}-route"
+  "enb${n}" "ue${n}-route"
 android_ue_wait_route "$n"
 android_ue_require_ipv6 "$n"
 android_ue_install_ip6_filter "$n"

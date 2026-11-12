@@ -332,6 +332,14 @@ if grep -q 'ps -eo comm=' lab/scripts/android-ue-route.sh; then
 fi
 again_at=$(grep -n -F 'refusing to run the route sidecar again' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
 route_up_at=$(awk '/up -d \\$/ { print NR; exit }' lab/scripts/android-ue-up.sh)
+# shellcheck disable=SC2016
+ue_only_at=$(grep -n -F 'up -d "ue${n}"' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+# shellcheck disable=SC2016
+preset_at=$(grep -n -F 'android_ue_preset_existing_iface_sysctls "$n"' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+if [ -z "$ue_only_at" ] || [ -z "$preset_at" ] || [ -z "$route_up_at" ] || [ "$ue_only_at" -ge "$preset_at" ] || [ "$preset_at" -ge "$route_up_at" ]; then
+  echo "up starts the route sidecar before the host sysctl check" >&2
+  exit 1
+fi
 if [ -z "$again_at" ] || [ -z "$route_up_at" ] || [ "$again_at" -ge "$route_up_at" ]; then
   echo "up starts the route sidecar after android is already running" >&2
   exit 1
@@ -354,6 +362,43 @@ if grep -n -E 'cat[[:space:]]+"/sys/class/net|cat[[:space:]]+/sys/class/net' lab
 fi
 grep -q 'dummy0 type dummy' lab/scripts/android-ue-route.sh
 grep -q 'nodad' lab/scripts/android-ue-route.sh
+grep -q 'expected 0' lab/scripts/android-ue-route.sh
+if grep -q 'WARN' lab/scripts/android-ue-route.sh; then
+  echo "route sidecar still warns and continues when a sysctl is not 0" >&2
+  exit 1
+fi
+if grep -n -F '[ -w ' lab/scripts/android-ue-route.sh lab/scripts/android-ue-up.sh; then
+  echo "a sysctl write is still skipped when the file looks unwritable" >&2
+  exit 1
+fi
+grep -q '/bin/cat' lab/scripts/android-ue-up.sh
+grep -q 'android_ue_require_host_tools' lab/scripts/android-ue-up.sh
+grep -q 'net.ipv6.conf.all.accept_ra' lab/compose/docker-compose.android-ue.optional.yml
+grep -q 'net.ipv6.conf.all.disable_ipv6' lab/compose/docker-compose.android-ue.optional.yml
+grep -q 'net.ipv6.conf.default.accept_ra' lab/compose/docker-compose.android-ue.optional.yml
+grep -q 'net.ipv6.conf.default.disable_ipv6' lab/compose/docker-compose.android-ue.optional.yml
+gen_out=$(lab/scripts/gen-android-ue.sh --stdout)
+for sysctl_key in \
+  net.ipv6.conf.all.accept_ra \
+  net.ipv6.conf.all.autoconf \
+  net.ipv6.conf.all.forwarding \
+  net.ipv6.conf.all.disable_ipv6 \
+  net.ipv6.conf.default.accept_ra \
+  net.ipv6.conf.default.autoconf \
+  net.ipv6.conf.default.forwarding \
+  net.ipv6.conf.default.disable_ipv6
+do
+  if ! printf '%s\n' "$gen_out" | grep -q "$sysctl_key"; then
+    echo "generator output is missing ${sysctl_key}" >&2
+    exit 1
+  fi
+done
+ue_sysctls=$(printf '%s\n' "$gen_out" | awk '$1=="ue1:"{s=1} $1=="enb1:"{s=0} s && /net.ipv6.conf.all.accept_ra/{c++} END{print c+0}')
+android_sysctls=$(printf '%s\n' "$gen_out" | awk '$1=="android1:"{s=1} $1=="ue2:"{s=0} s && /net.ipv6.conf.all.accept_ra/{c++} END{print c+0}')
+if [ "$ue_sysctls" != 1 ] || [ "$android_sysctls" != 0 ]; then
+  echo "IPv6 sysctls must be on ue1, the netns owner, not on android1" >&2
+  exit 1
+fi
 grep -q 'ANDROID_UE_IN4' lab/scripts/android-ue-route.sh
 # shellcheck disable=SC2016
 grep -q 'route del "${addr}/128" dev dummy0 || true' lab/scripts/android-ue-route.sh
@@ -364,6 +409,26 @@ fi
 
 echo "cgnat sysctl"
 sh lab/scripts/android-ue-cgnat.sh --sysctl-self-test
+
+echo "route sidecar sees eth0 only after the host write"
+ro_src=$(mktemp -d)
+ro_mnt=$(mktemp -d)
+printf '1\n' >"$ro_src/accept_ra"
+sudo mount --bind "$ro_src" "$ro_mnt"
+sudo mount -o remount,bind,ro "$ro_mnt"
+ro_cleanup() { sudo umount "$ro_mnt" >/dev/null 2>&1 || true; rm -rf "$ro_src" "$ro_mnt"; }
+if bash lab/scripts/android-ue-route.sh --write-zero-self-test "$ro_mnt/accept_ra"; then
+  ro_cleanup
+  echo "sidecar accepted eth0=1 on a read-only sysctl" >&2
+  exit 1
+fi
+printf '0\n' >"$ro_src/accept_ra"
+if ! bash lab/scripts/android-ue-route.sh --write-zero-self-test "$ro_mnt/accept_ra"; then
+  ro_cleanup
+  echo "sidecar rejected eth0 after the host had set it to 0" >&2
+  exit 1
+fi
+ro_cleanup
 
 echo "ipv4 input filter"
 v4rules=$(bash lab/scripts/android-ue-route.sh --render-ip4-input)
@@ -720,7 +785,14 @@ fi
 fixdir=$(mktemp -d)
 cat >"$fixdir/docker" <<'EOF'
 #!/bin/bash
-printf '%s\n' 4242
+target=${*: -1}
+case "$target" in
+  l5gd-ue1) printf '%s\n' "/l5gd-ue1 4242" ;;
+  *)
+    echo "refusing sysctl target ${target}" >&2
+    exit 1
+    ;;
+esac
 EOF
 cat >"$fixdir/nsenter" <<'EOF'
 #!/bin/bash
@@ -731,9 +803,20 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-if [ "${1:-}" = cat ]; then
+cmd=${1:-}
+base=${cmd##*/}
+if [ "$base" = cat ]; then
   case "${2:-}" in
-    /proc/sys/*) printf '0\n' ;;
+    /proc/sys/*)
+      rel=${2#/proc/sys/}
+      key=$(printf '%s\n' "$rel" | tr '/' '.')
+      file="${ANDROID_UE_FIXTURE_STATE}/${key}"
+      if [ -f "$file" ]; then
+        cat "$file"
+      else
+        printf '1\n'
+      fi
+      ;;
     /sys/*)
       echo "fixture refused a host sysfs read: ${2:-}" >&2
       exit 1
@@ -744,6 +827,36 @@ if [ "${1:-}" = cat ]; then
       ;;
   esac
   exit 0
+fi
+if [ "$base" = sysctl ]; then
+  if [ "${2:-}" != -w ]; then
+    echo "fixture sysctl expected -w, got: $*" >&2
+    exit 1
+  fi
+  spec=${3:-}
+  key=${spec%%=*}
+  val=${spec#*=}
+  if [ "${ANDROID_UE_FIXTURE_MODE:-up}" = writefail ]; then
+    echo "host sysctl write failed" >&2
+    exit 1
+  fi
+  if [ "${ANDROID_UE_FIXTURE_MODE:-up}" = stay1 ]; then
+    printf '1\n' >"${ANDROID_UE_FIXTURE_STATE}/${key}"
+    exit 0
+  fi
+  if [ "${ANDROID_UE_FIXTURE_MODE:-up}" = eth0autoconf ] && [ "$key" = net.ipv6.conf.eth0.autoconf ]; then
+    printf '1\n' >"${ANDROID_UE_FIXTURE_STATE}/${key}"
+    exit 0
+  fi
+  printf '%s\n' "$val" >"${ANDROID_UE_FIXTURE_STATE}/${key}"
+  exit 0
+fi
+if [ "$base" = iptables ]; then
+  if [ "${2:-}" = -S ] && { [ "${3:-}" = ANDROID_UE_GUARD ] || [ "${3:-}" = ANDROID_UE_IN4 ]; }; then
+    exit 0
+  fi
+  echo "fixture iptables unexpected: $*" >&2
+  exit 1
 fi
 exec "$@"
 EOF
@@ -775,9 +888,18 @@ case "$joined" in
   "-6 route show")
     printf '%s\n' "unreachable default metric 1"
     ;;
+  "link show dev tun_srsue"|"link show dev dummy0"|"link show dev eth0")
+    exit 0
+    ;;
+  "link show dev l5gd-screen")
+    exit 1
+    ;;
   "-o link show")
     printf '%s\n' "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000"
     printf '%s\n' "2: dummy0: <BROADCAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000"
+    printf '%s\n' "3: eth0: <BROADCAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000"
+    printf '%s\n' "4: tun_srsue: <POINTOPOINT,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000"
+    printf '%s\n' "5: l5gd-screen: <BROADCAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000"
     ;;
   *)
     echo "fixture ip unexpected: $joined" >&2
@@ -788,11 +910,13 @@ EOF
 chmod 0755 "$fixdir/docker" "$fixdir/nsenter" "$fixdir/ip"
 run_require() {
   local mode=$1
+  rm -rf "$fixdir/state"
+  mkdir -p "$fixdir/state"
   (
     ANDROID_UE_SOURCE_ONLY=1
     # shellcheck disable=SC1091
     . lab/scripts/android-ue-up.sh
-    ANDROID_UE_FIXTURE_MODE=$mode PATH="$fixdir:$PATH" android_ue_require_ipv6 1
+    ANDROID_UE_FIXTURE_MODE=$mode ANDROID_UE_FIXTURE_STATE="$fixdir/state" ANDROID_UE_TUN_WAIT=1 PATH="$fixdir:$PATH" android_ue_require_ipv6 1
   )
 }
 if ! run_require up >/tmp/android-ue-require-up.out; then
@@ -803,6 +927,10 @@ if ! grep -q 'dummy0 ULA' /tmp/android-ue-require-up.out; then
   echo "require_ipv6 did not report the ULA anchor" >&2
   exit 1
 fi
+if ! grep -qx 0 "$fixdir/state/net.ipv6.conf.tun_srsue.accept_ra"; then
+  echo "host did not set accept_ra=0 on tun_srsue after the sidecar write was skipped" >&2
+  exit 1
+fi
 if run_require down >/dev/null 2>&1; then
   echo "require_ipv6 accepted a DOWN dummy0" >&2
   exit 1
@@ -811,7 +939,66 @@ if run_require tentative >/dev/null 2>&1; then
   echo "require_ipv6 accepted a tentative ULA" >&2
   exit 1
 fi
+if run_require writefail >/tmp/android-ue-require-write.out 2>/tmp/android-ue-require-write.err; then
+  echo "require_ipv6 continued after the host sysctl write failed" >&2
+  exit 1
+fi
+if ! grep -q 'host sysctl' /tmp/android-ue-require-write.err; then
+  cat /tmp/android-ue-require-write.err >&2
+  echo "a failed host sysctl write was not reported" >&2
+  exit 1
+fi
+if run_require stay1 >/tmp/android-ue-require-stay.out 2>/tmp/android-ue-require-stay.err; then
+  echo "require_ipv6 accepted a sysctl that stayed at 1" >&2
+  exit 1
+fi
+if ! grep -q 'is 1, expected 0' /tmp/android-ue-require-stay.err; then
+  cat /tmp/android-ue-require-stay.err >&2
+  echo "a sysctl left at 1 was not rejected" >&2
+  exit 1
+fi
+if run_require eth0autoconf >/tmp/android-ue-require-eth0.out 2>/tmp/android-ue-require-eth0.err; then
+  echo "require_ipv6 accepted autoconf=1 on eth0" >&2
+  exit 1
+fi
+if ! grep -q 'net.ipv6.conf.eth0.autoconf is 1, expected 0' /tmp/android-ue-require-eth0.err; then
+  cat /tmp/android-ue-require-eth0.err >&2
+  echo "eth0 autoconf=1 was not fail-closed" >&2
+  exit 1
+fi
 rm -rf "$fixdir"
+
+echo "tun created after defaults inherits 0"
+inherit_ns=android-ue-inherit-$$
+(
+  set -euo pipefail
+  trap 'sudo ip netns del "$inherit_ns" >/dev/null 2>&1 || true' EXIT
+  sudo ip netns add "$inherit_ns"
+  sudo ip netns exec "$inherit_ns" sysctl -w \
+    net.ipv6.conf.all.accept_ra=0 \
+    net.ipv6.conf.all.autoconf=0 \
+    net.ipv6.conf.all.forwarding=0 \
+    net.ipv6.conf.default.accept_ra=0 \
+    net.ipv6.conf.default.autoconf=0 \
+    net.ipv6.conf.default.forwarding=0 >/dev/null
+  sudo ip netns exec "$inherit_ns" ip link add tun_srsue type veth peer name tun_peer
+  for knob in accept_ra autoconf forwarding; do
+    got=$(sudo ip netns exec "$inherit_ns" cat "/proc/sys/net/ipv6/conf/tun_srsue/${knob}")
+    if [ "$got" != 0 ]; then
+      echo "tun created after up inherited ${knob}=${got}" >&2
+      exit 1
+    fi
+  done
+  sudo ip netns exec "$inherit_ns" ip link del tun_srsue
+  sudo ip netns exec "$inherit_ns" ip link add tun_srsue type veth peer name tun_peer
+  for knob in accept_ra autoconf forwarding; do
+    got=$(sudo ip netns exec "$inherit_ns" cat "/proc/sys/net/ipv6/conf/tun_srsue/${knob}")
+    if [ "$got" != 0 ]; then
+      echo "re-attached tun kept ${knob}=${got}" >&2
+      exit 1
+    fi
+  done
+)
 
 if android_ue_android_image_ok 'halimqarroum/docker-android:api-33'; then
   echo "registry image without a digest was accepted" >&2

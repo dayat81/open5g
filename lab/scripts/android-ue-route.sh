@@ -101,6 +101,28 @@ if [ "${1:-}" = "--render-ip4-input" ]; then
   exit 0
 fi
 
+# Write 0, then read it back. A failed write is acceptable only when the
+# value is already 0. Never skip quietly.
+android_ue_route_write_zero() {
+  local sys=$1
+  local got
+  if [ ! -e "$sys" ]; then
+    echo "android-ue-route: ${sys} does not exist, expected 0" >&2
+    exit 1
+  fi
+  printf '0\n' >"$sys" 2>/dev/null || true
+  got=$(cat "$sys" 2>/dev/null || echo missing)
+  if [ "$got" != "0" ]; then
+    echo "android-ue-route: ${sys} is ${got}, expected 0" >&2
+    exit 1
+  fi
+}
+
+if [ "${1:-}" = "--write-zero-self-test" ]; then
+  android_ue_route_write_zero "${2:?sysctl path}"
+  exit 0
+fi
+
 tun=${ANDROID_UE_TUN:-tun_srsue}
 enb=${ANDROID_UE_ENB_UU:?ANDROID_UE_ENB_UU}
 timeout_s=${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
@@ -193,20 +215,14 @@ android_ue_route_install_adb
 android_ue_route_ipv6_lock() {
   local key iface knob sys
   for key in all default lo dummy0; do
-    sys="/proc/sys/net/ipv6/conf/${key}/disable_ipv6"
-    if [ -w "$sys" ]; then
-      printf '0\n' >"$sys"
-    fi
+    android_ue_route_write_zero "/proc/sys/net/ipv6/conf/${key}/disable_ipv6"
   done
   for iface in $(ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
     if [ "$iface" = "lo" ]; then
       continue
     fi
     for knob in accept_ra autoconf forwarding; do
-      sys="/proc/sys/net/ipv6/conf/${iface}/${knob}"
-      if [ -w "$sys" ]; then
-        printf '0\n' >"$sys"
-      fi
+      android_ue_route_write_zero "/proc/sys/net/ipv6/conf/${iface}/${knob}"
     done
   done
 }
@@ -266,10 +282,7 @@ android_ue_route_anchor() {
   fi
   ip link set dummy0 addrgenmode none
   ip link set dummy0 up
-  sys=/proc/sys/net/ipv6/conf/dummy0/disable_ipv6
-  if [ -w "$sys" ]; then
-    printf '0\n' >"$sys"
-  fi
+  android_ue_route_write_zero /proc/sys/net/ipv6/conf/dummy0/disable_ipv6
   if ! ip -6 addr show dev dummy0 | grep -q "inet6 ${addr}/128"; then
     ip -6 addr add "$ula" dev dummy0 nodad
   fi
