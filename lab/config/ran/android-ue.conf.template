@@ -1,0 +1,39 @@
+# srsUE template for one android-ue user.
+# lab/scripts/gen-android-ue.sh mounts this file into every UE container.
+# The Gradiant entrypoint runs envsubst before srsue. Fill the process
+# environment from the gitignored env file. Do not put IMSI, Ki, OPc, or
+# IMEI literals in this file. Leave [gw] netns unset so tun_srsue stays in
+# this container network namespace, which the emulator shares.
+
+[rf]
+device_name = zmq
+device_args = tx_port0=tcp://${UE_ADDRESS}:2001,rx_port0=tcp://${ENB_ADDRESS}:2000,tx_port1=tcp://${UE_ADDRESS}:2101,rx_port1=tcp://${ENB_ADDRESS}:2100,id=ue,base_srate=${ZMQ_BASE_SRATE}
+tx_gain = ${TX_GAIN}
+
+[rat.eutra]
+dl_earfcn = ${DL_EARFCN}
+
+[pcap]
+enable = none
+
+[log]
+all_level = info
+filename = stdout
+
+[usim]
+mode = soft
+algo = ${UE_ALGO}
+opc = ${UE_OPC}
+k = ${UE_KI}
+imsi = ${UE_IMSI}
+imei = ${UE_IMEI}
+
+[nas]
+apn = ${APN}
+apn_protocol = ipv4
+force_imsi_attach = true
+
+[gw]
+
+[gui]
+enable = false

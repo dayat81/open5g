@@ -1,0 +1,8 @@
+# TCP-only resolver for the android-ue SOCKS sidecar.
+# render-corefile.sh replaces the upstream token. Do not add a log plugin.
+. {
+    bind 127.0.0.1
+    forward . tcp://__DNS_UPSTREAM__ {
+        force_tcp
+    }
+}

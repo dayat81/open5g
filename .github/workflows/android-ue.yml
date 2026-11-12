@@ -1,0 +1,30 @@
+name: android-ue
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  android-ue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nftables and shellcheck
+        run: sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nftables shellcheck
+      - name: Install standalone docker-compose v2.29.7
+        run: |
+          curl -fsSL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64"
+          chmod +x /tmp/docker-compose
+          /tmp/docker-compose version
+      - name: Check shellcheck, nft, DNS, seed, tunnel rollback, and UPF route
+        env:
+          ANDROID_UE_COMPOSE_BIN: /tmp/docker-compose
+          ANDROID_UE_REQUIRE_COMPOSE_VERSION: 2.29.7
+        run: lab/scripts/check-android-ue.sh
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Open5G Android emulator image
+        run: bash lab/images/android-emulator/build.sh
