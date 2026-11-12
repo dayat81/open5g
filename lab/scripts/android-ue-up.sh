@@ -73,34 +73,31 @@ android_ue_wait_route() {
   echo "android-ue: ${cid} exited 0"
 }
 
+android_ue_netns_read() {
+  local pid=$1
+  local path=$2
+  # -m uses the container mount namespace. -n alone would read the host /proc and /sys.
+  nsenter -t "$pid" -n -m cat "$path"
+}
+
 android_ue_require_ipv6() {
   local n=$1
-  local pid proc sysroot iface knob val key
+  local pid link addrs iface knob val key
   pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}")
-  proc=$(mktemp)
-  sysroot=$(mktemp -d)
-  nsenter -t "$pid" -n cat /proc/net/if_inet6 >"$proc"
   if ! nsenter -t "$pid" -n ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
     echo "android-ue: ::1 is missing on lo in the ue${n} netns" >&2
-    rm -rf "$proc" "$sysroot"
     exit 1
   fi
-  while read -r _addr _idx _plen _scope _flags name; do
-    [ -n "$name" ] || continue
-    mkdir -p "${sysroot}/${name}"
-    nsenter -t "$pid" -n cat "/sys/class/net/${name}/flags" >"${sysroot}/${name}/flags" 2>/dev/null || printf '0\n' >"${sysroot}/${name}/flags"
-  done <"$proc"
-  if ! android_ue_ula_proc_ok "$proc" "$sysroot"; then
+  link=$(nsenter -t "$pid" -n ip -o link show dev dummy0 2>/dev/null || true)
+  if ! android_ue_link_is_up "$link"; then
+    echo "android-ue: ue${n} dummy0 is not UP" >&2
+    exit 1
+  fi
+  addrs=$(nsenter -t "$pid" -n ip -6 -o addr show dev dummy0 scope global 2>/dev/null || true)
+  if ! printf '%s\n' "$addrs" | android_ue_dummy0_ula_ok; then
     echo "android-ue: ue${n} dummy0 has no UP non-tentative ULA. fe80 does not replace it." >&2
-    rm -rf "$proc" "$sysroot"
     exit 1
   fi
-  if ! nsenter -t "$pid" -n ip link show dummy0 >/dev/null 2>&1; then
-    echo "android-ue: dummy0 anchor is missing in the ue${n} netns" >&2
-    rm -rf "$proc" "$sysroot"
-    exit 1
-  fi
-  rm -rf "$proc" "$sysroot"
   if ! nsenter -t "$pid" -n ip -6 route show | grep -q 'unreachable default'; then
     echo "android-ue: ue${n} is missing the unreachable IPv6 default route" >&2
     exit 1
@@ -109,26 +106,19 @@ android_ue_require_ipv6() {
     echo "android-ue: ue${n} still has a usable IPv6 default route" >&2
     exit 1
   fi
-  for key in all default; do
-    val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${key}/disable_ipv6" 2>/dev/null || echo missing)
+  for key in all default lo dummy0; do
+    val=$(android_ue_netns_read "$pid" "/proc/sys/net/ipv6/conf/${key}/disable_ipv6" 2>/dev/null || echo missing)
     if [ "$val" != "0" ]; then
       echo "android-ue: disable_ipv6 on ${key} is ${val}, expected 0" >&2
       exit 1
     fi
   done
   for iface in $(nsenter -t "$pid" -n ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
-    if [ "$iface" = "lo" ] || [ "$iface" = "dummy0" ]; then
-      val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${iface}/disable_ipv6" 2>/dev/null || echo missing)
-      if [ "$val" != "0" ]; then
-        echo "android-ue: disable_ipv6 on ${iface} is ${val}, expected 0" >&2
-        exit 1
-      fi
-    fi
     if [ "$iface" = "lo" ]; then
       continue
     fi
     for knob in accept_ra autoconf forwarding; do
-      val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${iface}/${knob}")
+      val=$(android_ue_netns_read "$pid" "/proc/sys/net/ipv6/conf/${iface}/${knob}")
       if [ "$val" != "0" ]; then
         echo "android-ue: ${knob} on ${iface} is ${val}, expected 0" >&2
         exit 1
@@ -252,6 +242,10 @@ android_ue_probe_sgi() {
   fi
   echo "android-ue: SGi ping from ue${n} succeeded"
 }
+
+if [ "${ANDROID_UE_SOURCE_ONLY:-0}" = 1 ]; then
+  return 0
+fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
