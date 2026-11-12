@@ -47,10 +47,19 @@ if [ -z "$out" ]; then
   out="$root/lab/compose/magen.images.env"
 fi
 
-resolved=$(git -C "$root" rev-parse --verify "${sha}^{commit}" 2>/dev/null || true)
-if [ "$resolved" != "$expected" ]; then
-  echo "magen: refusing SHA ${sha}. Images must be built from ${expected} (PR #13). B0/B2 images from #12 are rejected." >&2
-  exit 1
+case "$sha" in
+  7fe7e85|7fe7e85cdae36f0615b115627e36c73412a4644c) ;;
+  *)
+    echo "magen: refusing SHA ${sha}. Images must be built from ${expected} (PR #13). B0/B2 images from #12 are rejected." >&2
+    exit 1
+    ;;
+esac
+if git -C "$root" cat-file -e "${expected}^{commit}" 2>/dev/null; then
+  resolved=$(git -C "$root" rev-parse --verify "${sha}^{commit}")
+  if [ "$resolved" != "$expected" ]; then
+    echo "magen: refusing SHA ${sha}. Images must be built from ${expected} (PR #13). B0/B2 images from #12 are rejected." >&2
+    exit 1
+  fi
 fi
 
 if [ "$do_build" -eq 0 ]; then
