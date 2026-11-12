@@ -1,0 +1,5 @@
+---
+magen_guest_host: REPLACE_MAGEN_GUEST_HOST
+magen_guest_key: REPLACE_MAGEN_GUEST_KEY
+magen_gui_only: true
+magen_with_dashboard: false

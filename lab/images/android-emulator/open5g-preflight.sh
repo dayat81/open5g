@@ -48,7 +48,49 @@ android_emulator_avd_guard() {
   fi
 }
 
-if [ "${ANDROID_UE_ISOLATED:-}" = "1" ]; then
+# lo keeps ::1. Non-lo interfaces and default are off. all is left alone:
+# all=1 would also disable lo.
+android_emulator_ipv6_nonlo_off() {
+  local val iface
+  echo "android-emulator: ANDROID_UE_IPV6_MODE=off checks non-lo interfaces. lo keeps ::1."
+  val=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo missing)
+  if [ "$val" = "1" ]; then
+    echo "android-emulator: disable_ipv6 on all is 1. Leave all unset so lo keeps ::1." >&2
+    exit 1
+  fi
+  val=$(cat /proc/sys/net/ipv6/conf/default/disable_ipv6 2>/dev/null || echo missing)
+  if [ "$val" != "1" ]; then
+    echo "android-emulator: disable_ipv6 on default is ${val}, expected 1" >&2
+    exit 1
+  fi
+  val=$(cat /proc/sys/net/ipv6/conf/lo/disable_ipv6 2>/dev/null || echo missing)
+  if [ "$val" != "0" ]; then
+    echo "android-emulator: disable_ipv6 on lo is ${val}, expected 0" >&2
+    exit 1
+  fi
+  if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
+    echo "android-emulator: ::1 is missing on lo" >&2
+    exit 1
+  fi
+  for iface in $(ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
+    if [ "$iface" = "lo" ]; then
+      continue
+    fi
+    val=$(cat "/proc/sys/net/ipv6/conf/${iface}/disable_ipv6" 2>/dev/null || echo missing)
+    if [ "$val" != "1" ]; then
+      echo "android-emulator: disable_ipv6 on ${iface} is ${val}, expected 1" >&2
+      exit 1
+    fi
+    if ip -6 addr show dev "$iface" | grep -q 'scope global'; then
+      echo "android-emulator: ${iface} has a global IPv6 address" >&2
+      exit 1
+    fi
+  done
+}
+
+if [ "${ANDROID_UE_IPV6_MODE:-}" = "off" ]; then
+  android_emulator_ipv6_nonlo_off
+elif [ "${ANDROID_UE_ISOLATED:-}" = "1" ]; then
   echo "android-emulator: ANDROID_UE_ISOLATED=1, skipping dummy0, ULA, and AI_ADDRCONFIG"
   if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
     echo "android-emulator: ::1 is missing on lo" >&2
