@@ -101,6 +101,8 @@ def _scope(conn, settings: Settings, ue_id: str):
 
 
 def _target_for(settings: Settings, ue_id: str, row):
+    if settings.emulator_screen_mode == "host-agen":
+        return settings.screen_upstream
     if row is not None and row["internal_host"] and row["internal_port"]:
         host, port = str(row["internal_host"]), int(row["internal_port"])
     else:

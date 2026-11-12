@@ -26,6 +26,12 @@ sh_scripts=(
   lab/scripts/android-ue-add-ue.sh
   lab/scripts/render-corefile.sh
   lab/scripts/android-ue-screen.sh
+  lab/scripts/android-ue-screen-bind.sh
+  lab/scripts/android-ue-screen-host.sh
+  lab/scripts/android-ue-screen-publish.sh
+  lab/scripts/android-ue-screen-tunnel.sh
+  lab/scripts/android-ue-screen-mode.sh
+  lab/scripts/android-ue-screen-standalone.sh
 )
 
 echo "shellcheck"
@@ -83,7 +89,16 @@ scan_paths=(
   docs/integration/android-ue-per-user.md
   docs/deploy/android-ue-lab5g-dev.md
   docs/deploy/android-emulator-dashboard.md
+  docs/deploy/android-emulator-host-screen.md
+  lab/compose/compose.screen-standalone.yml
+  lab/compose/screen-standalone.env.example
   lab/scripts/android-ue-screen.sh
+  lab/scripts/android-ue-screen-bind.sh
+  lab/scripts/android-ue-screen-host.sh
+  lab/scripts/android-ue-screen-publish.sh
+  lab/scripts/android-ue-screen-tunnel.sh
+  lab/scripts/android-ue-screen-mode.sh
+  lab/scripts/android-ue-screen-standalone.sh
   .github/workflows/android-ue.yml
   lab/images/android-emulator
 )
@@ -1059,6 +1074,112 @@ printf '%s\n' "$with_socks" | grep -qx 'egress'
 printf '%s\n' "$with_socks" | grep -qx 'egress-dns'
 printf '%s\n' "$with_socks" | grep -qx 'cgnat'
 
+echo "host screen demo"
+lab/scripts/android-ue-screen-standalone.sh --check
+if SCREEN_STANDALONE_ENV=lab/compose/screen-standalone.env.example \
+  lab/scripts/android-ue-screen-standalone.sh --print; then
+  echo "standalone print accepted the placeholder env" >&2
+  exit 1
+fi
+pin=$(python3 -c 'print("b"*64)')
+printed=$(ANDROID_UE_SCREEN_IMAGE="sha256:${pin}" ANDROID_EMULATOR_NETWORK=emulator-net \
+  lab/scripts/android-ue-screen-standalone.sh --print)
+printf '%s\n' "$printed" | grep -q 'compose.screen-standalone.yml'
+printf '%s\n' "$printed" | grep -q ' up -d'
+if printf '%s\n' "$printed" | grep -q 'sha256:'; then
+  echo "standalone print leaked the image id" >&2
+  exit 1
+fi
+if ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy:local" ANDROID_EMULATOR_NETWORK=emulator-net \
+  lab/scripts/android-ue-screen-standalone.sh --print; then
+  echo "standalone print accepted an unpinned tag" >&2
+  exit 1
+fi
+digest_print=$(ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy@sha256:${pin}" \
+  ANDROID_EMULATOR_NETWORK=emulator-net \
+  lab/scripts/android-ue-screen-standalone.sh --print)
+printf '%s\n' "$digest_print" | grep -q ' up -d'
+if ANDROID_UE_SCREEN_BIND=0.0.0.0 lab/scripts/android-ue-screen-host.sh --check-bind; then
+  echo "host screen bind accepted every interface" >&2
+  exit 1
+fi
+if ANDROID_UE_SCREEN_BIND=127.0.0.1 lab/scripts/android-ue-screen-host.sh --check-bind; then
+  echo "host screen bind accepted loopback" >&2
+  exit 1
+fi
+if ! ANDROID_UE_SCREEN_BIND=192.0.2.32 lab/scripts/android-ue-screen-host.sh --check-bind; then
+  echo "host screen bind rejected a documentation address" >&2
+  exit 1
+fi
+if ! ANDROID_UE_SCREEN_PATH=/emulator/b0 lab/scripts/android-ue-screen-host.sh --check-path; then
+  echo "host screen path rejected the demo path" >&2
+  exit 1
+fi
+if ANDROID_UE_SCREEN_PATH=/emulator/../ue1 lab/scripts/android-ue-screen-host.sh --check-path; then
+  echo "host screen path accepted a traversal" >&2
+  exit 1
+fi
+grep -q '127.0.0.1:5555' lab/scripts/android-ue-screen-host.sh
+grep -q 'scrcpy-server.jar' lab/scripts/android-ue-screen-host.sh
+grep -q 'node index.js' lab/scripts/android-ue-screen-host.sh
+if grep -q 'npm start' lab/scripts/android-ue-screen-host.sh || grep -q 'adb -a' lab/scripts/android-ue-screen-host.sh; then
+  echo "host screen entrypoint rebuilds on start or shares every adb interface" >&2
+  exit 1
+fi
+if SCREEN_PUBLISH_BIND=0.0.0.0 lab/scripts/android-ue-screen-publish.sh --check-bind; then
+  echo "screen publish accepted every interface" >&2
+  exit 1
+fi
+if ! ANDROID_EMULATOR_CONTAINER=b0-agen-emu lab/scripts/android-ue-screen-publish.sh --check-upstream; then
+  echo "screen publish rejected the emulator container name" >&2
+  exit 1
+fi
+if ANDROID_EMULATOR_CONTAINER=0.0.0.0 lab/scripts/android-ue-screen-publish.sh --check-upstream; then
+  echo "screen publish accepted an unspecified upstream" >&2
+  exit 1
+fi
+if ANDROID_EMULATOR_SSH_TARGET=REPLACE_ANDROID_EMULATOR_SSH_TARGET lab/scripts/android-ue-screen-tunnel.sh --print; then
+  echo "screen tunnel accepted a placeholder target" >&2
+  exit 1
+fi
+tunnel=$(ANDROID_EMULATOR_SSH_TARGET=operator@example.invalid lab/scripts/android-ue-screen-tunnel.sh --print)
+printf '%s\n' "$tunnel" | grep -q -- '-L 127.0.0.1:3302:127.0.0.1:3301'
+if printf '%s\n' "$tunnel" | grep -Eq -- '(^|[[:space:]])-R([[:space:]]|$)|0\.0\.0\.0|-g([[:space:]]|$)'; then
+  echo "screen tunnel is not loopback-only: ${tunnel}" >&2
+  exit 1
+fi
+laptop=$(ANDROID_EMULATOR_SSH_TARGET=operator@example.invalid SCREEN_TUNNEL_LOCAL_PORT=3301 \
+  lab/scripts/android-ue-screen-tunnel.sh --print)
+printf '%s\n' "$laptop" | grep -q -- '-L 127.0.0.1:3301:127.0.0.1:3301'
+mode_guest=$(lab/scripts/android-ue-screen-mode.sh)
+printf '%s\n' "$mode_guest" | grep -qx 'mode=guest'
+poison=$(OPEN5G_EMULATOR_SCREEN_MODE=guest SCREEN_UPSTREAM_URL='http://198.51.100.10:3301' \
+  lab/scripts/android-ue-screen-mode.sh)
+printf '%s\n' "$poison" | grep -qx 'mode=guest'
+if OPEN5G_EMULATOR_SCREEN_MODE=host-agen lab/scripts/android-ue-screen-mode.sh; then
+  echo "host-agen mode ran with an empty upstream" >&2
+  exit 1
+fi
+if OPEN5G_EMULATOR_SCREEN_MODE=host-agen SCREEN_UPSTREAM_URL='http://198.51.100.10:3301' \
+  lab/scripts/android-ue-screen-mode.sh; then
+  echo "host-agen mode accepted a non-loopback upstream" >&2
+  exit 1
+fi
+ready=$(OPEN5G_EMULATOR_SCREEN_MODE=host-agen SCREEN_UPSTREAM_URL='http://127.0.0.1:3302' \
+  lab/scripts/android-ue-screen-mode.sh)
+printf '%s\n' "$ready" | grep -qx 'mode=host-agen upstream=loopback'
+if printf '%s\n' "$ready" | grep -q '3302'; then
+  echo "mode check printed the upstream URL" >&2
+  exit 1
+fi
+grep -q 'ANDROID_EMULATOR_CONTAINER=b0-agen-emu' lab/compose/screen-standalone.env.example
+grep -q 'REPLACE_ANDROID_EMULATOR_NETWORK' lab/compose/screen-standalone.env.example
+grep -q 'REPLACE_ANDROID_UE_SCREEN_IMAGE' lab/compose/screen-standalone.env.example
+if grep -q 'group_add:' lab/compose/compose.screen-standalone.yml || grep -q '/dev/kvm' lab/compose/compose.screen-standalone.yml; then
+  echo "standalone screen compose claims kvm" >&2
+  exit 1
+fi
+
 echo "compose config"
 if [ -n "${ANDROID_UE_COMPOSE_BIN:-}" ]; then
   # shellcheck disable=SC2206
@@ -1119,6 +1240,46 @@ if grep -E -n '(^|[^0-9A-Fa-f])[0-9A-Fa-f]{32}([^0-9A-Fa-f]|$)' "$rendered" "$so
   echo "rendered compose contains a 32-hex USIM value" >&2
   exit 1
 fi
+
+echo "standalone screen compose render"
+standalone_rendered=$tmp/rendered-screen.json
+"${compose[@]}" -f lab/compose/compose.screen-standalone.yml \
+  --env-file lab/compose/screen-standalone.env.example \
+  config --format json >"$standalone_rendered"
+python3 - "$standalone_rendered" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    rendered = json.load(handle)
+services = rendered.get("services") or {}
+if set(services) != {"screen", "screen-publish"}:
+    sys.exit(f"unexpected services: {sorted(services)}")
+screen = services["screen"]
+publish = services["screen-publish"]
+if screen.get("network_mode") != "container:b0-agen-emu":
+    sys.exit(f"screen network mode is {screen.get('network_mode')}")
+if screen.get("ports") or screen.get("build") or publish.get("build"):
+    sys.exit("screen publishes a port or the file builds an image")
+ports = publish.get("ports") or []
+if len(ports) != 1:
+    sys.exit(f"expected one published port, got {ports}")
+binding = ports[0]
+host_ip = str(binding.get("host_ip") or "")
+published = str(binding.get("published") or "")
+target = str(binding.get("target") or "")
+if host_ip != "127.0.0.1" or published != "3301" or target != "3301":
+    sys.exit(f"published port is not loopback 3301: {binding}")
+for service in (screen, publish):
+    if service.get("privileged"):
+        sys.exit("standalone screen service is privileged")
+    if "NET_ADMIN" in " ".join(service.get("cap_add") or []):
+        sys.exit("standalone screen service adds NET_ADMIN")
+blob = json.dumps(rendered)
+for banned in ("0.0.0.0", "/dev/kvm", "group_add"):
+    if banned in blob:
+        sys.exit(f"rendered standalone compose contains {banned}")
+PY
 
 echo "cgnat volume mounts"
 python3 - <<'PY'

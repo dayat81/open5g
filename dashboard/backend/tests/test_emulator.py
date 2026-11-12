@@ -11,6 +11,8 @@ from open5g_dashboard.emulator import (
     is_idle,
     origin_allowed,
     origins_are_isolated,
+    parse_screen_mode,
+    parse_screen_upstream,
     parse_targets,
     rewrite_location,
     safe_query,
@@ -50,6 +52,26 @@ def test_targets_stay_inside_the_screen_allowlist():
         parse_targets("ue1=ue1.internal:8000", nets, 8000)
     with pytest.raises(ValueError):
         parse_targets("ue1=192.0.2.32:27017", nets, 8000)
+
+
+def test_host_agen_upstream_stays_on_loopback():
+    assert parse_screen_mode("") == "guest"
+    assert parse_screen_mode("guest") == "guest"
+    assert parse_screen_mode("host-agen") == "host-agen"
+    with pytest.raises(ValueError):
+        parse_screen_mode("public")
+    assert parse_screen_upstream("") is None
+    assert parse_screen_upstream("http://127.0.0.1:3302/") == ("127.0.0.1", 3302)
+    assert parse_screen_upstream("ws://127.0.0.1:3302") == ("127.0.0.1", 3302)
+    for raw in (
+        "http://0.0.0.0:3301",
+        "http://198.51.100.10:3301",
+        "http://localhost:3301",
+        "http://127.0.0.1:3301/emulator/ue1",
+        "http://user:secret@127.0.0.1:3301",
+    ):
+        with pytest.raises(ValueError):
+            parse_screen_upstream(raw)
 
 
 def test_origin_csrf_query_and_idle_rules():

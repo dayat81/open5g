@@ -130,6 +130,10 @@ This needs the lab guest, KVM, and an attached UE. CI does not run it.
 
 Before `OPEN5G_EMULATOR_ENABLED=1`, the lab window for PR #12 stays on that branch's tree. This overlay adds `l5gd-screen` and an interface-scoped INPUT rule, so it is not the tree for that window.
 
+## Docker host demo
+
+The guest path above stays the default. A separate compose file can run the same ws-scrcpy image next to an emulator that is already running on the Docker host. It publishes `127.0.0.1:3301` only. See [`android-emulator-host-screen.md`](android-emulator-host-screen.md). Leave `OPEN5G_EMULATOR_SCREEN_MODE` unset unless that runbook is in use.
+
 ## Phase 2
 
 - A real view-only watcher, after input and video can be split without granting control.

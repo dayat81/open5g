@@ -1,0 +1,52 @@
+# Demo screen beside an emulator that is already running on the Docker host.
+# This file does not start the emulator, the core, or the dashboard.
+# There is no build key: the host has no egress. Load the image, then set
+# ANDROID_UE_SCREEN_IMAGE to its sha256 id or repo digest.
+# Docker refuses host port publishing on a container network mode, so
+# ws-scrcpy joins the emulator netns and screen-publish is the only
+# published port, on 127.0.0.1. down does not stop the emulator container.
+name: open5g-screen-standalone
+services:
+  screen:
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: open5g-screen
+    restart: "no"
+    network_mode: "container:${ANDROID_EMULATOR_CONTAINER:-b0-agen-emu}"
+    entrypoint: ["/bin/sh", "/opt/open5g/android-ue-screen-host.sh"]
+    environment:
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
+      ANDROID_UE_SCREEN_PATH: ${ANDROID_UE_SCREEN_PATH:-/emulator/b0}
+      ANDROID_ADB_SERVER_PORT: "5038"
+    volumes:
+      - ../scripts/android-ue-screen-bind.sh:/opt/open5g/android-ue-screen-bind.sh:ro
+      - ../scripts/android-ue-screen-host.sh:/opt/open5g/android-ue-screen-host.sh:ro
+    cpus: 0.5
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+  screen-publish:
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: open5g-screen-publish
+    restart: "no"
+    depends_on:
+      screen:
+        condition: service_started
+    entrypoint: ["/bin/sh", "/opt/open5g/android-ue-screen-publish.sh"]
+    environment:
+      ANDROID_EMULATOR_CONTAINER: ${ANDROID_EMULATOR_CONTAINER:-b0-agen-emu}
+      SCREEN_UPSTREAM_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
+      SCREEN_PUBLISH_PORT: "3301"
+    ports:
+      - "127.0.0.1:${SCREEN_HOST_PORT:-3301}:3301"
+    volumes:
+      - ../scripts/android-ue-screen-bind.sh:/opt/open5g/android-ue-screen-bind.sh:ro
+      - ../scripts/android-ue-screen-publish.sh:/opt/open5g/android-ue-screen-publish.sh:ro
+    networks: [emulator]
+    cpus: 0.25
+    mem_limit: 128m
+    security_opt:
+      - no-new-privileges:true
+networks:
+  emulator:
+    external: true
+    name: ${ANDROID_EMULATOR_NETWORK:?ANDROID_EMULATOR_NETWORK}
