@@ -741,6 +741,10 @@ grep -q 'WS_SCRCPY_PATHNAME' lab/images/ws-scrcpy/patches/0001-pathname.patch
 grep -q 'server.listen(port, listenHost' lab/images/ws-scrcpy/patches/0002-open5g-bind.patch
 grep -q '2000000' lab/images/ws-scrcpy/patches/0002-open5g-bind.patch
 grep -q 'open5g-limits.js' lab/scripts/android-ue-screen.sh
+if grep -E -q '^[[:space:]]*npm run dist([[:space:]]|$)' lab/scripts/android-ue-screen.sh; then
+  echo "screen entrypoint rebuilds ws-scrcpy on every start" >&2
+  exit 1
+fi
 grep -q -- '--screen-only' docs/deploy/android-emulator-dashboard.md
 grep -q 'o5g-screen' docs/deploy/android-emulator-dashboard.md
 grep -q 'S1 evidence is pending' docs/deploy/android-emulator-dashboard.md

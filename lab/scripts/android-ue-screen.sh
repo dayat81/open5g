@@ -162,13 +162,10 @@ if command -v adb >/dev/null 2>&1; then
 fi
 
 cd /opt/ws-scrcpy || exit 1
-set +e
-npm run dist
-status=$?
-set -e
-if [ "$status" -ne 0 ]; then
+if [ ! -d dist/public ]; then
+  echo "android-ue-screen: dist/public is missing. The image build already runs npm run dist." >&2
   stop_children
-  exit "$status"
+  exit 1
 fi
 max_size=${ANDROID_UE_SCREEN_MAX_SIZE:-800}
 bit_rate=${ANDROID_UE_SCREEN_BIT_RATE:-2000000}

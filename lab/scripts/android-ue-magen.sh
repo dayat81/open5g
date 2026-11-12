@@ -131,6 +131,8 @@ compose() {
   "${bin[@]}" -f "$compose_file" --env-file "$env_file" --profile magen-screen "$@"
 }
 
+# The image preflight still requires dummy0, the ULA, and getaddrinfo ::1.
+# This script does not create that anchor and does not skip the check.
 compose up -d magen-emulator
 pid=$(docker inspect -f '{{.State.Pid}}' l5gd-android-magen)
 if ! nsenter -t "$pid" -n env \
