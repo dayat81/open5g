@@ -19,6 +19,28 @@ if [ "${1:-}" = "--render-ip4-input" ]; then
   exit 0
 fi
 
+# Write 0, then read it back. A failed write is acceptable only when the
+# value is already 0. Never skip quietly.
+android_ue_route_write_zero() {
+  local sys=$1
+  local got
+  if [ ! -e "$sys" ]; then
+    echo "android-ue-route: ${sys} does not exist, expected 0" >&2
+    exit 1
+  fi
+  printf '0\n' >"$sys" 2>/dev/null || true
+  got=$(cat "$sys" 2>/dev/null || echo missing)
+  if [ "$got" != "0" ]; then
+    echo "android-ue-route: ${sys} is ${got}, expected 0" >&2
+    exit 1
+  fi
+}
+
+if [ "${1:-}" = "--write-zero-self-test" ]; then
+  android_ue_route_write_zero "${2:?sysctl path}"
+  exit 0
+fi
+
 tun=${ANDROID_UE_TUN:-tun_srsue}
 enb=${ANDROID_UE_ENB_UU:?ANDROID_UE_ENB_UU}
 timeout_s=${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
@@ -81,22 +103,6 @@ android_ue_route_install_input4() {
   "$bin" -A "$chain" -i "$tun" -j DROP
 }
 android_ue_route_install_input4
-# Write 0, then read it back. A read-only /proc/sys is acceptable only when
-# the value is already 0 from compose sysctls or a host write. Never skip quietly.
-android_ue_route_write_zero() {
-  local sys=$1
-  local got
-  if [ ! -e "$sys" ]; then
-    echo "android-ue-route: ${sys} does not exist, expected 0" >&2
-    exit 1
-  fi
-  printf '0\n' >"$sys" 2>/dev/null || true
-  got=$(cat "$sys" 2>/dev/null || echo missing)
-  if [ "$got" != "0" ]; then
-    echo "android-ue-route: ${sys} is ${got}, expected 0" >&2
-    exit 1
-  fi
-}
 # disable_ipv6=0 on all, default, lo, and dummy0. Docker may leave eth0 at 1.
 # accept_ra, autoconf, and forwarding are 0 on each non-lo interface,
 # because all/default do not apply to interfaces that already exist.

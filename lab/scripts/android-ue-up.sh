@@ -139,6 +139,30 @@ android_ue_host_sysctl_set() {
   fi
 }
 
+# Interfaces that exist before attach (eth0, and l5gd-screen when present)
+# do not inherit all/default. Set them from the host before the route sidecar
+# reads them. tun_srsue is set later, after it exists.
+android_ue_preset_existing_iface_sysctls() {
+  local n=$1
+  local pid iface knob
+  pid=$(android_ue_ue_pid "$n")
+  for key in all default; do
+    for knob in accept_ra autoconf forwarding; do
+      android_ue_host_sysctl_set "$pid" "net.ipv6.conf.${key}.${knob}" 0
+    done
+  done
+  while IFS= read -r iface; do
+    [ -n "$iface" ] || continue
+    if [ "$iface" = lo ] || [ "$iface" = tun_srsue ]; then
+      continue
+    fi
+    for knob in accept_ra autoconf forwarding; do
+      android_ue_host_sysctl_set "$pid" "net.ipv6.conf.${iface}.${knob}" 0
+    done
+  done < <(nsenter -t "$pid" -n ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1)
+  echo "android-ue: host set accept_ra, autoconf, and forwarding on existing ue${n} interfaces"
+}
+
 android_ue_require_ipv6() {
   local n=$1
   local pid link addrs iface knob val key
@@ -521,10 +545,12 @@ if docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null | grep 
   exit 1
 fi
 echo "android-ue: starting ${user} only. Core config is not modified."
-android_ue_compose "$root" "$env_file" up -d \
-  "ue${n}" "enb${n}" "ue${n}-route"
-android_ue_wait_route "$n"
 android_ue_require_host_tools
+android_ue_compose "$root" "$env_file" up -d "ue${n}"
+android_ue_preset_existing_iface_sysctls "$n"
+android_ue_compose "$root" "$env_file" up -d \
+  "enb${n}" "ue${n}-route"
+android_ue_wait_route "$n"
 android_ue_require_ipv6 "$n"
 android_ue_install_ip6_filter "$n"
 android_ue_install_gtpu_route "$n"

@@ -328,6 +328,14 @@ if grep -q 'ps -eo comm=' lab/scripts/android-ue-route.sh; then
 fi
 again_at=$(grep -n -F 'refusing to run the route sidecar again' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
 route_up_at=$(awk '/up -d \\$/ { print NR; exit }' lab/scripts/android-ue-up.sh)
+# shellcheck disable=SC2016
+ue_only_at=$(grep -n -F 'up -d "ue${n}"' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+# shellcheck disable=SC2016
+preset_at=$(grep -n -F 'android_ue_preset_existing_iface_sysctls "$n"' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+if [ -z "$ue_only_at" ] || [ -z "$preset_at" ] || [ -z "$route_up_at" ] || [ "$ue_only_at" -ge "$preset_at" ] || [ "$preset_at" -ge "$route_up_at" ]; then
+  echo "up starts the route sidecar before the host sysctl check" >&2
+  exit 1
+fi
 if [ -z "$again_at" ] || [ -z "$route_up_at" ] || [ "$again_at" -ge "$route_up_at" ]; then
   echo "up starts the route sidecar after android is already running" >&2
   exit 1
@@ -397,6 +405,26 @@ fi
 
 echo "cgnat sysctl"
 sh lab/scripts/android-ue-cgnat.sh --sysctl-self-test
+
+echo "route sidecar sees eth0 only after the host write"
+ro_src=$(mktemp -d)
+ro_mnt=$(mktemp -d)
+printf '1\n' >"$ro_src/accept_ra"
+sudo mount --bind "$ro_src" "$ro_mnt"
+sudo mount -o remount,bind,ro "$ro_mnt"
+ro_cleanup() { sudo umount "$ro_mnt" >/dev/null 2>&1 || true; rm -rf "$ro_src" "$ro_mnt"; }
+if bash lab/scripts/android-ue-route.sh --write-zero-self-test "$ro_mnt/accept_ra"; then
+  ro_cleanup
+  echo "sidecar accepted eth0=1 on a read-only sysctl" >&2
+  exit 1
+fi
+printf '0\n' >"$ro_src/accept_ra"
+if ! bash lab/scripts/android-ue-route.sh --write-zero-self-test "$ro_mnt/accept_ra"; then
+  ro_cleanup
+  echo "sidecar rejected eth0 after the host had set it to 0" >&2
+  exit 1
+fi
+ro_cleanup
 
 echo "ipv4 input filter"
 v4rules=$(bash lab/scripts/android-ue-route.sh --render-ip4-input)
