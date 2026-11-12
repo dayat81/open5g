@@ -3,6 +3,12 @@
 # Cap is 2: one eNB+UE+emulator per user, which is all this guest can describe.
 set -euo pipefail
 
+# Sourced by gen-magen.sh. Functions stay defined; the lab writer does not run.
+android_ue_gen_skip_main=0
+if [ "${ANDROID_UE_SOURCE_ONLY:-0}" = 1 ]; then
+  android_ue_gen_skip_main=1
+fi
+
 count=2
 mode="write"
 out=""
@@ -12,6 +18,7 @@ usage() {
   exit 2
 }
 
+if [ "$android_ue_gen_skip_main" = 0 ]; then
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --check) mode="check" ;;
@@ -38,6 +45,7 @@ esac
 if [ "$mode" = "check" ] && [ "$count" != 2 ]; then
   echo "--check compares the committed N=2 overlay" >&2
   exit 2
+fi
 fi
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -160,11 +168,15 @@ EOF
 }
 
 # The only androidN service body. Host ports follow android_ue_adb_host_port.
+# Lab output is the first branch. gen-magen.sh selects the o5g branch.
 emit_android() {
   local n=$1
   local console=$((14554 + n * 1000))
   local adb=$((console + 1))
-  cat <<EOF
+  if [ "${ANDROID_UE_EMIT_PREFIX:-l5gd}" = "l5gd" ] \
+    && [ "${ANDROID_UE_EMIT_PUBLISH_ADB:-1}" = "1" ] \
+    && [ "${ANDROID_UE_EMIT_IPV6_LOCK:-0}" = "0" ]; then
+    cat <<EOF
   android${n}:
     image: \${ANDROID_UE_ANDROID_IMAGE:-open5g-android-emulator:local}
     container_name: l5gd-android${n}
@@ -188,6 +200,45 @@ emit_android() {
       EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS}"
       BOOT_TIMEOUT: \${ANDROID_UE_BOOT_TIMEOUT:-600}
       ANDROID_UE_IPV6_ULA: \${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
+    networks:
+      uemu${n}:
+        ipv4_address: \${ANDROID_UE_UEMU${n}_ANDROID:?ANDROID_UE_UEMU${n}_ANDROID}
+
+EOF
+    return 0
+  fi
+  if [ "${ANDROID_UE_EMIT_PREFIX:-}" != "o5g" ] \
+    || [ "${ANDROID_UE_EMIT_PUBLISH_ADB:-1}" != "0" ] \
+    || [ "${ANDROID_UE_EMIT_IPV6_LOCK:-0}" != "1" ]; then
+    echo "android-ue: emit_android target is not the lab default or magen" >&2
+    exit 2
+  fi
+  # lo stays IPv6-on. default and eth0 are off. all is not set.
+  cat <<EOF
+  android${n}:
+    image: \${O5G_ANDROID_IMAGE:?O5G_ANDROID_IMAGE}
+    container_name: o5g-android${n}
+    restart: "no"
+    cpus: \${O5G_ANDROID_CPUS:?O5G_ANDROID_CPUS}
+    mem_limit: \${O5G_ANDROID_MEM:?O5G_ANDROID_MEM}
+    shm_size: "1gb"
+    devices:
+      - "/dev/kvm:/dev/kvm"
+    group_add:
+      - "\${ANDROID_UE_KVM_GID:?ANDROID_UE_KVM_GID}"
+    sysctls:
+      net.ipv6.conf.default.disable_ipv6: "1"
+      net.ipv6.conf.eth0.disable_ipv6: "1"
+    environment:
+      MEMORY: \${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
+      CORES: \${ANDROID_UE_CORES:?ANDROID_UE_CORES}
+      SKIP_AUTH: \${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
+      DISABLE_ANIMATION: \${ANDROID_UE_DISABLE_ANIMATION:?ANDROID_UE_DISABLE_ANIMATION}
+      EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS}"
+      BOOT_TIMEOUT: \${ANDROID_UE_BOOT_TIMEOUT:-600}
+      ANDROID_UE_IPV6_MODE: "off"
+    volumes:
+      - ../images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro
     networks:
       uemu${n}:
         ipv4_address: \${ANDROID_UE_UEMU${n}_ANDROID:?ANDROID_UE_UEMU${n}_ANDROID}
@@ -345,6 +396,7 @@ networks:
 EOF
 }
 
+if [ "$android_ue_gen_skip_main" = 0 ]; then
 tmp=$(mktemp)
 tmp_fragment=$(mktemp)
 tmp_standalone=$(mktemp)
@@ -383,3 +435,4 @@ case "$mode" in
     fi
     ;;
 esac
+fi
