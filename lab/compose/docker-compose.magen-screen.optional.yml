@@ -1,0 +1,31 @@
+# Optional screen sidecar for a standalone emulator on one host.
+# Not loaded by android-ue-up.sh. It does not start ueN, does not preset
+# sysctls, and does not install the UE netns filters.
+# No host port is published. The sidecar joins the emulator network namespace.
+name: open5g-magen-screen
+services:
+  magen-emulator:
+    profiles: ["magen-screen"]
+    image: ${ANDROID_UE_ANDROID_IMAGE:?ANDROID_UE_ANDROID_IMAGE}
+    container_name: l5gd-android-magen
+    restart: "no"
+    devices:
+      - "/dev/kvm:/dev/kvm"
+  magen-screen:
+    profiles: ["magen-screen"]
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: l5gd-magen-screen
+    restart: "no"
+    network_mode: "container:l5gd-android-magen"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_MODE: standalone
+      ANDROID_UE_SCREEN_BIND: 127.0.0.1
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
+      ANDROID_UE_SCREEN_PATH: /emulator/ue1
+      ANDROID_ADB_SERVER_PORT: "5038"
+    volumes:
+      - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
+    depends_on:
+      magen-emulator:
+        condition: service_started

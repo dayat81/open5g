@@ -130,6 +130,19 @@ This needs the lab guest, KVM, and an attached UE. CI does not run it.
 
 Before `OPEN5G_EMULATOR_ENABLED=1`, the lab window for PR #12 stays on that branch's tree. This overlay adds `l5gd-screen` and an interface-scoped INPUT rule, so it is not the tree for that window.
 
+## Standalone emulator on one host
+
+This mode is not the lab UE. `android-ue-up.sh` does not load it, so the `ueN` sysctl preset, the route sidecar, and `write_zero` stay in that order. IN4, the ADB chain, socat on `UE_UU`, and the UE netns IPv6 filter are **N/A** here, not a pass. They return with the lab UE.
+
+```bash
+sudo docker-compose -f lab/compose/docker-compose.magen-screen.optional.yml \
+  --env-file lab/compose/android-ue.env --profile magen-screen up -d
+```
+
+The sidecar uses `network_mode: container:l5gd-android-magen`. It has no `ports:` key and no `NET_ADMIN`. Its image must be `name@sha256:` plus 64 hex digits. Inside that netns it listens on `127.0.0.1:8000` and dials adb at `127.0.0.1:5555` from its own server on `127.0.0.1:5038`. It does not bind `0.0.0.0`.
+
+Run the existing dashboard compose and `python -m open5g_dashboard.screen` on this same host. The screen origin stays `http://localhost:3301`. The listener binds `127.0.0.1:3301`. Port 3001 stays inside the web image. Set `OPEN5G_EMULATOR_ALLOWED_NETS=127.0.0.1/32` and the endpoint target to `127.0.0.1:8000`. Any other address is rejected. Reach it only with `ssh -L 3300:127.0.0.1:3300 -L 3301:127.0.0.1:3301`. Do not open Grafana in that browser profile.
+
 ## Phase 2
 
 - A real view-only watcher, after input and video can be split without granting control.

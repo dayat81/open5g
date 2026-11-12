@@ -50,6 +50,12 @@ def test_targets_stay_inside_the_screen_allowlist():
         parse_targets("ue1=ue1.internal:8000", nets, 8000)
     with pytest.raises(ValueError):
         parse_targets("ue1=192.0.2.32:27017", nets, 8000)
+    standalone = ("127.0.0.1/32",)
+    assert parse_targets("ue1=127.0.0.1:8000", standalone, 8000)["ue1"] == ("127.0.0.1", 8000)
+    with pytest.raises(ValueError):
+        parse_targets("ue1=10.0.0.1:8000", standalone, 8000)
+    with pytest.raises(ValueError):
+        parse_targets("ue1=0.0.0.0:8000", standalone, 8000)
 
 
 def test_origin_csrf_query_and_idle_rules():

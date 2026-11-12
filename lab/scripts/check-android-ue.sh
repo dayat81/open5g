@@ -576,6 +576,14 @@ if ANDROID_UE_SCREEN_BIND=127.0.0.1 lab/scripts/android-ue-screen.sh --check-bin
   echo "screen bind accepted loopback" >&2
   exit 1
 fi
+if ! ANDROID_UE_SCREEN_MODE=standalone ANDROID_UE_SCREEN_BIND=127.0.0.1 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "standalone screen bind rejected loopback" >&2
+  exit 1
+fi
+if ANDROID_UE_SCREEN_MODE=standalone ANDROID_UE_SCREEN_BIND=0.0.0.0 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "standalone screen bind accepted 0.0.0.0" >&2
+  exit 1
+fi
 if ! ANDROID_UE_SCREEN_BIND=192.0.2.32 lab/scripts/android-ue-screen.sh --check-bind; then
   echo "screen bind rejected a unicast address" >&2
   exit 1
@@ -618,7 +626,19 @@ if ! grep -q -- '-A INPUT -j "$chain"' lab/scripts/android-ue-route.sh; then
   echo "adb allowlist is not appended after ANDROID_UE_IN4" >&2
   exit 1
 fi
-echo "vendored emulator socat bind"
+echo "magen standalone screen"
+magen=lab/compose/docker-compose.magen-screen.optional.yml
+grep -q 'network_mode: "container:l5gd-android-magen"' "$magen"
+grep -q 'ANDROID_UE_SCREEN_MODE: standalone' "$magen"
+grep -q 'ANDROID_UE_SCREEN_BIND: 127.0.0.1' "$magen"
+if grep -q 'ports:' "$magen" || grep -q 'NET_ADMIN' "$magen" || grep -q '0.0.0.0' "$magen"; then
+  echo "magen screen publishes a port, adds NET_ADMIN, or binds every address" >&2
+  exit 1
+fi
+if grep -q 'magen-screen' lab/scripts/android-ue-up.sh; then
+  echo "android-ue-up loads the magen screen profile" >&2
+  exit 1
+fi
 patched=$(mktemp -d)
 cp -a lab/images/android-emulator/upstream/. "$patched"
 patch -p1 -d "$patched" <lab/images/android-emulator/patches/0001-open5g-boot.patch >/dev/null
@@ -637,7 +657,8 @@ fi
 rm -rf "$patched"
 grep -q '5038' lab/scripts/android-ue-screen.sh
 grep -q 'ANDROID_UE_UU' lab/scripts/android-ue-screen.sh
-if grep -q '127.0.0.1:5555' lab/scripts/android-ue-screen.sh || grep -q 'adb -a' lab/scripts/android-ue-screen.sh; then
+grep -q 'adb_target=127.0.0.1:5555' lab/scripts/android-ue-screen.sh
+if grep -q 'adb -P 5037' lab/scripts/android-ue-screen.sh || grep -q 'adb -a' lab/scripts/android-ue-screen.sh; then
   echo "screen sidecar still shares the emulator adb server" >&2
   exit 1
 fi

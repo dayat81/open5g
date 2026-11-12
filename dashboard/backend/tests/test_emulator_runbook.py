@@ -32,8 +32,8 @@ def test_emulator_runbook_matches_the_screen_network():
         assert required in text, required
     screen = SCREEN.read_text(encoding="utf-8")
     assert "ANDROID_ADB_SERVER_PORT=5038" in screen
-    assert 'adb -P 5038 connect "${ANDROID_UE_UU}:5555"' in screen
-    assert "127.0.0.1:5555" not in screen
+    assert 'adb_target="${ANDROID_UE_UU}:5555"' in screen
+    assert 'adb_target=127.0.0.1:5555' in screen
     assert "adb -P 5037" not in screen
     route = ROUTE.read_text(encoding="utf-8")
     assert "ANDROID_UE_ADB" in route

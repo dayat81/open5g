@@ -6,7 +6,16 @@ set -eu
 screen_bind_ok() {
   screen_bind=$1
   case "$screen_bind" in
-    ""|0.0.0.0|127.*|0.*|::|::1|"*")
+    ""|0.0.0.0|::|::1|"*")
+      return 1
+      ;;
+    127.*)
+      if [ "${ANDROID_UE_SCREEN_MODE:-}" = "standalone" ]; then
+        return 0
+      fi
+      return 1
+      ;;
+    0.*)
       return 1
       ;;
   esac
@@ -76,19 +85,23 @@ stop_children() {
 }
 trap stop_children INT TERM
 
-# The emulator adb server stays on 5037 inside the emulator container.
-# This sidecar uses its own adb client and server on 5038, and dials socat at the uu address.
+# The emulator adb server stays on 5037. This sidecar uses its own server on 5038.
 export ANDROID_ADB_SERVER_PORT=5038
-: "${ANDROID_UE_UU:?ANDROID_UE_UU}"
+if [ "${ANDROID_UE_SCREEN_MODE:-}" = "standalone" ]; then
+  adb_target=127.0.0.1:5555
+else
+  : "${ANDROID_UE_UU:?ANDROID_UE_UU}"
+  adb_target="${ANDROID_UE_UU}:5555"
+fi
 if command -v adb >/dev/null 2>&1; then
   adb -P 5038 start-server >/dev/null 2>&1 || true
-  adb -P 5038 connect "${ANDROID_UE_UU}:5555" >/dev/null 2>&1 || true
+  adb -P 5038 connect "${adb_target}" >/dev/null 2>&1 || true
   (
     while true; do
       sleep 5
       attached=$(adb -P 5038 devices | awk 'NR > 1 && $2 == "device" { print; exit }')
       if [ -z "$attached" ]; then
-        adb -P 5038 connect "${ANDROID_UE_UU}:5555" >/dev/null 2>&1 || true
+        adb -P 5038 connect "${adb_target}" >/dev/null 2>&1 || true
       fi
     done
   ) &
