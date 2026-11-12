@@ -342,6 +342,16 @@ grep -q 'accept_ra autoconf forwarding' lab/scripts/android-ue-up.sh
 grep -q 'ANDROID_UE_IPV6_NO_FILTER_OK:-0' lab/scripts/android-ue-up.sh
 # shellcheck disable=SC2016
 grep -q 'nsenter -t "$pid" -n nft -f' lab/scripts/android-ue-up.sh
+grep -q 'ip -o link show dev dummy0' lab/scripts/android-ue-up.sh
+grep -q 'ip -6 -o addr show dev dummy0 scope global' lab/scripts/android-ue-up.sh
+if grep -n 'nsenter -t' lab/scripts/android-ue-up.sh | grep -v -- '-m' | grep -E '/sys/class/net|/proc/sys/net'; then
+  echo "nsenter -n reads host sysfs or proc sysctl" >&2
+  exit 1
+fi
+if grep -n -E 'cat[[:space:]]+"/sys/class/net|cat[[:space:]]+/sys/class/net' lab/scripts/android-ue-up.sh lab/scripts/check-android-ue.sh; then
+  echo "a script still cats host sysfs for a netns interface" >&2
+  exit 1
+fi
 grep -q 'dummy0 type dummy' lab/scripts/android-ue-route.sh
 grep -q 'nodad' lab/scripts/android-ue-route.sh
 grep -q 'ANDROID_UE_IN4' lab/scripts/android-ue-route.sh
@@ -702,6 +712,107 @@ if android_ue_nonloop_v6_ok "$v6_lab/if_inet6" "$v6_lab/sys"; then
   exit 1
 fi
 rm -rf "$v6_lab"
+
+echo "require_ipv6 ignores host sysfs"
+if [ -e /sys/class/net/dummy0 ]; then
+  echo "this host has dummy0; the fixture must still ignore host sysfs" >&2
+fi
+fixdir=$(mktemp -d)
+cat >"$fixdir/docker" <<'EOF'
+#!/bin/bash
+printf '%s\n' 4242
+EOF
+cat >"$fixdir/nsenter" <<'EOF'
+#!/bin/bash
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -t) shift 2 ;;
+    -n|-m) shift ;;
+    *) break ;;
+  esac
+done
+if [ "${1:-}" = cat ]; then
+  case "${2:-}" in
+    /proc/sys/*) printf '0\n' ;;
+    /sys/*)
+      echo "fixture refused a host sysfs read: ${2:-}" >&2
+      exit 1
+      ;;
+    *)
+      echo "fixture nsenter cat unexpected path: ${2:-}" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+exec "$@"
+EOF
+cat >"$fixdir/ip" <<'EOF'
+#!/bin/bash
+joined="$*"
+mode=${ANDROID_UE_FIXTURE_MODE:-up}
+case "$joined" in
+  "-6 addr show dev lo")
+    printf '%s\n' "1: lo    inet6 ::1/128 scope host"
+    ;;
+  "-o link show dev dummy0")
+    if [ "$mode" = down ]; then
+      printf '%s\n' "2: dummy0: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000"
+    else
+      printf '%s\n' "2: dummy0: <BROADCAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000"
+    fi
+    ;;
+  "-6 -o addr show dev dummy0 scope global")
+    if [ "$mode" = tentative ]; then
+      printf '%s\n' "2: dummy0    inet6 fdc2:fd97:24a4::1/128 scope global tentative"
+    else
+      printf '%s\n' "2: dummy0    inet6 fdc2:fd97:24a4::1/128 scope global nodad"
+    fi
+    ;;
+  "-6 route show default")
+    printf '%s\n' "unreachable default metric 1"
+    ;;
+  "-6 route show")
+    printf '%s\n' "unreachable default metric 1"
+    ;;
+  "-o link show")
+    printf '%s\n' "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000"
+    printf '%s\n' "2: dummy0: <BROADCAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000"
+    ;;
+  *)
+    echo "fixture ip unexpected: $joined" >&2
+    exit 1
+    ;;
+esac
+EOF
+chmod 0755 "$fixdir/docker" "$fixdir/nsenter" "$fixdir/ip"
+run_require() {
+  local mode=$1
+  (
+    ANDROID_UE_SOURCE_ONLY=1
+    # shellcheck disable=SC1091
+    . lab/scripts/android-ue-up.sh
+    ANDROID_UE_FIXTURE_MODE=$mode PATH="$fixdir:$PATH" android_ue_require_ipv6 1
+  )
+}
+if ! run_require up >/tmp/android-ue-require-up.out; then
+  echo "require_ipv6 rejected an UP dummy0 ULA while host sysfs has no dummy0" >&2
+  exit 1
+fi
+if ! grep -q 'dummy0 ULA' /tmp/android-ue-require-up.out; then
+  echo "require_ipv6 did not report the ULA anchor" >&2
+  exit 1
+fi
+if run_require down >/dev/null 2>&1; then
+  echo "require_ipv6 accepted a DOWN dummy0" >&2
+  exit 1
+fi
+if run_require tentative >/dev/null 2>&1; then
+  echo "require_ipv6 accepted a tentative ULA" >&2
+  exit 1
+fi
+rm -rf "$fixdir"
+
 if android_ue_android_image_ok 'halimqarroum/docker-android:api-33'; then
   echo "registry image without a digest was accepted" >&2
   exit 1
@@ -908,7 +1019,8 @@ if ! "${docker_cmd[@]}" exec android-ue-preflight-ns sh -c '
   ip link set dummy0 up
   ip link set dummy0peer up
   ip -6 addr show dev lo | grep -q "inet6 ::1" || ip -6 addr add ::1/128 dev lo
-  grep -qx 0 /proc/sys/net/ipv6/conf/dummy0/disable_ipv6
+  # This shell is docker exec inside the preflight netns, not the host.
+  ip -o link show dev dummy0 | grep -Eq "<([^>]*,)?UP(,[^>]*)?>"
   ip -6 addr add fdc2:fd97:24a4::1/128 dev dummy0 nodad
   ip -6 route del fdc2:fd97:24a4::1/128 dev dummy0 >/dev/null 2>&1 || true
   ip -6 route del fe80::/64 dev dummy0 >/dev/null 2>&1 || true

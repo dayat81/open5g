@@ -164,6 +164,30 @@ android_ue_ula_cidr_ok() {
   esac
 }
 
+# One `ip -o link show` line. UP is the flag inside <...>, not a host sysfs bit.
+android_ue_link_is_up() {
+  local line=$1
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line" | grep -Eq '<([^>]*,)?UP(,[^>]*)?>'
+}
+
+# Lines from `ip -6 -o addr show dev dummy0 scope global`.
+# A passing address is fc00::/7 /128 and is not tentative or dadfailed.
+android_ue_dummy0_ula_ok() {
+  local line addr
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '%s\n' "$line" | grep -q 'inet6 ' || continue
+    printf '%s\n' "$line" | grep -q 'scope global' || continue
+    if printf '%s\n' "$line" | grep -Eq '(^|[[:space:]])(tentative|dadfailed)([[:space:]]|$)'; then
+      continue
+    fi
+    addr=$(printf '%s\n' "$line" | awk '{ for (i = 1; i <= NF; i++) if ($i == "inet6") { print $(i + 1); exit } }')
+    android_ue_ula_cidr_ok "$addr" && return 0
+  done
+  return 1
+}
+
 # A non-tentative ULA on an UP dummy0. fe80 does not satisfy this check.
 android_ue_ula_proc_ok() {
   local procfile=$1
