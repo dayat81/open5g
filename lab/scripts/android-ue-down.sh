@@ -66,7 +66,39 @@ if [ -f "$state/upf-rule.txt" ]; then
 fi
 
 android_ue_phase_b_detach() {
-  echo "android-ue: phase B detach is not in this PR"
+  local n pid got apid
+  for n in 1 2; do
+    if [ "$(docker inspect -f '{{.State.Running}}' "l5gd-ue${n}" 2>/dev/null || echo false)" != true ]; then
+      continue
+    fi
+    if ! pid=$(android_ue_container_pid "l5gd-ue${n}"); then
+      rollback_rc=1
+      continue
+    fi
+    if ! nsenter -t "$pid" -n sysctl -w net.ipv4.ip_forward=0 >/dev/null; then
+      echo "android-ue: could not set ip_forward=0 on ue${n}" >&2
+      rollback_rc=1
+    else
+      got=$(nsenter -t "$pid" -n -m /bin/cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo missing)
+      if [ "$got" != 0 ]; then
+        echo "android-ue: ip_forward on ue${n} is ${got}, expected 0" >&2
+        rollback_rc=1
+      fi
+    fi
+    nsenter -t "$pid" -n iptables -D FORWARD -j ANDROID_UE_FWD >/dev/null 2>&1 || true
+    nsenter -t "$pid" -n iptables -F ANDROID_UE_FWD >/dev/null 2>&1 || true
+    nsenter -t "$pid" -n iptables -X ANDROID_UE_FWD >/dev/null 2>&1 || true
+    nsenter -t "$pid" -n iptables -t nat -D POSTROUTING -j ANDROID_UE_NAT >/dev/null 2>&1 || true
+    nsenter -t "$pid" -n iptables -t nat -F ANDROID_UE_NAT >/dev/null 2>&1 || true
+    nsenter -t "$pid" -n iptables -t nat -X ANDROID_UE_NAT >/dev/null 2>&1 || true
+    if [ "$(docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null || echo false)" = true ]; then
+      if apid=$(android_ue_container_pid "l5gd-android${n}"); then
+        nsenter -t "$apid" -n ip route del default >/dev/null 2>&1 || true
+      else
+        rollback_rc=1
+      fi
+    fi
+  done
 }
 
 # UE before eNB. srsRAN's ZMQ note asks for that order on the way down.

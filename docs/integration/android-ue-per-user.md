@@ -40,7 +40,7 @@ srsENB  -- S1-MME --> MME ---- S6a ---- HSS (Mongo)
                                                   internet
 ```
 
-Control-plane ADB does not follow that path. Phase A publishes it on the guest loopback into the emulator's own `uemuN` netns. It is not on the uu interface. New destinations that are not the eNB still use `tun_srsue` inside the UE netns. The emulator does not reach that route until phase B.
+Control-plane ADB does not follow that path. It is published on the guest loopback into the emulator's own `uemuN` netns, and lab adb can also use the emulator address on `uemuN` port 5555. Port 5037 stays on `127.0.0.1` inside the emulator container. `ueN` is the gateway on `uemuN` and forwards only toward `tun_srsue`.
 
 The UE pool, SGi subnet, and the planned CGNAT hop are the ones already written in `lab/compose/docker-compose.yml` and `infra/group_vars/all/lab.yml` (`ue_sessions`, `cgnat_ip`). The overlay does not repeat them as literals. The env file supplies them.
 
@@ -52,7 +52,7 @@ The UE pool, SGi subnet, and the planned CGNAT hop are the ones already written 
 | Test IMSI | One IMSI in the lab PLMN (MCC/MNC from the existing plan). Seeded with the existing subscriber mechanism: `infra/roles/subscribers/templates/seed-subscriber.js.j2`, which is a Mongo `replaceOne`. The dashboard, once merged, can later edit QoS on that document. This overlay does not write Mongo. |
 | srsUE | Container `l5gd-ueN`. USIM comes from `lab/config/ran/android-ue.conf.template` after `envsubst`. Placeholders are `UE_IMSI`, `UE_KI`, `UE_OPC`, `UE_IMEI`. |
 | srsENB | Container `l5gd-enbN`. One eNB per UE. See the multi-UE decision below. eNB ID and S1 addresses are not the stock pair. |
-| Emulator | Container `l5gd-androidN`, image `open5g-android-emulator:local`, its own netns on internal network `uemuN`. Phase A does not attach it to `tun_srsue`. |
+| Emulator | Container `l5gd-androidN`, image `open5g-android-emulator:local`, its own netns on internal network `uemuN`. Its default route is the `ueN` address on that network. |
 
 `ue1` and `ue2` are the template. The up script starts `ue1` only. `ue2` requires `ANDROID_UE_ALLOW_SECOND=1` because the current guest cannot honestly run two emulators. The generator refuses a count above 2.
 
@@ -62,9 +62,9 @@ The Gradiant srsRAN image ships default `KEY` and `OPC` environment values. The 
 
 ## Default route through tun_srsue
 
-Phase A gives the emulator its own netns on `uemuN` (`internal: true`, IPv4 only, `enable_ipv6: false`). It does not use `network_mode: service:ueN` and it does not depend on the route sidecar. `ueN` is not on `uemuN` yet. The address `.1` is the reserved gateway and `.2` is the emulator. Phase B, not this change, attaches `ueN` as that gateway, turns on forwarding from `uemuN` to `tun_srsue`, MASQUERADEs, installs the emulator default route with a pid guard, and extends the existing `ANDROID_UE_IN4` drop for new packets from `tun_srsue` toward `uemuN`. Until that lands, traffic from the emulator does not enter the EPC. `android_ue_phase_b_attach` and `android_ue_phase_b_detach` are the hooks and they do not install those rules.
+The emulator has its own netns on `uemuN` (`internal: true`, IPv4 only, `enable_ipv6: false`). It does not use `network_mode: service:ueN` and it has no `NET_ADMIN`. `ueN` is attached to `uemuN` at `.1`, which is the emulator default route. `.2` is the emulator. Docker's IPAM gateway is a different address, `.6` or `.14` in the example prefixes, and no container uses it. Compose leaves `net.ipv4.ip_forward=0` on `ueN`. The route sidecar installs `ANDROID_UE_FWD` (only `uemuN` to `tun_srsue`, established return, TCPMSS on that output, and DROP both ways between `uu` and `uemuN`), `ANDROID_UE_NAT` (`MASQUERADE` out `tun_srsue`), and an `ANDROID_UE_IN4` drop of new packets from `tun_srsue` to the `uemuN` subnet. `up` reads those chains back and only then sets `ip_forward=1` from the host with `nsenter -t <pid of l5gd-ueN> -n`. It then sets the emulator default route with `nsenter` into `l5gd-androidN`. `down` sets `ip_forward=0` before it deletes those chains. It does not change the UPF main route. `docker compose up` skips the host preset.
 
-`ANDROID_UE_DNS`, when set, becomes the emulator's `-dns-server`. It is optional for `--boot-only`. Phase B sets it to the PDN DNS. The UE container's `dns:` field is still `ANDROID_UE_PGW_DNS`.
+`ANDROID_UE_DNS`, when it is an IPv4 address other than `127.0.0.11`, becomes the emulator's `-dns-server`. The integrated path refuses an empty value or a placeholder. `--boot-only` omits the flag in those cases. The UE container's `dns:` field is still `ANDROID_UE_PGW_DNS`.
 
 `srsUE` is not started with `gw.netns`. The upstream ZMQ note uses a netns because the UE and a same-host EPC would otherwise short-circuit. Here the EPC is already a different container netns. A `gw.netns` would create `tun_srsue` where the emulator cannot see it.
 
@@ -75,7 +75,7 @@ After attach, `l5gd-ueN-route` (same netns, `NET_ADMIN`) does four things and th
 3. Replace the default route with `default dev tun_srsue`. Linux then sources off-net packets from the tun address, which is the UE address the PGW and the PCRF session know.
 4. iptables OUTPUT: accept loopback, accept TCP to the eNB (ZMQ), accept output via `tun_srsue`, accept established replies (ADB), drop the rest. ip6tables OUTPUT drops everything except loopback, so IPv6 is not a second path.
 
-The Android guest does not see `tun_srsue`. In phase A the emulator process is not in the UE netns either, so a ping from the Android shell to an SGi address is not a phase A check. Phase B is what forwards that process from `uemuN` into this netns. The route sidecar below still applies to srsUE.
+The Android guest does not see `tun_srsue`. The emulator process stays in its own netns. Packets from that netns are forwarded by `ueN` into `tun_srsue`. A ping and a name lookup from the Android shell are the phase B checks.
 
 The uu network is the core compose network marked `internal: true`, so even a packet that escaped the OUTPUT filter still cannot be routed to the internet by Docker. The filter is there so a later non-internal network on this netns would not become a bypass. The emulator is not given `NET_ADMIN` or `/dev/net/tun`, so it cannot undo the route.
 
@@ -141,7 +141,7 @@ How many instances: the guest in the lab notes is 8 vCPU, 16 GiB RAM, and 40 GiB
 | Subscriber collection is rewritten | No Mongo client in this overlay. Extra IMSIs are a `replaceOne` through the existing seed, one test IMSI at a time. Rollback does not delete subscribers. |
 | Open5GS YAML or freeDiameter changes | None. The only core data change is the test subscriber document. |
 | UPF default route blackholes SGi | The change is opt-in, only with `--with-socks-egress`, and restored by the down script. Connected routes, including the iperf server, stay. |
-| Emulator reaches the internet without the EPC | Shared netns, default route via `tun_srsue`, OUTPUT drop, IPv6 drop, uu network internal, no `NET_ADMIN` on the emulator. |
+| Emulator reaches the internet without the EPC | `uemuN` is internal. `ueN` forwards only toward `tun_srsue`, MASQUERADEs there, and drops `uu` both ways. IPv6 forwarding stays off. The emulator has no `NET_ADMIN`. |
 | ADB exposed on the lab network | Published on `127.0.0.1` only. |
 | Image USIM defaults or logs leak Ki | Env overrides `KEY` and `OPC`. Do not paste `docker logs` or `docker inspect` of the UE into a ticket. `docker inspect` will show the USIM to anyone who already has Docker on the guest. |
 | lab5g-vm | Out of scope. The up script talks only to the networks named in the env file. |

@@ -295,8 +295,26 @@ android_ue_uemu_network_name() {
   printf 'open5g-uemu%s\n' "$1"
 }
 
+# Print the pid of a named container. Refuse any other name so a sysctl or
+# route write cannot land on the host, the UPF, or an EPC container.
+android_ue_container_pid() {
+  local name=$1
+  local shown pid
+  shown=$(docker inspect -f '{{.Name}} {{.State.Pid}}' "$name" 2>/dev/null || true)
+  case "$shown" in
+    "/${name} "[1-9]*) ;;
+    *)
+      echo "android-ue: refusing to change netns state; ${name} is not that container (${shown:-missing})" >&2
+      return 1
+      ;;
+  esac
+  pid=${shown##* }
+  printf '%s\n' "$pid"
+}
+
 # Fail closed unless the UEMU prefix is canonical IPv4 and misses every
 # canonical UE/PDN pool, uu address, PDN address, and cgnat address.
+# The Docker IPAM bridge must be a different host address from ueN and android.
 # Empty values and REPLACE_/CHANGEME placeholders are not overlap inputs.
 # OTHER_SUBNET is the other user's UEMU prefix. Later args are kind=value
 # with kind pool, uu, pdn, or cgnat.
@@ -306,8 +324,8 @@ import ipaddress
 import sys
 
 args = sys.argv[1:]
-if len(args) < 4:
-    sys.stderr.write("android-ue: UEMU check needs subnet, gateway, android address, and the other subnet\n")
+if len(args) < 5:
+    sys.stderr.write("android-ue: UEMU check needs subnet, ue gateway, android address, bridge, and the other subnet\n")
     sys.exit(1)
 
 def fail(msg):
@@ -347,19 +365,21 @@ def address(text, label):
 subnet = network(args[0], "ANDROID_UE_UEMU_SUBNET")
 gateway = address(args[1], "ANDROID_UE_UEMU_GW")
 android = address(args[2], "ANDROID_UE_UEMU_ANDROID")
-other = network(args[3], "ANDROID_UE_UEMU_SUBNET")
+bridge = address(args[3], "ANDROID_UE_UEMU_BRIDGE")
+other = network(args[4], "ANDROID_UE_UEMU_SUBNET")
+hosts = (gateway, android, bridge)
 if subnet.overlaps(other):
     fail("android-ue: per-user UEMU subnets %s and %s overlap" % (subnet, other))
-if gateway not in subnet or android not in subnet:
-    fail("android-ue: UEMU gateway and android address must be inside %s" % subnet)
-if gateway == android:
-    fail("android-ue: UEMU gateway and android address must differ")
-if gateway == subnet.network_address or android == subnet.network_address:
+if any(host not in subnet for host in hosts):
+    fail("android-ue: UEMU ue, android, and bridge addresses must be inside %s" % subnet)
+if len(set(hosts)) != len(hosts):
+    fail("android-ue: UEMU bridge %s collides with a container address" % bridge)
+if any(host == subnet.network_address for host in hosts):
     fail("android-ue: UEMU addresses must not be the subnet address")
 if subnet.prefixlen <= 30:
-    if gateway == subnet.broadcast_address or android == subnet.broadcast_address:
+    if any(host == subnet.broadcast_address for host in hosts):
         fail("android-ue: UEMU addresses must not be the broadcast address")
-for item in args[4:]:
+for item in args[5:]:
     if "=" not in item:
         fail("android-ue: UEMU overlap entry must be kind=value")
     kind, value = item.split("=", 1)
@@ -378,13 +398,46 @@ for item in args[4:]:
 PY
 }
 
+# integrated refuses an empty or placeholder DNS. boot-only omits those.
+# A value that is set must be an IPv4 address other than 127.0.0.11.
+android_ue_dns_ok() {
+  local mode=$1
+  local dns=$2
+  case "$mode" in
+    integrated|boot-only) ;;
+    *)
+      echo "android-ue: unknown DNS mode ${mode}" >&2
+      return 1
+      ;;
+  esac
+  case "$dns" in
+    ""|*REPLACE*|*CHANGEME*)
+      if [ "$mode" = "integrated" ]; then
+        echo "android-ue: ANDROID_UE_DNS must be the PDN DNS on the integrated path" >&2
+        return 1
+      fi
+      return 0
+      ;;
+  esac
+  if ! printf '%s\n' "$dns" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "android-ue: ANDROID_UE_DNS must be an IPv4 address" >&2
+    return 1
+  fi
+  if [ "$dns" = "127.0.0.11" ]; then
+    echo "android-ue: ANDROID_UE_DNS must not be Docker's 127.0.0.11 resolver" >&2
+    return 1
+  fi
+}
+
 android_ue_apply_dns_flag() {
   local flags=$1
   local dns=$2
-  if [ -z "$dns" ]; then
-    printf '%s\n' "$flags"
-    return 0
-  fi
+  case "$dns" in
+    ""|*REPLACE*|*CHANGEME*)
+      printf '%s\n' "$flags"
+      return 0
+      ;;
+  esac
   if ! printf '%s\n' "$dns" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "android-ue: ANDROID_UE_DNS must be an IPv4 address" >&2
     return 1
