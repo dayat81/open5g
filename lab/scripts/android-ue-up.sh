@@ -418,6 +418,16 @@ android_ue_boot_only() {
     echo "android-ue: ANDROID_UE_ANDROID_IMAGE must be open5g-android-emulator:local or include @sha256" >&2
     exit 1
   fi
+  if [ "$image" = "open5g-android-emulator:local" ]; then
+    local pin actual
+    pin=$(get ANDROID_UE_ANDROID_IMAGE_ID)
+    android_ue_reject_placeholder ANDROID_UE_ANDROID_IMAGE_ID "$pin"
+    actual=$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)
+    if ! android_ue_image_id_ok "$pin" "$actual"; then
+      echo "android-ue: ${image} id ${actual:-missing} does not match ANDROID_UE_ANDROID_IMAGE_ID" >&2
+      exit 1
+    fi
+  fi
   kvm_gid=$(get ANDROID_UE_KVM_GID)
   host_kvm_gid=$(stat -c %g /dev/kvm)
   if [ -z "$kvm_gid" ] || printf '%s\n' "$kvm_gid" | grep -Eq 'REPLACE_|CHANGEME'; then

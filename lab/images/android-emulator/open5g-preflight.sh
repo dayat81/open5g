@@ -49,8 +49,22 @@ android_emulator_avd_guard() {
 }
 
 if [ "${ANDROID_UE_ISOLATED:-}" = "1" ]; then
-  echo "android-emulator: ANDROID_UE_ISOLATED=1, skipping dummy0 and ULA preflight"
-  echo "android-emulator: modem errors for ::1 and a guest without egress are expected"
+  echo "android-emulator: ANDROID_UE_ISOLATED=1, skipping dummy0, ULA, and AI_ADDRCONFIG"
+  if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
+    echo "android-emulator: ::1 is missing on lo" >&2
+    exit 1
+  fi
+  all_v6=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo missing)
+  if [ "$all_v6" = "1" ]; then
+    echo "android-emulator: disable_ipv6 on all is 1. This preflight does not set it." >&2
+    exit 1
+  fi
+  if ip -6 addr show scope global | grep -q 'inet6 '; then
+    echo "android-emulator: a global IPv6 address is present. eth must not have one in isolated mode." >&2
+    ip -6 addr show scope global >&2 || true
+    exit 1
+  fi
+  echo "android-emulator: ::1 is on lo and eth has no global IPv6 address"
 else
 ula=${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
 python3 - "$ula" <<'PY'
