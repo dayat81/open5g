@@ -6,11 +6,9 @@ Jalur tamu di [`android-emulator-dashboard.md`](android-emulator-dashboard.md) t
 
 ## Pilihan
 
-Image emulator tidak memuat scrcpy, gRPC 8554, atau VNC. Layar memakai image ws-scrcpy yang sama dengan sidecar tamu, termasuk `scrcpy-server.jar` yang di-push lewat adb. Service `screen` memakai `network_mode: container:b0-agen-emu` supaya adb di `127.0.0.1:5555` di dalam netns emulator tercapai.
+Image emulator tidak memuat scrcpy, gRPC 8554, atau VNC. Layar memakai entrypoint sidecar yang sama, `lab/scripts/android-ue-screen.sh`, dengan `ANDROID_UE_SCREEN_MODE=standalone`. Service `screen` memakai `network_mode: container:b0-agen-emu` supaya adb di dalam netns tercapai. Pathname-nya `/emulator/ue1`. Batas default adalah 800, 2 Mbit/s, dan 15 fps.
 
-adb yang dipakai streamer adalah `127.0.0.1:5555` di dalam netns itu. Compose ini tidak menambah publish 5037, 5554, 5555, 8554, atau VNC.
-
-ws-scrcpy 0.8.1 tidak punya opsi bind. Prosesnya mendengar di setiap interface netns emulator. Itu bukan publish host. Satu-satunya port yang di-publish file ini adalah `127.0.0.1:3301`, pada service `screen-publish`. Docker menolak `ports` pada `network_mode: container`, jadi publish tidak bisa menempel pada service yang sama.
+Sidecar hanya mendengar di `ANDROID_UE_SCREEN_BIND`, yaitu alamat emulator pada bridge-nya. Loopback ditolak: DNAT Docker tidak mencapai bind `127.0.0.1` di dalam netns. Satu-satunya port host adalah `127.0.0.1:3301` pada `screen-publish`. Docker menolak `ports` pada `network_mode: container`, jadi publish tidak menempel pada sidecar. Compose ini tidak menambah publish 5037, 5554, 5555, 8554, atau VNC, dan tidak menyalin jaringan `o5g-screen`.
 
 Container screen tidak memasang `/dev/kvm` dan tidak mengatur group id. GID kvm milik emulator dideteksi di host dengan `stat -c %g /dev/kvm`. Jangan salin angkanya ke git.
 
@@ -22,13 +20,10 @@ Di mesin yang bisa menjangkau mirror dan GitHub:
 
 ```bash
 docker build -f lab/images/ws-scrcpy/Dockerfile -t open5g-ws-scrcpy:local lab/images/ws-scrcpy
-id=$(docker image inspect --format '{{.Id}}' open5g-ws-scrcpy:local)
 docker save open5g-ws-scrcpy:local | ssh <SSH_TARGET> docker load
 ```
 
-`<SSH_TARGET>` adalah target SSH operator. Jangan tulis hostname ke git. Setelah `docker load`, id image tetap sama. Di env yang di-gitignore, set `ANDROID_UE_SCREEN_IMAGE` ke id `sha256:...` itu, atau ke digest `nama@sha256:...` kalau image ada di mirror privat. Tag tanpa pin ditolak.
-
-Build itu menjalankan `npm run dist`. Hasilnya, termasuk `scrcpy-server.jar`, ada di dalam image. Startup di host menjalankan `node dist/index.js` dan tidak mengulang build.
+`<SSH_TARGET>` adalah target SSH operator. Jangan tulis hostname ke git. `ANDROID_UE_SCREEN_IMAGE` harus `nama@sha256:` diikuti 64 digit hex. Tanpa digest, skrip berhenti. Tag dan id tanpa `@sha256` ditolak.
 
 ## Aktifkan
 
@@ -37,10 +32,11 @@ Build itu menjalankan `npm run dist`. Hasilnya, termasuk `scrcpy-server.jar`, ad
 
    ```bash
    docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' b0-agen-emu
+   docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' b0-agen-emu
    cp lab/compose/screen-standalone.env.example lab/compose/screen-standalone.env
    ```
 
-   Isi `ANDROID_EMULATOR_NETWORK` dan `ANDROID_UE_SCREEN_IMAGE`. `ANDROID_EMULATOR_CONTAINER` pada contoh adalah `b0-agen-emu`.
+   Isi `ANDROID_EMULATOR_NETWORK`, `ANDROID_UE_SCREEN_IMAGE` (`nama@sha256:`), dan `ANDROID_UE_SCREEN_BIND` dari alamat bridge container itu. `ANDROID_EMULATOR_CONTAINER` pada contoh adalah `b0-agen-emu`.
 
 3. Periksa, lalu naikkan:
 
@@ -74,17 +70,17 @@ Perintah itu mendengar di `127.0.0.1:3302` dan meneruskan ke `127.0.0.1:3301` di
 Dari ujung tunnel laptop:
 
 ```bash
-curl -sS -D- -o /dev/null --max-time 5 http://127.0.0.1:3301/
+curl -sS -D- -o /dev/null --max-time 5 http://127.0.0.1:3301/emulator/ue1/
 curl -sS -D- -o /dev/null --max-time 5 \
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' \
   -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-  http://127.0.0.1:3301/
+  http://127.0.0.1:3301/emulator/ue1/
 ```
 
-Respons pertama dari UI. Respons kedua memuat `101 Switching Protocols`. Browser di `http://127.0.0.1:3301/` menampilkan frame. `ss -ltn` di host harus menunjukkan `127.0.0.1:3301`, bukan setiap interface.
+Respons pertama dari UI di `/emulator/ue1/`. Respons kedua memuat `101 Switching Protocols`. Browser di alamat itu menampilkan frame. `ss -ltn` di host harus menunjukkan `127.0.0.1:3301`, bukan setiap interface.
 
-UI ws-scrcpy 0.8.1 ada di `/`. Variabel pathname tidak dipakai oleh commit yang di-pin. Demo langsung tidak lewat dashboard, jadi tidak ada login pada streamer. Pagarnya adalah bind loopback dan SSH.
+Demo langsung tidak lewat dashboard, jadi tidak ada login pada streamer. Pagarnya adalah publish loopback dan SSH.
 
 ## Dashboard, default mati
 
@@ -104,7 +100,7 @@ OPEN5G_EMULATOR_SCREEN_MODE=host-agen SCREEN_UPSTREAM_URL=http://127.0.0.1:3302 
   lab/scripts/android-ue-screen-mode.sh
 ```
 
-Skrip itu hanya mencetak `mode=host-agen upstream=loopback`. URL kosong membuat mode ini mati: proxy tidak men-dial. Frame dashboard masih meminta `/emulator/<ue_id>/`, sementara server yang di-pin melayani `/`. Menyambungkan keduanya adalah tindak lanjut, bukan bagian dari demo ini.
+Skrip itu hanya mencetak `mode=host-agen upstream=loopback`. URL kosong membuat mode ini mati: proxy tidak men-dial. Path upstream tetap `/emulator/<ue_id>/`, sama dengan sidecar.
 
 ## Rollback
 

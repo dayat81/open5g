@@ -80,11 +80,11 @@ screen_upstream_name_ok() {
   fi
 }
 
-# Repo digest (name@sha256:64) or an image ID (sha256:64). Tags are refused.
+# Same pin as the lab screen image: name@sha256 and 64 hex digits. A bare image id is refused.
 screen_host_image_ok() {
   screen_image=$1
   case "$screen_image" in
     ""|*[[:space:]]*|REPLACE_*|*CHANGEME*) return 1 ;;
   esac
-  printf '%s\n' "$screen_image" | grep -Eq '(^|@)sha256:[0-9A-Fa-f]{64}$'
+  printf '%s\n' "$screen_image" | grep -Eq '@sha256:[0-9A-Fa-f]{64}([^0-9A-Fa-f]|$)'
 }

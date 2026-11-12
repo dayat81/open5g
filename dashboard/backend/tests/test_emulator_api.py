@@ -491,6 +491,15 @@ def test_host_agen_proxy_dials_loopback_and_keeps_control(env):
     assert env["hits"]["ws"] == 1
 
 
+def test_repeated_session_posts_are_limited(env):
+    last = None
+    for _ in range(11):
+        last = env["student"].post("/api/emulator/ue1/session")
+    assert last is not None
+    assert last.status_code == 429
+    assert last.json()["error"]["code"] == "emulator_rate_limited"
+
+
 def test_disabled_screen_stays_closed(env):
     disabled = Settings(
         DATABASE_URL,

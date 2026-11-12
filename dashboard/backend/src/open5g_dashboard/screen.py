@@ -1,4 +1,4 @@
-"""Screen listener. Binds 127.0.0.1:3301. The browser origin is localhost:3301.
+"""Screen listener. The default bind is 127.0.0.1:3301. The browser origin is localhost:3301.
 
 Port 3001 is Next inside the web image. This process dials l5gd-screen and
 writes up/down into Postgres. The dashboard API only reads that row.

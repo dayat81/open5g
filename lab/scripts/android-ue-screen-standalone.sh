@@ -43,6 +43,19 @@ compose_file_ok() {
   grep -q 'container:${ANDROID_EMULATOR_CONTAINER:-b0-agen-emu}' "$compose_file"
   # shellcheck disable=SC2016
   grep -q '127.0.0.1:${SCREEN_HOST_PORT:-3301}:3301' "$compose_file"
+  grep -q 'android-ue-screen.sh' "$compose_file"
+  grep -q 'ANDROID_UE_SCREEN_MODE: standalone' "$compose_file"
+  grep -q '/emulator/ue1' "$compose_file"
+  # shellcheck disable=SC2016
+  grep -q 'ANDROID_UE_SCREEN_MAX_SIZE: ${ANDROID_UE_SCREEN_MAX_SIZE:-800}' "$compose_file"
+  # shellcheck disable=SC2016
+  grep -q 'ANDROID_UE_SCREEN_BIT_RATE: ${ANDROID_UE_SCREEN_BIT_RATE:-2000000}' "$compose_file"
+  # shellcheck disable=SC2016
+  grep -q 'ANDROID_UE_SCREEN_MAX_FPS: ${ANDROID_UE_SCREEN_MAX_FPS:-15}' "$compose_file"
+  if grep -q 'android-ue-screen-host.sh' "$compose_file"; then
+    echo "android-ue-screen-standalone: compose file duplicates the screen entrypoint" >&2
+    return 1
+  fi
 }
 
 env_value() {
@@ -54,16 +67,22 @@ env_value() {
 require_pin() {
   image=${ANDROID_UE_SCREEN_IMAGE:-}
   network=${ANDROID_EMULATOR_NETWORK:-}
+  bind=${ANDROID_UE_SCREEN_BIND:-}
   if [ -f "$env_file" ]; then
     image=$(env_value ANDROID_UE_SCREEN_IMAGE "$env_file")
     network=$(env_value ANDROID_EMULATOR_NETWORK "$env_file")
+    bind=$(env_value ANDROID_UE_SCREEN_BIND "$env_file")
   fi
   if ! screen_host_image_ok "$image"; then
-    echo "android-ue-screen-standalone: ANDROID_UE_SCREEN_IMAGE must be name@sha256 or sha256" >&2
+    echo "android-ue-screen-standalone: ANDROID_UE_SCREEN_IMAGE must be pinned with @sha256" >&2
     return 1
   fi
   if ! screen_upstream_name_ok "$network"; then
     echo "android-ue-screen-standalone: ANDROID_EMULATOR_NETWORK is missing or still a placeholder" >&2
+    return 1
+  fi
+  if ! screen_bind_ok "$bind"; then
+    echo "android-ue-screen-standalone: ANDROID_UE_SCREEN_BIND must be the emulator address, not loopback" >&2
     return 1
   fi
 }

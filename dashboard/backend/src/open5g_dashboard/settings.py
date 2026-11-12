@@ -95,6 +95,8 @@ class Settings:
     emulator_status_stale_seconds: int = 15
     emulator_screen_mode: str = "guest"
     screen_upstream: tuple[str, int] | None = None
+    emulator_session_limit: int = 10
+    emulator_session_window: float = 60.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -191,4 +193,10 @@ class Settings:
             emulator_status_stale_seconds=stale,
             emulator_screen_mode=screen_mode,
             screen_upstream=screen_upstream,
+            emulator_session_limit=_bounded_int(
+                os.environ.get("OPEN5G_EMULATOR_SESSION_LIMIT", "10"), 1, 1000, "OPEN5G_EMULATOR_SESSION_LIMIT"
+            ),
+            emulator_session_window=_bounded_float(
+                os.environ.get("OPEN5G_EMULATOR_SESSION_WINDOW", "60"), 1.0, 3600.0, "OPEN5G_EMULATOR_SESSION_WINDOW"
+            ),
         )

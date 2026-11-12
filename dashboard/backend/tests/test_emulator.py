@@ -17,7 +17,17 @@ from open5g_dashboard.emulator import (
     rewrite_location,
     safe_query,
     session_expired,
+    session_rate_limited,
 )
+
+
+def test_session_posts_are_rate_limited():
+    hits: dict[str, list[float]] = {}
+    for _ in range(10):
+        assert not session_rate_limited(hits, "student-a", 100.0, 10, 60.0)
+    assert session_rate_limited(hits, "student-a", 100.0, 10, 60.0)
+    assert not session_rate_limited(hits, "student-b", 100.0, 10, 60.0)
+    assert not session_rate_limited(hits, "student-a", 160.0, 10, 60.0)
 
 
 def test_students_are_limited_to_their_assignment():
@@ -52,6 +62,12 @@ def test_targets_stay_inside_the_screen_allowlist():
         parse_targets("ue1=ue1.internal:8000", nets, 8000)
     with pytest.raises(ValueError):
         parse_targets("ue1=192.0.2.32:27017", nets, 8000)
+    standalone = ("127.0.0.1/32",)
+    assert parse_targets("ue1=127.0.0.1:8000", standalone, 8000)["ue1"] == ("127.0.0.1", 8000)
+    with pytest.raises(ValueError):
+        parse_targets("ue1=10.0.0.1:8000", standalone, 8000)
+    with pytest.raises(ValueError):
+        parse_targets("ue1=0.0.0.0:8000", standalone, 8000)
 
 
 def test_host_agen_upstream_stays_on_loopback():

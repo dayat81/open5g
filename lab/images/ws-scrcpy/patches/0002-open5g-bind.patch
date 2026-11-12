@@ -1,0 +1,126 @@
+diff -ruN a/src/app/player/BasePlayer.ts b/src/app/player/BasePlayer.ts
+--- a/src/app/player/BasePlayer.ts	2024-03-13 18:17:09.000000000 +0000
++++ b/src/app/player/BasePlayer.ts	2026-11-12 05:21:10.581388126 +0000
+@@ -49,6 +49,19 @@
+     new (udid: string, displayInfo?: DisplayInfo): BasePlayer;
+ }
+ 
++function open5gLimit(name: string, fallback: number): number {
++    if (typeof window === 'undefined') {
++        return fallback;
++    }
++    const box = window as unknown as { __OPEN5G_LIMITS?: Record<string, unknown> };
++    const raw = box.__OPEN5G_LIMITS ? box.__OPEN5G_LIMITS[name] : undefined;
++    const value = typeof raw === 'number' ? raw : Number(raw);
++    if (!Number.isFinite(value) || value <= 0) {
++        return fallback;
++    }
++    return value;
++}
++
+ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
+     private static readonly STAT_BACKGROUND: string = 'rgba(0, 0, 0, 0.5)';
+     private static readonly STAT_TEXT_COLOR: string = 'hsl(24, 85%, 50%)';
+@@ -91,10 +104,10 @@
+     public static playerCodeName = 'baseplayer';
+     public static preferredVideoSettings: VideoSettings = new VideoSettings({
+         lockedVideoOrientation: -1,
+-        bitrate: 524288,
+-        maxFps: 24,
++        bitrate: open5gLimit('bitRate', 2000000),
++        maxFps: open5gLimit('maxFps', 15),
+         iFrameInterval: 5,
+-        bounds: new Size(480, 480),
++        bounds: new Size(open5gLimit('maxSize', 800), open5gLimit('maxSize', 800)),
+         sendFrameMeta: false,
+     });
+ 
+diff -ruN a/src/public/index.html b/src/public/index.html
+--- a/src/public/index.html	2024-03-13 18:17:09.000000000 +0000
++++ b/src/public/index.html	2026-11-12 05:21:10.581388126 +0000
+@@ -4,6 +4,7 @@
+     <meta charset="UTF-8">
+     <meta content='width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no' name='viewport' />
+     <title>WS scrcpy</title>
++    <script src="open5g-limits.js"></script>
+ </head>
+ <body>
+ </body>
+diff -ruN a/src/server/Config.ts b/src/server/Config.ts
+--- a/src/server/Config.ts	2026-11-12 05:21:10.577388179 +0000
++++ b/src/server/Config.ts	2026-11-12 05:21:10.581388126 +0000
+@@ -67,6 +67,7 @@
+         const serverItem: ServerItem = {
+             secure,
+             port,
++            host: typeof config.host === 'string' ? config.host : '',
+             redirectToSecure,
+         };
+         if (typeof options !== 'undefined') {
+diff -ruN a/src/server/services/HttpServer.ts b/src/server/services/HttpServer.ts
+--- a/src/server/services/HttpServer.ts	2026-11-12 05:21:10.577388179 +0000
++++ b/src/server/services/HttpServer.ts	2026-11-12 05:21:10.597387915 +0000
+@@ -13,6 +13,13 @@
+ 
+ const PATHNAME = process.env[EnvName.WS_SCRCPY_PATHNAME] || '/';
+ 
++function bindHost(host: string | undefined): string {
++    if (typeof host !== 'string' || host.length === 0 || host === '0.0.0.0' || host === '::' || host === '*') {
++        throw Error('Refusing to listen on an unspecified host');
++    }
++    return host;
++}
++
+ export type ServerAndPort = {
+     server: https.Server | http.Server;
+     port: number;
+@@ -127,8 +134,9 @@
+                 server = http.createServer(options, currentApp);
+             }
+             this.servers.push({ server, port });
+-            server.listen(port, () => {
+-                Utils.printListeningMsg(proto, port);
++            const listenHost = bindHost(serverItem.host);
++            server.listen(port, listenHost, () => {
++                Utils.printListeningMsg(proto, port, listenHost);
+             });
+         });
+         this.started = true;
+diff -ruN a/src/server/Utils.ts b/src/server/Utils.ts
+--- a/src/server/Utils.ts	2024-03-13 18:17:09.000000000 +0000
++++ b/src/server/Utils.ts	2026-11-12 05:21:10.597387915 +0000
+@@ -1,7 +1,11 @@
+ import * as os from 'os';
+ 
+ export class Utils {
+-    public static printListeningMsg(proto: string, port: number): void {
++    public static printListeningMsg(proto: string, port: number, host?: string): void {
++        if (typeof host === 'string' && host.length > 0) {
++            console.log(`Listening on ${proto}://${host}:${port}`);
++            return;
++        }
+         const ipv4List: string[] = [];
+         const ipv6List: string[] = [];
+         const formatAddress = (ip: string, scopeid: number | undefined): void => {
+diff -ruN a/src/types/Configuration.d.ts b/src/types/Configuration.d.ts
+--- a/src/types/Configuration.d.ts	2026-11-12 05:21:10.577388179 +0000
++++ b/src/types/Configuration.d.ts	2026-11-12 05:21:10.581388126 +0000
+@@ -28,6 +28,7 @@
+ export interface ServerItem {
+     secure: boolean;
+     port: number;
++    host?: string;
+     options?: ExtendedServerOption;
+     redirectToSecure?:
+         | {
+diff -ruN a/webpack/ws-scrcpy.common.ts b/webpack/ws-scrcpy.common.ts
+--- a/webpack/ws-scrcpy.common.ts	2024-03-13 18:17:09.000000000 +0000
++++ b/webpack/ws-scrcpy.common.ts	2026-11-12 05:21:10.581388126 +0000
+@@ -111,6 +111,7 @@
+     output: {
+         filename: 'bundle.js',
+         path: CLIENT_DIST_PATH,
++        publicPath: '',
+     },
+ };
+ 

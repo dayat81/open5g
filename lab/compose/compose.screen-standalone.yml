@@ -1,10 +1,10 @@
-# Demo screen beside an emulator that is already running on the Docker host.
-# This file does not start the emulator, the core, or the dashboard.
-# There is no build key: the host has no egress. Load the image, then set
-# ANDROID_UE_SCREEN_IMAGE to its sha256 id or repo digest.
-# Docker refuses host port publishing on a container network mode, so
-# ws-scrcpy joins the emulator netns and screen-publish is the only
-# published port, on 127.0.0.1. down does not stop the emulator container.
+# Screen beside an emulator that is already running. This file does not start
+# that emulator, the core, or the dashboard, and it has no build key.
+# The sidecar is lab/scripts/android-ue-screen.sh. It listens only on
+# ANDROID_UE_SCREEN_BIND, which is the emulator address on its bridge.
+# Loopback is refused here: Docker DNAT cannot reach a 127.0.0.1 bind
+# inside the emulator netns. screen-publish is the only host port, on 127.0.0.1.
+# down does not stop the emulator container.
 name: open5g-screen-standalone
 services:
   screen:
@@ -12,14 +12,18 @@ services:
     container_name: open5g-screen
     restart: "no"
     network_mode: "container:${ANDROID_EMULATOR_CONTAINER:-b0-agen-emu}"
-    entrypoint: ["/bin/sh", "/opt/open5g/android-ue-screen-host.sh"]
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
     environment:
+      ANDROID_UE_SCREEN_MODE: standalone
+      ANDROID_UE_SCREEN_BIND: ${ANDROID_UE_SCREEN_BIND:?ANDROID_UE_SCREEN_BIND}
       ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
-      ANDROID_UE_SCREEN_PATH: ${ANDROID_UE_SCREEN_PATH:-/emulator/b0}
+      ANDROID_UE_SCREEN_PATH: ${ANDROID_UE_SCREEN_PATH:-/emulator/ue1}
+      ANDROID_UE_SCREEN_MAX_SIZE: ${ANDROID_UE_SCREEN_MAX_SIZE:-800}
+      ANDROID_UE_SCREEN_BIT_RATE: ${ANDROID_UE_SCREEN_BIT_RATE:-2000000}
+      ANDROID_UE_SCREEN_MAX_FPS: ${ANDROID_UE_SCREEN_MAX_FPS:-15}
       ANDROID_ADB_SERVER_PORT: "5038"
     volumes:
-      - ../scripts/android-ue-screen-bind.sh:/opt/open5g/android-ue-screen-bind.sh:ro
-      - ../scripts/android-ue-screen-host.sh:/opt/open5g/android-ue-screen-host.sh:ro
+      - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
     cpus: 0.5
     mem_limit: 512m
     security_opt:
