@@ -81,26 +81,36 @@ android_ue_route_install_input4() {
   "$bin" -A "$chain" -i "$tun" -j DROP
 }
 android_ue_route_install_input4
+# Write 0, then read it back. A read-only /proc/sys is acceptable only when
+# the value is already 0 from compose sysctls or a host write. Never skip quietly.
+android_ue_route_write_zero() {
+  local sys=$1
+  local got
+  if [ ! -e "$sys" ]; then
+    echo "android-ue-route: ${sys} does not exist, expected 0" >&2
+    exit 1
+  fi
+  printf '0\n' >"$sys" 2>/dev/null || true
+  got=$(cat "$sys" 2>/dev/null || echo missing)
+  if [ "$got" != "0" ]; then
+    echo "android-ue-route: ${sys} is ${got}, expected 0" >&2
+    exit 1
+  fi
+}
 # disable_ipv6=0 on all, default, lo, and dummy0. Docker may leave eth0 at 1.
 # accept_ra, autoconf, and forwarding are 0 on each non-lo interface,
 # because all/default do not apply to interfaces that already exist.
 android_ue_route_ipv6_lock() {
   local key iface knob sys
   for key in all default lo dummy0; do
-    sys="/proc/sys/net/ipv6/conf/${key}/disable_ipv6"
-    if [ -w "$sys" ]; then
-      printf '0\n' >"$sys"
-    fi
+    android_ue_route_write_zero "/proc/sys/net/ipv6/conf/${key}/disable_ipv6"
   done
   for iface in $(ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1); do
     if [ "$iface" = "lo" ]; then
       continue
     fi
     for knob in accept_ra autoconf forwarding; do
-      sys="/proc/sys/net/ipv6/conf/${iface}/${knob}"
-      if [ -w "$sys" ]; then
-        printf '0\n' >"$sys"
-      fi
+      android_ue_route_write_zero "/proc/sys/net/ipv6/conf/${iface}/${knob}"
     done
   done
 }
@@ -160,10 +170,7 @@ android_ue_route_anchor() {
   fi
   ip link set dummy0 addrgenmode none
   ip link set dummy0 up
-  sys=/proc/sys/net/ipv6/conf/dummy0/disable_ipv6
-  if [ -w "$sys" ]; then
-    printf '0\n' >"$sys"
-  fi
+  android_ue_route_write_zero /proc/sys/net/ipv6/conf/dummy0/disable_ipv6
   if ! ip -6 addr show dev dummy0 | grep -q "inet6 ${addr}/128"; then
     ip -6 addr add "$ula" dev dummy0 nodad
   fi
