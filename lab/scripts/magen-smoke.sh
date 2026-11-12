@@ -40,16 +40,23 @@ if [ -n "$(get O5G_STATE_DIR)" ]; then
   export O5G_STATE_DIR
 fi
 magen_radio_gate() {
-  local boot=$1 sim=$2 log=$3
-  local ok=1
-  if [ "$boot" != "1" ]; then
+  local boot=$1 sim=$2 log=$3 registry=$4
+  local ok=1 modem=missing
+  boot=$(printf '%s' "$boot" | tr -d '\r')
+  sim=$(printf '%s' "$sim" | tr -d '\r')
+  if [ -z "$boot" ] || [ "$boot" != "1" ]; then
     ok=0
   fi
   case "$sim" in
     READY|LOADED) ;;
     *) ok=0 ;;
   esac
-  if grep -q 'ModemSimulator' "$log"; then
+  if [ -s "$log" ] && grep -q 'ModemSimulator' "$log"; then
+    modem=present
+  else
+    ok=0
+  fi
+  if [ ! -s "$registry" ]; then
     ok=0
   fi
   if [ "$ok" -eq 1 ]; then
@@ -57,7 +64,7 @@ magen_radio_gate() {
     return 0
   fi
   echo "magen: radio gate FAIL." >&2
-  echo "magen: evidence boot=${boot} gsm.sim.state=${sim}" >&2
+  echo "magen: evidence boot=${boot:-empty} gsm.sim.state=${sim:-empty} ModemSimulator=${modem}" >&2
   echo "magen: no automatic fallback was applied." >&2
   echo "magen: preferred option, only if Architect picks it later: install a dummy0 ULA anchor from the host with nsenter -n and a pid guard before QEMU. The emulator stays without NET_ADMIN and all.disable_ipv6 is never set to 1." >&2
   echo "magen: last resort: -feature -ModemSimulator." >&2
@@ -93,7 +100,7 @@ magen_radio_collect_live() {
     return 1
   fi
   sed -i 's/\r$//' "$dest/boot" "$dest/sim"
-  if [ ! -s "$dest/boot" ] || [ ! -s "$dest/sim" ] || [ ! -s "$dest/registry" ]; then
+  if [ ! -s "$dest/boot" ] || [ ! -s "$dest/sim" ] || [ ! -s "$dest/registry" ] || [ ! -s "$dest/logcat" ]; then
     echo "magen: radio gate FAIL. emulator evidence is empty." >&2
     echo "magen: the radio-ok fixture is not used unless --fixture is set." >&2
     return 1
@@ -108,7 +115,7 @@ else
     exit 1
   fi
 fi
-if ! magen_radio_gate "$(cat "$radio_dir/boot")" "$(cat "$radio_dir/sim")" "$radio_dir/logcat"; then
+if ! magen_radio_gate "$(cat "$radio_dir/boot" 2>/dev/null || true)" "$(cat "$radio_dir/sim" 2>/dev/null || true)" "$radio_dir/logcat" "$radio_dir/registry"; then
   exit 1
 fi
 python3 - "$(magen_root)/lab/compose/compose.magen.yml" <<'PY'

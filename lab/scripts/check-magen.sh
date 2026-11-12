@@ -248,15 +248,33 @@ grep -q 'not used unless --fixture' /tmp/magen-liveradio.err
 expect_fail liveradioenv env MAGEN_RADIO_DIR="$root/lab/scripts/fixtures/magen/radio-ok" lab/scripts/magen-smoke.sh --env-file "$env_file"
 grep -q 'could not be read' /tmp/magen-liveradioenv.err
 
+echo "empty logcat fails"
+empty=$(mktemp -d)
+printf '1\n' > "$empty/boot"
+printf 'READY\n' > "$empty/sim"
+: > "$empty/logcat"
+printf 'mServiceState=IN_SERVICE\n' > "$empty/registry"
+expect_fail emptylog env MAGEN_RADIO_DIR="$empty" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture
+grep -q 'ModemSimulator=missing' /tmp/magen-emptylog.err
+
+echo "ModemSimulator plus READY passes"
+good=$(mktemp -d)
+printf '1\n' > "$good/boot"
+printf 'READY\n' > "$good/sim"
+printf 'I ModemSimulator: radio up\n' > "$good/logcat"
+printf 'mServiceState=IN_SERVICE\n' > "$good/registry"
+env MAGEN_RADIO_DIR="$good" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture > /tmp/magen-radio-pass.out
+grep -q 'radio gate passed' /tmp/magen-radio-pass.out
+
 echo "radio fail stays a report"
 bad=$(mktemp -d)
 printf '1\n' > "$bad/boot"
 printf 'ABSENT\n' > "$bad/sim"
-printf 'E ModemSimulator: failed\n' > "$bad/logcat"
+printf 'I ModemSimulator: radio up\n' > "$bad/logcat"
+printf 'mServiceState=IN_SERVICE\n' > "$bad/registry"
 expect_fail radio env MAGEN_RADIO_DIR="$bad" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture
 grep -q 'no automatic fallback' /tmp/magen-radio.err
 grep -q 'dummy0 ULA' /tmp/magen-radio.err
-grep -q 'ModemSimulator' /tmp/magen-radio.err
 
 echo "backup and restore"
 src=$(mktemp -d)
