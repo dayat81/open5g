@@ -26,6 +26,7 @@ services:
       net.ipv6.conf.default.autoconf: "0"
       net.ipv6.conf.default.forwarding: "0"
       net.ipv6.conf.default.disable_ipv6: "0"
+      net.ipv4.ip_forward: "0"
     devices:
       - "/dev/net/tun:/dev/net/tun"
     command:
@@ -56,6 +57,8 @@ services:
     networks:
       uu:
         ipv4_address: ${UE1_UU}
+      uemu1:
+        ipv4_address: ${ANDROID_UE_UEMU1_GW:?ANDROID_UE_UEMU1_GW}
 
   enb1:
     image: ${ANDROID_UE_SRS_IMAGE}
@@ -111,6 +114,9 @@ services:
       ANDROID_UE_TUN: tun_srsue
       ANDROID_UE_ATTACH_TIMEOUT: ${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
       ANDROID_UE_IPV6_ULA: ${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
+      ANDROID_UE_UEMU_GW: ${ANDROID_UE_UEMU1_GW:?ANDROID_UE_UEMU1_GW}
+      ANDROID_UE_UEMU_SUBNET: ${ANDROID_UE_UEMU1_SUBNET:?ANDROID_UE_UEMU1_SUBNET}
+      ANDROID_UE_UE_UU: ${UE1_UU:?UE1_UU}
     volumes:
       - ../scripts/android-ue-route.sh:/opt/android-ue/android-ue-route.sh:ro
     depends_on:
@@ -134,6 +140,7 @@ services:
       net.ipv6.conf.default.autoconf: "0"
       net.ipv6.conf.default.forwarding: "0"
       net.ipv6.conf.default.disable_ipv6: "0"
+      net.ipv4.ip_forward: "0"
     devices:
       - "/dev/net/tun:/dev/net/tun"
     command:
@@ -164,6 +171,8 @@ services:
     networks:
       uu:
         ipv4_address: ${UE2_UU}
+      uemu2:
+        ipv4_address: ${ANDROID_UE_UEMU2_GW:?ANDROID_UE_UEMU2_GW}
 
   enb2:
     image: ${ANDROID_UE_SRS_IMAGE}
@@ -219,6 +228,9 @@ services:
       ANDROID_UE_TUN: tun_srsue
       ANDROID_UE_ATTACH_TIMEOUT: ${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
       ANDROID_UE_IPV6_ULA: ${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
+      ANDROID_UE_UEMU_GW: ${ANDROID_UE_UEMU2_GW:?ANDROID_UE_UEMU2_GW}
+      ANDROID_UE_UEMU_SUBNET: ${ANDROID_UE_UEMU2_SUBNET:?ANDROID_UE_UEMU2_SUBNET}
+      ANDROID_UE_UE_UU: ${UE2_UU:?UE2_UU}
     volumes:
       - ../scripts/android-ue-route.sh:/opt/android-ue/android-ue-route.sh:ro
     depends_on:

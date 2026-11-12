@@ -78,7 +78,7 @@ android_ue_wait_route() {
 
 android_ue_ue_pid() {
   local n=$1
-  local name shown pid
+  local name
   name="l5gd-ue${n}"
   case "$name" in
     l5gd-ue1|l5gd-ue2) ;;
@@ -87,16 +87,7 @@ android_ue_ue_pid() {
       exit 1
       ;;
   esac
-  shown=$(docker inspect -f '{{.Name}} {{.State.Pid}}' "$name")
-  case "$shown" in
-    "/${name} "[1-9]*) ;;
-    *)
-      echo "android-ue: refusing to change sysctls; ${name} is not the UE container (${shown:-missing})" >&2
-      exit 1
-      ;;
-  esac
-  pid=${shown##* }
-  printf '%s\n' "$pid"
+  android_ue_container_pid "$name"
 }
 
 android_ue_require_host_tools() {
@@ -295,12 +286,64 @@ android_ue_accel_check() {
 
 android_ue_wait_boot() {
   local n=$1
-  echo "android-ue: android${n} is not started on the integrated path. The dummy0 preflight stays fail-closed. Use --boot-only."
+  if ! docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null | grep -qx true; then
+    echo "android-ue: android${n} is not running" >&2
+    exit 1
+  fi
+  echo "android-ue: android${n} is running. The boot gate already ran. The modem ::1 anchor stays off."
+}
+
+android_ue_enable_ip_forward() {
+  local n=$1
+  local pid subnet chain
+  pid=$(android_ue_ue_pid "$n")
+  subnet=$(get "ANDROID_UE_UEMU${n}_SUBNET")
+  for chain in ANDROID_UE_FWD ANDROID_UE_IN4 ANDROID_UE_GUARD; do
+    if ! nsenter -t "$pid" -n iptables -S "$chain" >/dev/null 2>&1; then
+      echo "android-ue: iptables chain ${chain} is missing; not enabling ip_forward" >&2
+      exit 1
+    fi
+  done
+  if ! nsenter -t "$pid" -n iptables -t nat -S ANDROID_UE_NAT | grep -q MASQUERADE; then
+    echo "android-ue: nat chain ANDROID_UE_NAT is missing; not enabling ip_forward" >&2
+    exit 1
+  fi
+  if ! nsenter -t "$pid" -n iptables -S ANDROID_UE_FWD | grep -q -- '--clamp-mss-to-pmtu'; then
+    echo "android-ue: ANDROID_UE_FWD is missing TCPMSS; not enabling ip_forward" >&2
+    exit 1
+  fi
+  if ! nsenter -t "$pid" -n iptables -S ANDROID_UE_IN4 | grep -q -- "-d ${subnet} "; then
+    echo "android-ue: ANDROID_UE_IN4 does not drop new packets toward ${subnet}; not enabling ip_forward" >&2
+    exit 1
+  fi
+  if ! nsenter -t "$pid" -n iptables -S | grep -q '^-P FORWARD DROP'; then
+    echo "android-ue: FORWARD policy is not DROP; not enabling ip_forward" >&2
+    exit 1
+  fi
+  if ! android_ue_host_sysctl_set "$pid" net.ipv4.ip_forward 1; then
+    exit 1
+  fi
+  echo "android-ue: ue${n} ip_forward is 1 after the gateway chains were verified"
 }
 
 android_ue_phase_b_attach() {
   local n=$1
-  echo "android-ue: phase B attach for ue${n} is not in this PR"
+  local apid gw probe
+  gw=$(get "ANDROID_UE_UEMU${n}_GW")
+  apid=$(android_ue_container_pid "l5gd-android${n}")
+  if ! nsenter -t "$apid" -n ip route replace default via "$gw"; then
+    echo "android-ue: could not set the android${n} default route via ${gw}" >&2
+    exit 1
+  fi
+  probe=$(nsenter -t "$apid" -n ip route get 1.1.1.1)
+  case "$probe" in
+    *"via ${gw}"*) ;;
+    *)
+      echo "android-ue: android${n} default is not via ${gw}: ${probe}" >&2
+      exit 1
+      ;;
+  esac
+  echo "android-ue: android${n} default route is via ${gw}. Name lookup uses ANDROID_UE_DNS through the EPC."
 }
 
 android_ue_prepare_extra_flags() {
@@ -517,10 +560,14 @@ EOF
   elif [ "$wipe" -eq 1 ]; then
     docker rm -f -v "l5gd-android${n}" >/dev/null 2>&1 || true
   fi
-  echo "android-ue: --boot-only starts android${n} on $(android_ue_uemu_network_name "$n"). Phase B is not attached."
   boot_started=$(date +%s)
   android_ue_boot_compose "$root" "$env_file" "$isolated_file" "$persist_file" up -d "android${n}"
   android_ue_measure_boot "$n"
+  if [ "$boot_only" -eq 1 ]; then
+    echo "android-ue: --boot-only starts android${n} on $(android_ue_uemu_network_name "$n"). Phase B is not attached."
+  else
+    echo "android-ue: android${n} boot finished on $(android_ue_uemu_network_name "$n"). Phase B continues."
+  fi
 }
 
 android_ue_boot_compose() {
@@ -624,7 +671,7 @@ if [ "$print_services" -eq 1 ]; then
     printf '%s\n' "android${n}"
     exit 0
   fi
-  printf '%s\n' "ue${n}" "enb${n}" "ue${n}-route"
+  printf '%s\n' "android${n}" "ue${n}" "enb${n}" "ue${n}-route"
   if [ "$with_cgnat" -eq 1 ]; then
     echo cgnat
   fi
@@ -777,17 +824,17 @@ if [ "$install_upf_route" -eq 1 ] && [ "$with_socks" -eq 1 ]; then
   fi
 fi
 
-if docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null | grep -qx true; then
-  echo "android-ue: android${n} is already running; refusing to run the route sidecar again" >&2
-  exit 1
+if ! docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null | grep -qx true; then
+  android_ue_boot_only "$n"
 fi
-echo "android-ue: starting ${user} only. Core config is not modified."
+echo "android-ue: starting ${user}. Core config is not modified."
 android_ue_require_host_tools
 android_ue_compose "$root" "$env_file" up -d "ue${n}"
 android_ue_preset_existing_iface_sysctls "$n"
 android_ue_compose "$root" "$env_file" up -d \
   "enb${n}" "ue${n}-route"
 android_ue_wait_route "$n"
+android_ue_enable_ip_forward "$n"
 android_ue_require_ipv6 "$n"
 android_ue_install_ip6_filter "$n"
 android_ue_install_gtpu_route "$n"
@@ -870,4 +917,4 @@ if [ "$install_upf_route" -eq 1 ]; then
   fi
 fi
 
-echo "android-ue: ${user} UE path is up. android${n} was not started. --boot-only publishes adb on 127.0.0.1:$(android_ue_adb_host_port "$n"). Core containers were not restarted."
+echo "android-ue: ${user} is up. adb connect $(get "ANDROID_UE_UEMU${n}_ANDROID"):5555, or 127.0.0.1:$(android_ue_adb_host_port "$n"). Core containers were not restarted."

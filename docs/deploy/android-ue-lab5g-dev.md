@@ -54,7 +54,7 @@ On the guest, `docker load` that archive. Do not push this image to a public reg
 
 Profile B0 is `/dev/kvm` plus `group_add` of the host kvm GID. There is no `NET_ADMIN`, no `privileged`, and no extra capability. ADB and the console are published on `127.0.0.1` only: ue1 uses `15555` and `15554`, ue2 uses `16555` and `16554`.
 
-Integrated `android-ue-up.sh` still starts the UE, the eNB, and the route sidecar. It does not start the emulator. `android_ue_phase_b_attach` is the later hook. `docker compose up` on the overlay skips `android_ue_preset_existing_iface_sysctls`, which `up` applies on the host after the UE container exists and before the route sidecar. Use `android-ue-up.sh` for the integrated path.
+Integrated `android-ue-up.sh` boots `androidN` on `uemuN` first, then starts `ueN` and writes `accept_ra`, `autoconf`, and `forwarding` from the host before the route sidecar. The sidecar installs FORWARD, MASQUERADE, and `ANDROID_UE_IN4` while `ip_forward` is still 0. After that sidecar exits 0, `up` sets `net.ipv4.ip_forward=1` and points the emulator default route at the `ueN` address on `uemuN`. `docker compose up` skips the host preset and that order. Use `android-ue-up.sh`. The modem `::1` anchor stays off: nothing in this path creates `dummy0` in the emulator netns. `down` sets `ip_forward=0` before it deletes those chains, and it does not touch the UPF.
 
 `--boot-only` starts only that android service, on a laptop or a normal Linux host, without the UE netns, the route sidecar, nft, cgnat, or those sysctls. The gate is `sys.boot_completed=1` within 600 seconds. `ANDROID_UE_BOOT_GATE=0` does not skip it. The script then polls `adb get-state` for `ANDROID_UE_ADB_STABLE` seconds (default 120) and appends `logcat -b events -d` lines matching `boot_progress`, plus `dmesg`, to a log. The default log directory is `/tmp/open5g-android-boot`. Modem errors for `::1`, and a guest with no egress, are expected: there is no ULA and no `tun_srsue`.
 
@@ -66,7 +66,7 @@ bash lab/scripts/android-emulator-standalone.sh \
 
 That wrapper is `android-ue-up.sh --boot-only`. Add `--wipe` to remove the ephemeral container layer, or to empty an opted-in AVD directory, before the measurement.
 
-`ANDROID_UE_CORES` stays 2, `ANDROID_UE_MEMORY` stays 2048, and `ANDROID_UE_EXTRA_FLAGS` stays `-no-metrics -no-audio -partition-size 2048`. `ANDROID_UE_CPU_LIMIT` stays 2.0. A measurement can raise `CORES` to 4, 6, or 8 and `MEMORY` to 4096 or 8192. The container CPU cap has to move with `CORES`, and `ANDROID_UE_MEM_LIMIT` has to stay at least `MEMORY` plus 1536 MiB. Optional flags for a measurement are `-camera-back none -camera-front none -netfast`. `--boot-only` keeps `-no-metrics` only when `emulator -help-all` in the image lists it. If the probe cannot run, the flags are left as set. `ANDROID_UE_DNS` is optional here. When it is an IPv4 address other than `127.0.0.11`, it is appended as `-dns-server`. Phase B will set it to the PDN DNS.
+`ANDROID_UE_CORES` stays 2, `ANDROID_UE_MEMORY` stays 2048, and `ANDROID_UE_EXTRA_FLAGS` stays `-no-metrics -no-audio -partition-size 2048`. `ANDROID_UE_CPU_LIMIT` stays 2.0. A measurement can raise `CORES` to 4, 6, or 8 and `MEMORY` to 4096 or 8192. The container CPU cap has to move with `CORES`, and `ANDROID_UE_MEM_LIMIT` has to stay at least `MEMORY` plus 1536 MiB. Optional flags for a measurement are `-camera-back none -camera-front none -netfast`. `--boot-only` keeps `-no-metrics` only when `emulator -help-all` in the image lists it. If the probe cannot run, the flags are left as set. `ANDROID_UE_DNS` is optional for `--boot-only`. When it is an IPv4 address other than `127.0.0.11`, it is appended as `-dns-server`. A placeholder is omitted. The integrated path sets it to the PDN DNS.
 
 The AVD is ephemeral. `down` removes the container and its writable layer. Set `ANDROID_UE_AVD_PERSIST=1` and an absolute `ANDROID_UE_AVD1_DIR` to mount that directory at `/opt/open5g-avd`. The mount is not `/root/.android`, so `adbkey` and `adbkey.pub` stay in the container layer. Before start, the script and the image preflight delete `adbkey`, `adbkey.pub`, `accounts.db`, `userdata-qemu.img`, `cache.img`, and `snapshots/`. `config.ini` can remain, which avoids recreating the AVD skeleton. It does not keep accounts or user state. `--wipe` removes the directory contents, including `config.ini`, for a cold gate. `IMG_TYPE` stays `google_apis`. Quickboot snapshots stay out of scope. The image still passes `-no-snapshot`.
 
@@ -120,13 +120,13 @@ sudo bash lab/scripts/android-ue-up.sh \
   --user ue1
 ```
 
-The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, and starts `ue1`, `enb1`, and the route sidecar. It does not start the emulator. `--boot-only` is the phase A emulator boot. It does not start `cgnat` and it does not change the UPF main default route. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. `ANDROID_UE_KVM_GID` must be a non-zero number and the same as `stat -c %g /dev/kvm`. A registry emulator image is refused unless its name contains `@sha256`. `open5g-android-emulator:local` is the image this repo builds.
+The script checks `/dev/kvm` and the memory headroom, rejects `REPLACE_` USIM values, boots the emulator, then starts `ue1`, `enb1`, and the route sidecar. `--boot-only` stops after the emulator boot. It does not start `cgnat` and it does not change the UPF main default route. Set `ANDROID_UE_DNS` to the PDN DNS. A name lookup from the emulator is the phase B check and must go through the EPC. The eNB waits until the UE accepts its ZMQ port. The route sidecar waits until `tun_srsue` has an address and installs the default route and the OUTPUT drop. `ANDROID_UE_KVM_GID` must be a non-zero number and the same as `stat -c %g /dev/kvm`. A registry emulator image is refused unless its name contains `@sha256`. `open5g-android-emulator:local` is the image this repo builds.
 
-IPv6 stays enabled on `all`, `default`, `lo`, and `dummy0`. Docker may leave `disable_ipv6=1` on `eth0`, and `tun_srsue` may never gain `fe80`. That link-local address is optional. The sidecar always creates `dummy0` with the ULA `/128` (`nodad`, no route on that interface). `accept_ra=0`, `autoconf=0`, and `forwarding=0` are set on each interface other than `lo`. It installs `ip -6 route replace unreachable default metric 1` and removes any other IPv6 default. IPv4 INPUT accepts `lo` and established flows, then drops new packets that arrive on `tun_srsue`. Listeners on the uu address, including 5554 and 5555, are not covered by that drop. After the sidecar exits, `up` on the host runs `nsenter -n nft` in the UE netns. The `ip6` table accepts `lo` on input and output and drops every other interface. `::1` is reached through `lo`, so it stays open for the modem. The srsRAN image `ip6tables` is not used. If `nft` is missing or the rules do not load, `up` exits. `ANDROID_UE_IPV6_NO_FILTER_OK=1` is the only override, and only for a netns check. `::1` plus the ULA on `dummy0` are required. `up` reads those sysctls and the unreachable route again after the sidecar exits. If `l5gd-android1` is already running, `up` does not start the sidecar again. cgnat reads `net.ipv4.ip_forward` and continues when compose already set it to 1. It exits only when the value is not 1 and `/proc/sys` rejects the write. The image has no official modem-host setting. `-feature -ModemSimulator` is an optional `EXTRA_FLAGS` value, not the default. The emulator service does not receive `NET_ADMIN`.
+IPv6 stays enabled on `all`, `default`, `lo`, and `dummy0`. Docker may leave `disable_ipv6=1` on `eth0`, and `tun_srsue` may never gain `fe80`. That link-local address is optional. The sidecar always creates `dummy0` with the ULA `/128` (`nodad`, no route on that interface). `accept_ra=0`, `autoconf=0`, and `forwarding=0` are set on each interface other than `lo`. It installs `ip -6 route replace unreachable default metric 1` and removes any other IPv6 default. IPv4 INPUT accepts `lo` and established flows, then drops new packets from `tun_srsue` that are addressed to the `uemuN` subnet. Listeners on the uu address, including 5554 and 5555, are not covered by that drop. After the sidecar exits, `up` on the host runs `nsenter -n nft` in the UE netns. The `ip6` table accepts `lo` on input and output and drops every other interface. `::1` is reached through `lo`, so it stays open for the modem. The srsRAN image `ip6tables` is not used. If `nft` is missing or the rules do not load, `up` exits. `ANDROID_UE_IPV6_NO_FILTER_OK=1` is the only override, and only for a netns check. `::1` plus the ULA on `dummy0` are required. `up` reads those sysctls and the unreachable route again after the sidecar exits. If `l5gd-android1` is already running, `up` keeps it and continues with the UE path. cgnat reads `net.ipv4.ip_forward` and continues when compose already set it to 1. It exits only when the value is not 1 and `/proc/sys` rejects the write. The image has no official modem-host setting. `-feature -ModemSimulator` is an optional `EXTRA_FLAGS` value, not the default. The emulator service does not receive `NET_ADMIN`.
 
 `up` runs `docker wait l5gd-ue1-route` and continues only when that exit code is 0. The eNB container has no `NET_ADMIN`. After that wait, `up` uses `nsenter` from the host, the same way `lab-routes.sh` does for `l5gd-enb`. It finds the interface that holds `UE1_ENB_S1U` and installs `ANDROID_UE_SGWU_GTPU_ROUTE/32` on that interface. `ip route get` must show that device. A route on the UPF toward that S1-U address is not added. The lab capture showed the eNB route alone is enough for the SGi ping.
 
-`up` then runs `ping -c 3 -I tun_srsue <ANDROID_UE_SGI_PROBE>`. A failed ping stops `up`. Phase A does not start `android1` after that ping. The ping is only meaningful before `--install-upf-route`. After that flag, the test UE is steered to cgnat, which drops the lab subnet, so a ping to the lab SGi server fails on purpose.
+`up` then runs `ping -c 3 -I tun_srsue <ANDROID_UE_SGI_PROBE>`. A failed ping stops `up`. The emulator is already up on `uemuN`. The ping is only meaningful before `--install-upf-route`. After that flag, the test UE is steered to cgnat, which drops the lab subnet, so a ping to the lab SGi server fails on purpose.
 
 `uu` is an internal network. The emulator is not on it. Do not use `127.0.0.1:15551`, and do not publish ADB on `0.0.0.0`. After `--boot-only`:
 
@@ -146,35 +146,44 @@ Do not publish ADB or VNC on the libvirt bridge or the LAN. Do not attach a non-
 
 The api-33 image already starts the emulator with `-no-snapshot`. `--boot-only` polls `sys.boot_completed` for 600 seconds and then writes the boot log. `ANDROID_UE_KVM_GID` is added to the emulator process with `group_add`. Set it to the numeric GID of the host group that owns `/dev/kvm`. `--boot-only` uses `stat -c %g /dev/kvm` when the env value is still a placeholder. Integrated `up` still rejects that placeholder.
 
+## B2
+
+Run this with no SOCKS egress and no UPF route. The emulator gate is `sys.boot_completed=1` within 600 seconds, before `ueN` forwards anything. There is no second android service.
+
+`docker compose up` skips the host preset. It does not write the existing-interface sysctls, it does not keep `ip_forward` at 0 until the gateway chains exist, and it does not install the emulator default route. Use `android-ue-up.sh`.
+
+The modem `::1` anchor stays off. Do not `nsenter` into `l5gd-androidN` to create `dummy0` unless a B2 run shows the modem cannot use `::1`. That follow-up is not this change. `ANDROID_UE_DNS` must be the PDN DNS so the emulator's `-dns-server` is answered through the EPC.
+
+After the script exits 0, the SGi ping from the emulator is 5/5 and a name lookup from `androidN` resolves through the EPC. Commands are V3 below.
+
 ## Verification
 
 Use the IMSI from the env file. Do not paste UE logs into a ticket; the image entrypoint is traced and the USIM is in the container environment.
 
-1. **MME attach.** `sudo docker logs l5gd-mme 2>&1 | grep <test IMSI>` shows the attach for that IMSI. The container name is `ANDROID_UE_MME_CONTAINER` if the lab renamed it.
-2. **UE address from the PGW pool.** `sudo docker exec l5gd-ue1 ip -4 addr show dev tun_srsue` is an address in `UE_POOL` (the published pool, not the uu address).
-3. **UE tun path.** Phase A does not put the emulator in this netns, so the Android shell ping is a phase B check. In the UE netns:
+**V1. MME attach.** `sudo docker logs l5gd-mme 2>&1 | grep <test IMSI>` shows the attach for that IMSI. The container name is `ANDROID_UE_MME_CONTAINER` if the lab renamed it.
 
-   ```bash
-   sudo docker exec l5gd-ue1 ip route get 1.1.1.1
-   sudo docker exec l5gd-ue1 ip route get <UE1_ENB_UU>
-   ```
+**V2. UE address from the PGW pool.** `sudo docker exec l5gd-ue1 ip -4 addr show dev tun_srsue` is an address in `UE_POOL` (the published pool, not the uu address).
 
-   The first prints `dev tun_srsue`. The second does not. Then from the emulator, ping the SGi server by literal address (`SGI_SERVER` in the env file):
+**V3. Emulator path through the EPC.** ADB uses the emulator address on `uemuN`, not the uu address. Port 5037 stays on `127.0.0.1` inside the emulator container. The published ports stay on `127.0.0.1`.
 
-   ```bash
-   adb -s <UE1_UU>:5555 shell ping -c 3 <SGI_SERVER>
-   ```
+```bash
+adb connect <ANDROID_UE_UEMU1_ANDROID>:5555
+adb -s <ANDROID_UE_UEMU1_ANDROID>:5555 shell ping -c 5 <SGI_SERVER>
+adb -s <ANDROID_UE_UEMU1_ANDROID>:5555 shell ping -c 1 example.com
+```
 
-   `adb shell ip route` shows the emulator's SLIRP route. That is expected. The packet leaves QEMU and hits the netns default route.
-4. **iperf3.** The SGi server is already `iperf3 -s`. The srsRAN image and the Android image do not ship an iperf3 client. `nicolaka/netshoot` is the lab's existing server image and it does. Join the UE netns so the client uses the same default route as the emulator process:
+`adb shell ip route` shows the default via `<ANDROID_UE_UEMU1_GW>`. In the UE netns, `ip route get 1.1.1.1` prints `dev tun_srsue` and `ip route get <UE1_ENB_UU>` does not. `uemuN` has no IPv6 route: `open5g-uemuN` is `enable_ipv6: false`, and the emulator netns has no IPv6 default. The `ip6` nft table and IPv6 forwarding DROP stay in the `l5gd-ueN` netns. `ANDROID_UE_FWD`, `ANDROID_UE_NAT`, and `net.ipv4.ip_forward=1` exist only in that same pid. `uu` to `uemuN` and `uemuN` to `uu` are DROP. New packets from `tun_srsue` to the `uemuN` subnet are dropped.
 
-   ```bash
-   sudo docker run --rm --network container:l5gd-ue1 nicolaka/netshoot \
-     iperf3 -c <SGI_SERVER> -t 3
-   ```
+**V4. iperf3.** The SGi server is already `iperf3 -s`. The srsRAN image and the Android image do not ship an iperf3 client. `nicolaka/netshoot` is the lab's existing server image and it does. Join the UE netns so the client uses the same default route as the forwarded emulator traffic:
 
-   One TCP flow to the SGi server does not need CGNAT. Browsing does. The OUTPUT filter allows it because the route to that address is `tun_srsue`. Run this ping and iperf before `--install-upf-route`. After that flag, cgnat drops the lab subnet, so the same ping fails on purpose.
-5. **Public address behind the SOCKS tunnel.** Skip this until the CGNAT section below has been run. The echo host must show the laptop's public address. Write that result as `<LAPTOP_PUBLIC_IP>` in notes. Do not put the real address in the PR.
+```bash
+sudo docker run --rm --network container:l5gd-ue1 nicolaka/netshoot \
+  iperf3 -c <SGI_SERVER> -t 3
+```
+
+One TCP flow to the SGi server does not need CGNAT. Browsing does. The OUTPUT filter allows it because the route to that address is `tun_srsue`. Run this ping and iperf before `--install-upf-route`. After that flag, cgnat drops the lab subnet, so the same ping fails on purpose.
+
+**V5. Public address behind the SOCKS tunnel.** Skip this until the CGNAT section below has been run. The echo host must show the laptop's public address. Write that result as `<LAPTOP_PUBLIC_IP>` in notes. Do not put the real address in the PR.
 
 A failed ZMQ wait or a route timeout means the UE did not attach. Read `sudo docker logs l5gd-ue1` and `sudo docker logs l5gd-enb1` on the guest, fix the subscriber or the addresses, and start again. After a detach, stop the UE and then the eNB before starting them again. The down script does that order.
 

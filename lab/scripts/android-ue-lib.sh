@@ -277,6 +277,23 @@ android_ue_uemu_network_name() {
   printf 'open5g-uemu%s\n' "$1"
 }
 
+# Print the pid of a named container. Refuse any other name so a sysctl or
+# route write cannot land on the host, the UPF, or an EPC container.
+android_ue_container_pid() {
+  local name=$1
+  local shown pid
+  shown=$(docker inspect -f '{{.Name}} {{.State.Pid}}' "$name" 2>/dev/null || true)
+  case "$shown" in
+    "/${name} "[1-9]*) ;;
+    *)
+      echo "android-ue: refusing to change netns state; ${name} is not that container (${shown:-missing})" >&2
+      return 1
+      ;;
+  esac
+  pid=${shown##* }
+  printf '%s\n' "$pid"
+}
+
 # Fail closed unless the UEMU prefix is canonical IPv4 and misses the UE/PDN
 # pool, uu addresses, PDN addresses, and cgnat addresses. OTHER_SUBNET is the
 # other user's UEMU prefix. Later args are kind=value with kind pool, uu, pdn,
@@ -352,10 +369,12 @@ PY
 android_ue_apply_dns_flag() {
   local flags=$1
   local dns=$2
-  if [ -z "$dns" ]; then
-    printf '%s\n' "$flags"
-    return 0
-  fi
+  case "$dns" in
+    ""|*REPLACE*|*CHANGEME*)
+      printf '%s\n' "$flags"
+      return 0
+      ;;
+  esac
   if ! printf '%s\n' "$dns" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "android-ue: ANDROID_UE_DNS must be an IPv4 address" >&2
     return 1

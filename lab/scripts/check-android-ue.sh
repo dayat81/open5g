@@ -334,7 +334,8 @@ if grep -q 'ps -eo comm=' lab/scripts/android-ue-route.sh; then
   echo "route script still looks for the emulator with ps" >&2
   exit 1
 fi
-again_at=$(grep -n -F 'refusing to run the route sidecar again' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+# shellcheck disable=SC2016
+boot_call_at=$(grep -n -F 'android_ue_boot_only "$n"' lab/scripts/android-ue-up.sh | tail -n 1 | cut -d: -f1)
 route_up_at=$(awk '/up -d \\$/ { print NR; exit }' lab/scripts/android-ue-up.sh)
 # shellcheck disable=SC2016
 ue_only_at=$(grep -n -F 'up -d "ue${n}"' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
@@ -344,8 +345,8 @@ if [ -z "$ue_only_at" ] || [ -z "$preset_at" ] || [ -z "$route_up_at" ] || [ "$u
   echo "up starts the route sidecar before the host sysctl check" >&2
   exit 1
 fi
-if [ -z "$again_at" ] || [ -z "$route_up_at" ] || [ "$again_at" -ge "$route_up_at" ]; then
-  echo "up starts the route sidecar after android is already running" >&2
+if [ -z "$boot_call_at" ] || [ -z "$route_up_at" ] || [ "$boot_call_at" -ge "$route_up_at" ]; then
+  echo "up starts the route sidecar before the android boot" >&2
   exit 1
 fi
 # shellcheck disable=SC2016
@@ -438,9 +439,22 @@ echo "ipv4 input filter"
 v4rules=$(bash lab/scripts/android-ue-route.sh --render-ip4-input)
 printf '%s\n' "$v4rules" | grep -q -- '-i lo -j ACCEPT'
 printf '%s\n' "$v4rules" | grep -q -- '-m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT'
-printf '%s\n' "$v4rules" | grep -q -- '-i tun_srsue -j DROP'
+printf '%s\n' "$v4rules" | grep -q -- '-i tun_srsue -d 203.0.113.0/29 -m conntrack --ctstate NEW -j DROP'
 if printf '%s\n' "$v4rules" | grep -E -- '-j DROP' | grep -v 'tun_srsue'; then
   echo "IPv4 INPUT drops an interface other than tun_srsue" >&2
+  exit 1
+fi
+
+echo "gateway forward filter"
+fwd=$(bash lab/scripts/android-ue-route.sh --render-forward uemu0 eth0 tun_srsue)
+printf '%s\n' "$fwd" | grep -q -- '-P FORWARD DROP'
+printf '%s\n' "$fwd" | grep -q -- '-A ANDROID_UE_FWD -o tun_srsue -p tcp -j TCPMSS --clamp-mss-to-pmtu'
+printf '%s\n' "$fwd" | grep -q -- '-A ANDROID_UE_FWD -i uemu0 -o tun_srsue -j ACCEPT'
+printf '%s\n' "$fwd" | grep -q -- '-A ANDROID_UE_FWD -i eth0 -o uemu0 -j DROP'
+printf '%s\n' "$fwd" | grep -q -- '-A ANDROID_UE_FWD -i uemu0 -o eth0 -j DROP'
+printf '%s\n' "$fwd" | grep -q -- '-A ANDROID_UE_NAT -o tun_srsue -j MASQUERADE'
+if printf '%s\n' "$fwd" | grep -q -- '-i uemu0 -o eth0 -j ACCEPT'; then
+  echo "gateway filter accepts uemu to uu" >&2
   exit 1
 fi
 
@@ -563,13 +577,40 @@ fi
 grep -q 'ANDROID_UE_ISOLATED:-}' lab/images/android-emulator/open5g-preflight.sh
 grep -q 'android_ue_uemu_network_name' lab/scripts/android-ue-down.sh
 phase_b=$(awk '/^android_ue_phase_b_attach\(\)/,/^}/' lab/scripts/android-ue-up.sh)
-if printf '%s\n' "$phase_b" | grep -E -q 'MASQUERADE|ip_forward|nsenter|iptables'; then
-  echo "phase B attach is already implemented" >&2
+if ! printf '%s\n' "$phase_b" | grep -q 'l5gd-android'; then
+  echo "phase B attach does not target the android container" >&2
+  exit 1
+fi
+if printf '%s\n' "$phase_b" | grep -E -q 'dummy0|ip link add'; then
+  echo "phase B installs a modem anchor; that stays off" >&2
+  exit 1
+fi
+if ! grep -q 'net.ipv4.ip_forward: "0"' lab/compose/docker-compose.android-ue.optional.yml lab/scripts/gen-android-ue.sh; then
+  echo "ue compose does not pin ip_forward=0" >&2
+  exit 1
+fi
+fwd_ones=$(grep -c 'net.ipv4.ip_forward: "1"' lab/compose/docker-compose.android-ue.optional.yml || true)
+if [ "$fwd_ones" != 1 ]; then
+  echo "ip_forward=1 must stay on cgnat only" >&2
+  exit 1
+fi
+if ! grep -q 'skips the host preset' docs/deploy/android-ue-lab5g-dev.md; then
+  echo "runbook does not say docker compose up skips the host preset" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+fwd_at=$(grep -n -F 'android_ue_enable_ip_forward "$n"' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+# shellcheck disable=SC2016
+wait_route_at=$(grep -n -F 'android_ue_wait_route "$n"' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+if [ -z "$fwd_at" ] || [ -z "$wait_route_at" ] || [ "$wait_route_at" -ge "$fwd_at" ]; then
+  echo "ip_forward is enabled before the route sidecar is verified" >&2
   exit 1
 fi
 phase_b_down=$(awk '/^android_ue_phase_b_detach\(\)/,/^}/' lab/scripts/android-ue-down.sh)
-if printf '%s\n' "$phase_b_down" | grep -E -q 'MASQUERADE|ip_forward|nsenter|iptables'; then
-  echo "phase B detach is already implemented" >&2
+fwd_off=$(printf '%s\n' "$phase_b_down" | grep -n 'ip_forward=0' | head -n 1 | cut -d: -f1)
+chain_off=$(printf '%s\n' "$phase_b_down" | grep -n 'ANDROID_UE_FWD' | head -n 1 | cut -d: -f1)
+if [ -z "$fwd_off" ] || [ -z "$chain_off" ] || [ "$fwd_off" -ge "$chain_off" ]; then
+  echo "down deletes gateway chains before ip_forward=0" >&2
   exit 1
 fi
 extra_flags=$(awk -F= '$1 == "ANDROID_UE_EXTRA_FLAGS" { sub(/^[^=]*=/, ""); print; exit }' lab/compose/android-ue.env.example)
@@ -962,6 +1003,11 @@ if [ "$dns_plain" != "-no-audio" ]; then
   echo "empty ANDROID_UE_DNS changed EXTRA_FLAGS" >&2
   exit 1
 fi
+dns_placeholder=$(android_ue_apply_dns_flag "-no-audio" "REPLACE_ANDROID_UE_DNS")
+if [ "$dns_placeholder" != "-no-audio" ]; then
+  echo "placeholder ANDROID_UE_DNS was forwarded to the emulator" >&2
+  exit 1
+fi
 dns_set=$(android_ue_apply_dns_flag "-no-audio" "192.0.2.53")
 if [ "$dns_set" != "-no-audio -dns-server 192.0.2.53" ]; then
   echo "ANDROID_UE_DNS was not appended as -dns-server" >&2
@@ -1035,10 +1081,7 @@ fi
 echo "up-script service list"
 without=$(lab/scripts/android-ue-up.sh --env-file "$example" --print-services)
 printf '%s\n' "$without" | grep -qx 'ue1'
-if printf '%s\n' "$without" | grep -qx 'android1'; then
-  echo "integrated up starts android before phase B" >&2
-  exit 1
-fi
+printf '%s\n' "$without" | grep -qx 'android1'
 if printf '%s\n' "$without" | grep -qx 'egress'; then
   echo "egress is in the default service list" >&2
   exit 1

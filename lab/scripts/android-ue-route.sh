@@ -5,17 +5,42 @@
 set -euo pipefail
 
 # IPv4 INPUT. lo and established flows stay open. New packets from tun_srsue
-# are dropped. uu (5554/5555) is not named here, so those listeners stay reachable.
+# toward the uemu subnet are dropped. Other input, including uu listeners, stays.
+# shellcheck disable=SC2120
 android_ue_render_ip4_input() {
-  cat <<'EOF'
+  local subnet=${1:-203.0.113.0/29}
+  local tun=${2:-tun_srsue}
+  cat <<EOF
 -A ANDROID_UE_IN4 -i lo -j ACCEPT
 -A ANDROID_UE_IN4 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
--A ANDROID_UE_IN4 -i tun_srsue -j DROP
+-A ANDROID_UE_IN4 -i ${tun} -d ${subnet} -m conntrack --ctstate NEW -j DROP
+EOF
+}
+
+android_ue_render_forward() {
+  local uemu_if=$1
+  local uu_if=$2
+  local tun=$3
+  cat <<EOF
+-P FORWARD DROP
+-A ANDROID_UE_FWD -o ${tun} -p tcp -j TCPMSS --clamp-mss-to-pmtu
+-A ANDROID_UE_FWD -i ${uemu_if} -o ${tun} -j ACCEPT
+-A ANDROID_UE_FWD -i ${tun} -o ${uemu_if} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A ANDROID_UE_FWD -i ${uu_if} -o ${uemu_if} -j DROP
+-A ANDROID_UE_FWD -i ${uemu_if} -o ${uu_if} -j DROP
+-A ANDROID_UE_FWD -j DROP
+-A ANDROID_UE_NAT -o ${tun} -j MASQUERADE
 EOF
 }
 
 if [ "${1:-}" = "--render-ip4-input" ]; then
+  # shellcheck disable=SC2119
   android_ue_render_ip4_input
+  exit 0
+fi
+
+if [ "${1:-}" = "--render-forward" ]; then
+  android_ue_render_forward "${2:-uemu0}" "${3:-eth0}" "${4:-tun_srsue}"
   exit 0
 fi
 
@@ -100,7 +125,7 @@ android_ue_route_install_input4() {
   fi
   "$bin" -A "$chain" -i lo -j ACCEPT
   "$bin" -A "$chain" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-  "$bin" -A "$chain" -i "$tun" -j DROP
+  "$bin" -A "$chain" -i "$tun" -d "${ANDROID_UE_UEMU_SUBNET:?ANDROID_UE_UEMU_SUBNET}" -m conntrack --ctstate NEW -j DROP
 }
 android_ue_route_install_input4
 # disable_ipv6=0 on all, default, lo, and dummy0. Docker may leave eth0 at 1.
@@ -260,4 +285,60 @@ case "$enb_probe" in
 esac
 
 ue_addr=$(ip -4 -o addr show dev "$tun" | awk '{ print $4; exit }')
-echo "android-ue-route: ${tun} ${ue_addr}; default via ${tun}; eNB ${enb} via ${dev}"
+uemu_gw=${ANDROID_UE_UEMU_GW:?ANDROID_UE_UEMU_GW}
+uu_addr=${ANDROID_UE_UE_UU:?ANDROID_UE_UE_UU}
+uemu_if=$(ip -4 -o addr show | awk -v ip="$uemu_gw" 'index($4, ip "/") == 1 { print $2; exit }')
+uu_if=$(ip -4 -o addr show | awk -v ip="$uu_addr" 'index($4, ip "/") == 1 { print $2; exit }')
+if [ -z "$uemu_if" ] || [ -z "$uu_if" ] || [ "$uemu_if" = "$uu_if" ]; then
+  echo "android-ue-route: could not tell the uemu interface from the uu interface" >&2
+  exit 1
+fi
+iptables -P FORWARD DROP
+if ! iptables -N ANDROID_UE_FWD 2>/dev/null; then
+  iptables -F ANDROID_UE_FWD
+fi
+if ! iptables -C FORWARD -j ANDROID_UE_FWD 2>/dev/null; then
+  iptables -I FORWARD 1 -j ANDROID_UE_FWD
+fi
+iptables -A ANDROID_UE_FWD -o "$tun" -p tcp -j TCPMSS --clamp-mss-to-pmtu
+iptables -A ANDROID_UE_FWD -i "$uemu_if" -o "$tun" -j ACCEPT
+iptables -A ANDROID_UE_FWD -i "$tun" -o "$uemu_if" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -A ANDROID_UE_FWD -i "$uu_if" -o "$uemu_if" -j DROP
+iptables -A ANDROID_UE_FWD -i "$uemu_if" -o "$uu_if" -j DROP
+iptables -A ANDROID_UE_FWD -j DROP
+if ! iptables -t nat -N ANDROID_UE_NAT 2>/dev/null; then
+  iptables -t nat -F ANDROID_UE_NAT
+fi
+if ! iptables -t nat -C POSTROUTING -j ANDROID_UE_NAT 2>/dev/null; then
+  iptables -t nat -A POSTROUTING -j ANDROID_UE_NAT
+fi
+iptables -t nat -A ANDROID_UE_NAT -o "$tun" -j MASQUERADE
+if ! iptables -S ANDROID_UE_FWD | grep -q -- '--clamp-mss-to-pmtu'; then
+  echo "android-ue-route: ANDROID_UE_FWD is missing TCPMSS" >&2
+  exit 1
+fi
+if ! iptables -S ANDROID_UE_FWD | grep -q -- "-i ${uemu_if} -o ${tun} -j ACCEPT"; then
+  echo "android-ue-route: ANDROID_UE_FWD does not accept ${uemu_if} to ${tun}" >&2
+  exit 1
+fi
+if ! iptables -S ANDROID_UE_FWD | grep -q -- "-i ${uu_if} -o ${uemu_if} -j DROP"; then
+  echo "android-ue-route: ANDROID_UE_FWD does not drop ${uu_if} to ${uemu_if}" >&2
+  exit 1
+fi
+if ! iptables -S ANDROID_UE_FWD | grep -q -- "-i ${uemu_if} -o ${uu_if} -j DROP"; then
+  echo "android-ue-route: ANDROID_UE_FWD does not drop ${uemu_if} to ${uu_if}" >&2
+  exit 1
+fi
+if ! iptables -S ANDROID_UE_IN4 | grep -q -- "-i ${tun} -d ${ANDROID_UE_UEMU_SUBNET} -m conntrack --ctstate NEW -j DROP"; then
+  echo "android-ue-route: ANDROID_UE_IN4 does not drop new packets from ${tun} to the uemu subnet" >&2
+  exit 1
+fi
+if ! iptables -t nat -S ANDROID_UE_NAT | grep -q -- "-o ${tun} -j MASQUERADE"; then
+  echo "android-ue-route: ANDROID_UE_NAT is missing MASQUERADE" >&2
+  exit 1
+fi
+if ! iptables -S | grep -q '^-P FORWARD DROP'; then
+  echo "android-ue-route: FORWARD policy is not DROP" >&2
+  exit 1
+fi
+echo "android-ue-route: ${tun} ${ue_addr}; default via ${tun}; eNB ${enb} via ${dev}; gateway ${uemu_if} to ${tun}"
