@@ -30,6 +30,7 @@ from open5g_dashboard.emulator import (
     origin_allowed,
     parse_attach_ipv4,
     safe_query,
+    session_rate_limited,
     target_allowed,
     token_hash,
 )
@@ -181,6 +182,8 @@ def _frame_ancestors(settings: Settings) -> str:
 
 
 def register_emulator(app: FastAPI, settings: Settings, hooks: DashboardHooks) -> None:
+    session_hits: dict[str, list[float]] = {}
+
     def audit(conn, actor, owner, group, action, resource, outcome, reason, detail):
         hooks.audit(conn, actor, owner, group, action, resource, outcome, reason, detail)
 
@@ -327,6 +330,15 @@ def register_emulator(app: FastAPI, settings: Settings, hooks: DashboardHooks) -
             if error:
                 return error
             session, actor, row, owner, group = granted
+            if session_rate_limited(
+                session_hits,
+                actor.id,
+                time.monotonic(),
+                settings.emulator_session_limit,
+                settings.emulator_session_window,
+            ):
+                audit(conn, actor, owner, group, "emulator_open", f"emulator:{ue_id}", "denied", "emulator_rate_limited", _client_detail(request, ue_id))
+                return hooks.fail(429, "emulator_rate_limited", "Too many session requests")
             if not settings.emulator_screen_origin:
                 return hooks.fail(404, "emulator_disabled", "The screen origin is not configured")
             target = _target_for(settings, ue_id, row)

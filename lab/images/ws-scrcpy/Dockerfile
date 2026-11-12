@@ -16,6 +16,10 @@ RUN curl -fsSL -o /tmp/ws-scrcpy.tar.gz \
     && rm /tmp/ws-scrcpy.tar.gz
 
 COPY build.config.override.json /opt/ws-scrcpy/build.config.override.json
+COPY patches/ /tmp/open5g-patches/
+RUN patch -p1 < /tmp/open5g-patches/0001-pathname.patch \
+    && patch -p1 < /tmp/open5g-patches/0002-open5g-bind.patch \
+    && rm -rf /tmp/open5g-patches
 RUN npm ci && npm run dist
 
 EXPOSE 8000

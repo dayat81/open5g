@@ -10,7 +10,7 @@ The pinned image is `halimqarroum/docker-android:api-33`. Its `scripts/start-emu
 
 `budtmo/docker-android` is a different image. It is the one that documents `WEB_VNC=true`, noVNC on 6080, and VNC on 5900. It is not the image this overlay pins, so those variables are not used.
 
-The screen path is a ws-scrcpy sidecar (`NetrisTV/ws-scrcpy`) in the UE netns (`network_mode: service:ueN`). The sidecar writes a config that sets `server.host` to `UE*_SCREEN_ADDR` on the internal network `l5gd-screen` and `server.port` to `ANDROID_UE_SCREEN_PORT` (8000 in the example). `WS_SCRCPY_PATHNAME` is `/emulator/ueN`. The sidecar runs its own adb client on port 5038 and dials `<UE_UU>:5555`. It does not use the emulator adb server on 5037, a host port, or `UE*_ADB_HOST_PORT`.
+The screen path is a ws-scrcpy sidecar (`NetrisTV/ws-scrcpy`) in the UE netns (`network_mode: service:ueN`). The sidecar writes a config that sets `server.host` to `UE*_SCREEN_ADDR` on the internal network `l5gd-screen` and `server.port` to `ANDROID_UE_SCREEN_PORT` (8000 in the example). The image patch makes `HttpServer` call `listen(port, host)` and refuse an empty host, `0.0.0.0`, or `::`. `WS_SCRCPY_PATHNAME` is `/emulator/ueN`. v0.8.1 ignores that variable, so the image applies upstream commit `9d12bdd` before `npm run dist`. The sidecar runs its own adb client on port 5038 and dials `<UE_UU>:5555`. It does not use the emulator adb server on 5037, a host port, or `UE*_ADB_HOST_PORT`. The page starts at max-size 800, bit-rate 2M, and max-fps 15. `ANDROID_UE_SCREEN_MAX_SIZE`, `ANDROID_UE_SCREEN_BIT_RATE`, and `ANDROID_UE_SCREEN_MAX_FPS` change those defaults.
 
 There is no VNC password because there is no VNC server. Do not invent one in git. The sidecar itself has no login. The dashboard session is the gate, and the listen address is `UE*_SCREEN_ADDR` only.
 
@@ -36,16 +36,24 @@ Mirror a ws-scrcpy image that contains `npm`, `adb`, and the app at `/opt/ws-scr
 - `INCLUDE_APPL`, `INCLUDE_ADB_SHELL`, `INCLUDE_DEV_TOOLS`, and `INCLUDE_FILE_LISTING` false
 - `SCRCPY_LISTENS_ON_ALL_INTERFACES` false
 
-Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE_SCREEN_IMAGE`. The example keeps `REPLACE_ANDROID_UE_SCREEN_IMAGE`, and `android-ue-up.sh` then skips the sidecar. Set `ANDROID_UE_SCREEN_PORT=8000`.
+Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE_SCREEN_IMAGE`. The example keeps `REPLACE_ANDROID_UE_SCREEN_IMAGE`, and `android-ue-up.sh` then skips the sidecar. The value has to be `name@sha256:` plus 64 hex digits before the sidecar starts. Set `ANDROID_UE_SCREEN_PORT=8000`.
+
+Build both images on a machine that can reach the mirror. Do not pull them from the guest during `android-ue-up.sh`.
+
+```bash
+bash lab/images/android-emulator/build.sh
+bash -c 'docker build -t open5g-ws-scrcpy:local lab/images/ws-scrcpy'
+```
+
+`build.sh` tags `open5g-android-emulator:local`. That tag is only for the build machine. The lab and the standalone wrapper refuse it. Push each image to the lab mirror, then set the gitignored env to the mirror name plus `@sha256:` and the digest from `docker buildx imagetools inspect` or the registry. Leave the example values as `REPLACE_` until that digest exists. The image from a PR #12 cold boot does not contain this socat bind. Do not retag it.
 
 ## Enable
 
 1. Bring the UE up with the existing runbook. Core containers are not restarted by that script.
-2. Set `ANDROID_UE_SCREEN_IMAGE` to the mirrored image and run `android-ue-up.sh` again, or start only the sidecar:
+2. Set `ANDROID_UE_SCREEN_IMAGE` to the mirrored `@sha256` name before the first `android-ue-up.sh` so the route sidecar installs `ANDROID_UE_SCREEN`. If `l5gd-androidN` is already running, do not run `android-ue-up.sh` again: it refuses, and a bare `compose up` of the sidecar does not install the chain. Use the screen-only path. It installs the chain in the existing netns and starts only the sidecar:
 
    ```bash
-   sudo docker-compose -f lab/compose/docker-compose.android-ue.optional.yml \
-     --env-file lab/compose/android-ue.env --profile android-ue up -d ue1-screen
+   sudo lab/scripts/android-ue-up.sh --env-file lab/compose/android-ue.env --screen-only
    ```
 
 3. Create the dashboard row as an admin, through the dashboard origin on `WEB_PORT` (default `http://127.0.0.1:3300`), not through the unpublished API. `assignment_id` is the student's assignment. `internal_host` is `<UE1_SCREEN_ADDR>`. `attach_ipv4` and `apn` are the values to display. This call does not read the PGW and does not change it.
@@ -83,7 +91,7 @@ Put the image name in the gitignored `lab/compose/android-ue.env` as `ANDROID_UE
 
 This is the same group rule as profile read. A student can open only a UE assigned to them. An instructor can open a UE only when their current group is that assignment's group. An admin can open every configured UE. Anyone else gets 403. No session gets 401. If an instructor's group membership changes, their open websocket is closed.
 
-The screen origin is `http://localhost:3301`. The listener process binds `127.0.0.1:3301`. Those names do not share cookies. The dashboard origin only mints a one-time exchange code. The iframe loads `localhost:3301`, which sets its own cookie and sends `Content-Security-Policy: frame-ancestors <dashboard origin>`. The dashboard sends `frame-src` for that origin only. Do not open Grafana (port 3000) and the dashboard in the same browser profile: cookies are not separated by port. Do not attach `dashboard-api` to `uu` or `l5gd-screen`. `ANDROID_UE_SCREEN_ALLOW_FROM` is the host address on `l5gd-screen`. The INPUT drop is bound to that interface (`-i`), so loopback adb and `adb connect <UE_UU>:5555` from the `uu` gateway stay open. The rule is installed only when `ANDROID_UE_SCREEN_IMAGE` is a real image.
+The screen origin is `http://localhost:3301`. The listener process binds `127.0.0.1:3301`. Those names do not share cookies. The dashboard origin only mints a one-time exchange code. The iframe loads `localhost:3301`, which sets its own cookie and sends `Content-Security-Policy: frame-ancestors <dashboard origin>`. The dashboard sends `frame-src` for that origin only. Do not open Grafana (port 3000) and the dashboard in the same browser profile: cookies are not separated by port. Do not attach `dashboard-api` to `uu` or `l5gd-screen`. `ANDROID_UE_SCREEN_ALLOW_FROM` is the host address on `l5gd-screen`. Chain `ANDROID_UE_SCREEN` is appended after `ANDROID_UE_IN4`. It accepts TCP `--dport` 8000 only from that address on the screen interface, then drops that port on every other interface, including `uu`. Loopback adb still matches `ANDROID_UE_IN4` first, and `adb connect <UE_UU>:5555` still matches `ANDROID_UE_ADB`. The chain is installed only when `ANDROID_UE_SCREEN_IMAGE` is a real image. `POST /api/emulator/<ue_id>/session` allows 10 calls per minute for one user.
 
 One control session per UE. A second user gets **409 `emulator_control_busy`**. The holder can refresh; that replaces their own session and closes the previous one. A second session is not view-only: ws-scrcpy carries input and video on the same socket, and filtering part of it could grant control by mistake. The UI shows the busy status and does not open a second frame.
 
@@ -132,16 +140,17 @@ Before `OPEN5G_EMULATOR_ENABLED=1`, the lab window for PR #12 stays on that bran
 
 ## Standalone emulator on one host
 
-This mode is not the lab UE. `android-ue-up.sh` does not load it, so the `ueN` sysctl preset, the route sidecar, and `write_zero` stay in that order. IN4, the ADB chain, socat on `UE_UU`, and the UE netns IPv6 filter are **N/A** here, not a pass. They return with the lab UE.
+This mode is not the lab UE. `android-ue-up.sh` does not load it, so the `ueN` sysctl preset, the route sidecar, and `write_zero` stay in that order. IN4, the ADB chain, socat on `UE_UU`, and the UE netns IPv6 filter are **N/A** here, not a pass. They return with the lab UE. Do not set `ANDROID_UE_UU` for this mode. The lab image path still refuses an empty uu address, `0.0.0.0`, and loopback.
+
+Fill the `O5G_SCREEN_*` placeholders in the gitignored env. `android-ue-magen.sh` exits if an image is not `name@sha256:` plus 64 hex digits. A digest is not filled in by this change. S1 evidence is pending until Lab Ops runs the checklist in `lab/scripts/android-ue-screen-smoke.sh`.
 
 ```bash
-sudo docker-compose -f lab/compose/docker-compose.magen-screen.optional.yml \
-  --env-file lab/compose/android-ue.env --profile magen-screen up -d
+sudo lab/scripts/android-ue-magen.sh --env-file lab/compose/android-ue.env
 ```
 
-The sidecar uses `network_mode: container:l5gd-android-magen`. It has no `ports:` key and no `NET_ADMIN`. Its image must be `name@sha256:` plus 64 hex digits. Inside that netns it listens on `127.0.0.1:8000` and dials adb at `127.0.0.1:5555` from its own server on `127.0.0.1:5038`. It does not bind `0.0.0.0`.
+The emulator joins the internal IPv4 network `o5g-screen`. The sidecar uses `network_mode: container:l5gd-android-magen`, has no `ports:` key, and has no `NET_ADMIN`. It binds the emulator address on `o5g-screen`, not `127.0.0.1:8000`. Publishing `127.0.0.1:8000` would not reach that socket: Docker DNAT does not enter a `127.0.0.1` bind inside the netns. The wrapper installs `ANDROID_UE_SCREEN` in that netns so port 8000 is accepted only from the listener address and dropped from every other interface. The sidecar dials adb at `127.0.0.1:5555` from its own server on `127.0.0.1:5038`. Standalone mode does not start socat and does not require `ANDROID_UE_UU`.
 
-Run the existing dashboard compose and `python -m open5g_dashboard.screen` on this same host. The screen origin stays `http://localhost:3301`. The listener binds `127.0.0.1:3301`. Port 3001 stays inside the web image. Set `OPEN5G_EMULATOR_ALLOWED_NETS=127.0.0.1/32` and the endpoint target to `127.0.0.1:8000`. Any other address is rejected. Reach it only with `ssh -L 3300:127.0.0.1:3300 -L 3301:127.0.0.1:3301`. Do not open Grafana in that browser profile.
+The listener container is the only other member of `o5g-screen`. It also joins the dashboard network for Postgres. Its process binds the listener address on `o5g-screen`. The host publish is only `127.0.0.1:3301`. The screen origin stays `http://localhost:3301`. Port 3001 stays inside the web image. Set `OPEN5G_EMULATOR_ALLOWED_NETS` to the `o5g-screen` prefix and the endpoint target to `<O5G_SCREEN_EMULATOR_ADDR>:8000`. Reach the dashboard and the listener with `ssh -L 3300:127.0.0.1:3300 -L 3301:127.0.0.1:3301`. Do not open Grafana in that browser profile.
 
 ## Phase 2
 

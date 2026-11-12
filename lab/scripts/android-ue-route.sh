@@ -32,18 +32,57 @@ screen_iface_for() {
   iface_for_addr "$1" "${ANDROID_UE_SCREEN_IFACE:-}"
 }
 
-screen_rule_line() {
+android_ue_render_screen_chain() {
   local iface=$1
   local port=$2
   local allow=$3
-  case "$allow" in
-    ""|REPLACE_*)
-      printf 'iptables -A INPUT -i %s -p tcp --dport %s -j DROP\n' "$iface" "$port"
-      ;;
-    *)
-      printf 'iptables -A INPUT -i %s -p tcp --dport %s ! -s %s -j DROP\n' "$iface" "$port" "$allow"
+  # Appended after ANDROID_UE_IN4. Do not insert at INPUT 1 and do not set the policy.
+  printf '%s\n' "-A INPUT -j ANDROID_UE_SCREEN"
+  printf '%s\n' "-A ANDROID_UE_SCREEN -i ${iface} -p tcp --dport ${port} -s ${allow} -j ACCEPT"
+  printf '%s\n' "-A ANDROID_UE_SCREEN -p tcp --dport ${port} -j DROP"
+}
+
+android_ue_route_prepare_screen() {
+  local iface port allow
+  if ! screen_rules_active; then
+    echo "android-ue-route: screen rules stay off until the image is pinned" >&2
+    return 1
+  fi
+  port=${ANDROID_UE_SCREEN_PORT:-8000}
+  case "$port" in
+    ''|*[!0-9]*)
+      echo "android-ue-route: screen port is not numeric" >&2
+      return 1
       ;;
   esac
+  allow=${ANDROID_UE_SCREEN_ALLOW_FROM:-}
+  if ! screen_allow_ok "$allow"; then
+    echo "android-ue-route: screen allow source must be one non-loopback IPv4 address" >&2
+    return 1
+  fi
+  iface=$(screen_iface_for "${ANDROID_UE_SCREEN_ADDR:-}")
+  if [ -z "$iface" ] || [ "$iface" = "lo" ]; then
+    echo "android-ue-route: screen address has no non-loopback interface" >&2
+    return 1
+  fi
+  ANDROID_UE_SCREEN_IFACE_FOUND=$iface
+  ANDROID_UE_SCREEN_PORT_FOUND=$port
+  ANDROID_UE_SCREEN_ALLOW_FOUND=$allow
+}
+
+android_ue_route_install_screen() {
+  local bin=iptables
+  local chain=ANDROID_UE_SCREEN
+  android_ue_route_prepare_screen
+  if ! "$bin" -N "$chain" 2>/dev/null; then
+    "$bin" -F "$chain"
+  fi
+  if ! "$bin" -C INPUT -j "$chain" 2>/dev/null; then
+    "$bin" -A INPUT -j "$chain"
+  fi
+  "$bin" -A "$chain" -i "$ANDROID_UE_SCREEN_IFACE_FOUND" -p tcp --dport "$ANDROID_UE_SCREEN_PORT_FOUND" -s "$ANDROID_UE_SCREEN_ALLOW_FOUND" -j ACCEPT
+  "$bin" -A "$chain" -p tcp --dport "$ANDROID_UE_SCREEN_PORT_FOUND" -j DROP
+  echo "android-ue-route: $(android_ue_render_screen_chain "$ANDROID_UE_SCREEN_IFACE_FOUND" "$ANDROID_UE_SCREEN_PORT_FOUND" "$ANDROID_UE_SCREEN_ALLOW_FOUND" | tr '\n' ' ')"
 }
 
 android_ue_render_adb_allow() {
@@ -70,7 +109,15 @@ if [ "${1:-}" = "--print-screen-rule" ]; then
     echo "android-ue-route: screen interface is missing" >&2
     exit 1
   fi
-  screen_rule_line "$iface" "${ANDROID_UE_SCREEN_PORT:-8000}" "${ANDROID_UE_SCREEN_ALLOW_FROM:-}"
+  if ! android_ue_route_prepare_screen; then
+    exit 1
+  fi
+  android_ue_render_screen_chain "$ANDROID_UE_SCREEN_IFACE_FOUND" "$ANDROID_UE_SCREEN_PORT_FOUND" "$ANDROID_UE_SCREEN_ALLOW_FOUND"
+  exit 0
+fi
+
+if [ "${1:-}" = "--install-screen" ]; then
+  android_ue_route_install_screen
   exit 0
 fi
 
@@ -366,37 +413,7 @@ case "$enb_probe" in
 esac
 
 if screen_rules_active; then
-  screen_port=${ANDROID_UE_SCREEN_PORT:-8000}
-  case "$screen_port" in
-    ''|*[!0-9]*)
-      echo "android-ue-route: screen port is not numeric" >&2
-      exit 1
-      ;;
-  esac
-  allow=${ANDROID_UE_SCREEN_ALLOW_FROM:-}
-  case "$allow" in
-    ""|REPLACE_*) ;;
-    *)
-      if ! screen_allow_ok "$allow"; then
-        echo "android-ue-route: screen allow source is not a single IPv4 address" >&2
-        exit 1
-      fi
-      ;;
-  esac
-  iface=$(screen_iface_for "${ANDROID_UE_SCREEN_ADDR:-}")
-  if [ -z "$iface" ] || [ "$iface" = "lo" ]; then
-    echo "android-ue-route: screen address has no non-loopback interface" >&2
-    exit 1
-  fi
-  case "$allow" in
-    ""|REPLACE_*)
-      iptables -A INPUT -i "$iface" -p tcp --dport "$screen_port" -j DROP
-      ;;
-    *)
-      iptables -A INPUT -i "$iface" -p tcp --dport "$screen_port" ! -s "$allow" -j DROP
-      ;;
-  esac
-  echo "android-ue-route: $(screen_rule_line "$iface" "$screen_port" "$allow")"
+  android_ue_route_install_screen
 fi
 
 ue_addr=$(ip -4 -o addr show dev "$tun" | awk '{ print $4; exit }')

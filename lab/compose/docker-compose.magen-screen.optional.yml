@@ -1,7 +1,12 @@
-# Optional screen sidecar for a standalone emulator on one host.
+# Optional standalone emulator and screen on one host.
 # Not loaded by android-ue-up.sh. It does not start ueN, does not preset
-# sysctls, and does not install the UE netns filters.
-# No host port is published. The sidecar joins the emulator network namespace.
+# sysctls, and does not install the lab UE netns filters.
+# Bring it up with lab/scripts/android-ue-magen.sh. That wrapper refuses an
+# image that is not name@sha256 plus 64 hex digits.
+# Port 8000 is not published. Docker DNAT cannot reach a 127.0.0.1 bind
+# inside the emulator netns, so the sidecar binds the emulator address on
+# o5g-screen. The listener is the only other member of that network and
+# publishes 127.0.0.1:3301 on the host.
 name: open5g-magen-screen
 services:
   magen-emulator:
@@ -11,6 +16,11 @@ services:
     restart: "no"
     devices:
       - "/dev/kvm:/dev/kvm"
+    environment:
+      ANDROID_UE_ADB_MODE: standalone
+    networks:
+      o5g-screen:
+        ipv4_address: ${O5G_SCREEN_EMULATOR_ADDR:?O5G_SCREEN_EMULATOR_ADDR}
   magen-screen:
     profiles: ["magen-screen"]
     image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
@@ -20,12 +30,53 @@ services:
     entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
     environment:
       ANDROID_UE_SCREEN_MODE: standalone
-      ANDROID_UE_SCREEN_BIND: 127.0.0.1
+      ANDROID_UE_SCREEN_BIND: ${O5G_SCREEN_EMULATOR_ADDR:?O5G_SCREEN_EMULATOR_ADDR}
       ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
       ANDROID_UE_SCREEN_PATH: /emulator/ue1
+      ANDROID_UE_SCREEN_MAX_SIZE: ${ANDROID_UE_SCREEN_MAX_SIZE:-800}
+      ANDROID_UE_SCREEN_BIT_RATE: ${ANDROID_UE_SCREEN_BIT_RATE:-2000000}
+      ANDROID_UE_SCREEN_MAX_FPS: ${ANDROID_UE_SCREEN_MAX_FPS:-15}
       ANDROID_ADB_SERVER_PORT: "5038"
     volumes:
       - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
     depends_on:
       magen-emulator:
         condition: service_started
+  magen-listener:
+    profiles: ["magen-screen"]
+    image: ${O5G_SCREEN_LISTENER_IMAGE:?O5G_SCREEN_LISTENER_IMAGE}
+    container_name: l5gd-magen-listener
+    restart: "no"
+    command: ["python", "-m", "open5g_dashboard.screen"]
+    env_file:
+      - path: dashboard.env.example
+        required: true
+      - path: dashboard.env
+        required: false
+    environment:
+      OPEN5G_BIND_HOST: ${O5G_SCREEN_LISTENER_ADDR:?O5G_SCREEN_LISTENER_ADDR}
+      OPEN5G_EMULATOR_SCREEN_HOST: ${O5G_SCREEN_LISTENER_ADDR:?O5G_SCREEN_LISTENER_ADDR}
+      OPEN5G_EMULATOR_SCREEN_BIND_PORT: "3301"
+      OPEN5G_EMULATOR_TARGETS: ue1=${O5G_SCREEN_EMULATOR_ADDR:?O5G_SCREEN_EMULATOR_ADDR}:${ANDROID_UE_SCREEN_PORT:-8000}
+      OPEN5G_EMULATOR_ALLOWED_NETS: ${O5G_SCREEN_SUBNET:?O5G_SCREEN_SUBNET}
+    ports:
+      - "127.0.0.1:${OPEN5G_EMULATOR_SCREEN_BIND_PORT:-3301}:3301"
+    networks:
+      o5g-screen:
+        ipv4_address: ${O5G_SCREEN_LISTENER_ADDR:?O5G_SCREEN_LISTENER_ADDR}
+      dashboard: {}
+    depends_on:
+      magen-emulator:
+        condition: service_started
+networks:
+  o5g-screen:
+    internal: true
+    enable_ipv6: false
+    ipam:
+      driver: default
+      config:
+        - subnet: ${O5G_SCREEN_SUBNET:?O5G_SCREEN_SUBNET}
+          gateway: ${O5G_SCREEN_GATEWAY:?O5G_SCREEN_GATEWAY}
+  dashboard:
+    external: true
+    name: ${O5G_DASHBOARD_NETWORK:?O5G_DASHBOARD_NETWORK}

@@ -93,6 +93,8 @@ class Settings:
     bind_host: str = "127.0.0.1"
     bind_port: int = 8000
     emulator_status_stale_seconds: int = 15
+    emulator_session_limit: int = 10
+    emulator_session_window: float = 60.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -175,4 +177,10 @@ class Settings:
             bind_host=_bind_host(os.environ.get("OPEN5G_BIND_HOST", "127.0.0.1")),
             bind_port=_bind_port(os.environ.get("OPEN5G_BIND_PORT", "8000")),
             emulator_status_stale_seconds=stale,
+            emulator_session_limit=_bounded_int(
+                os.environ.get("OPEN5G_EMULATOR_SESSION_LIMIT", "10"), 1, 1000, "OPEN5G_EMULATOR_SESSION_LIMIT"
+            ),
+            emulator_session_window=_bounded_float(
+                os.environ.get("OPEN5G_EMULATOR_SESSION_WINDOW", "60"), 1.0, 3600.0, "OPEN5G_EMULATOR_SESSION_WINDOW"
+            ),
         )

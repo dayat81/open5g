@@ -17,6 +17,18 @@ def token_hash(pepper: str, token: str) -> str:
     return hashlib.sha256(f"{pepper}:{token}".encode()).hexdigest()
 
 
+def session_rate_limited(hits: dict[str, list[float]], key: str, now: float, limit: int, window: float) -> bool:
+    """True when this caller already used the session budget in the window."""
+
+    recent = [item for item in hits.get(key, []) if now - item < window]
+    if len(recent) >= limit:
+        hits[key] = recent
+        return True
+    recent.append(now)
+    hits[key] = recent
+    return False
+
+
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)

@@ -200,6 +200,9 @@ emit_user() {
       ANDROID_UE_SCREEN_BIND: \${UE${n}_SCREEN_ADDR:?UE${n}_SCREEN_ADDR}
       ANDROID_UE_SCREEN_PORT: \${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
       ANDROID_UE_SCREEN_PATH: /emulator/ue${n}
+      ANDROID_UE_SCREEN_MAX_SIZE: \${ANDROID_UE_SCREEN_MAX_SIZE:-800}
+      ANDROID_UE_SCREEN_BIT_RATE: \${ANDROID_UE_SCREEN_BIT_RATE:-2000000}
+      ANDROID_UE_SCREEN_MAX_FPS: \${ANDROID_UE_SCREEN_MAX_FPS:-15}
       ANDROID_UE_UU: \${UE${n}_UU}
     volumes:
       - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro

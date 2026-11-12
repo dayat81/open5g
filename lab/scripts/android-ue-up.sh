@@ -13,9 +13,10 @@ with_cgnat=0
 with_socks=0
 install_upf_route=0
 print_services=0
+screen_only=0
 
 usage() {
-  echo "usage: android-ue-up.sh --env-file FILE [--user ue1|ue2] [--with-cgnat] [--with-socks-egress] [--install-upf-route] [--print-services]" >&2
+  echo "usage: android-ue-up.sh --env-file FILE [--user ue1|ue2] [--with-cgnat] [--with-socks-egress] [--install-upf-route] [--screen-only] [--print-services]" >&2
   exit 2
 }
 
@@ -376,6 +377,7 @@ while [ "$#" -gt 0 ]; do
     --with-cgnat) with_cgnat=1 ;;
     --with-socks-egress) with_socks=1 ;;
     --install-upf-route) install_upf_route=1 ;;
+    --screen-only) screen_only=1 ;;
     --print-services) print_services=1 ;;
     *) usage ;;
   esac
@@ -557,6 +559,29 @@ if [ "$install_upf_route" -eq 1 ] && [ "$with_socks" -eq 1 ]; then
     echo "android-ue: UE_POOL must be ${ue_addr}/32 so other UEs are not steered to the laptop" >&2
     exit 1
   fi
+fi
+
+if [ "$screen_only" -eq 1 ]; then
+  if ! android_ue_screen_enabled; then
+    echo "android-ue: --screen-only needs ANDROID_UE_SCREEN_IMAGE" >&2
+    exit 1
+  fi
+  if ! android_ue_screen_image_ok "$(get ANDROID_UE_SCREEN_IMAGE)"; then
+    echo "android-ue: ANDROID_UE_SCREEN_IMAGE must be pinned with @sha256" >&2
+    exit 1
+  fi
+  if ! ANDROID_UE_SCREEN_ALLOW_FROM="$(get ANDROID_UE_SCREEN_ALLOW_FROM)" bash "$script_dir/android-ue-route.sh" --check-allow; then
+    exit 1
+  fi
+  if ! docker inspect -f '{{.State.Running}}' "l5gd-ue${n}" 2>/dev/null | grep -qx true; then
+    echo "android-ue: --screen-only needs l5gd-ue${n} already running" >&2
+    exit 1
+  fi
+  android_ue_compose "$root" "$env_file" run --rm -T --no-deps --entrypoint /bin/bash \
+    "ue${n}-route" /opt/android-ue/android-ue-route.sh --install-screen
+  android_ue_compose "$root" "$env_file" up -d "ue${n}-screen"
+  echo "android-ue: screen sidecar is up. The route sidecar was not started again."
+  exit 0
 fi
 
 if docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null | grep -qx true; then

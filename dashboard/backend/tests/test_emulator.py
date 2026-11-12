@@ -15,7 +15,17 @@ from open5g_dashboard.emulator import (
     rewrite_location,
     safe_query,
     session_expired,
+    session_rate_limited,
 )
+
+
+def test_session_posts_are_rate_limited():
+    hits: dict[str, list[float]] = {}
+    for _ in range(10):
+        assert not session_rate_limited(hits, "student-a", 100.0, 10, 60.0)
+    assert session_rate_limited(hits, "student-a", 100.0, 10, 60.0)
+    assert not session_rate_limited(hits, "student-b", 100.0, 10, 60.0)
+    assert not session_rate_limited(hits, "student-a", 160.0, 10, 60.0)
 
 
 def test_students_are_limited_to_their_assignment():

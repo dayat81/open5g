@@ -31,6 +31,15 @@ The srsRAN 4G Dockerfile also assigns default subscriber `KEY` and `OPC`
 environment values. Those values are intentionally absent from this
 repository.
 
+## Screen components
+
+ws-scrcpy v0.8.1 (NetrisTV, MIT, commit `ef273d97c6ac0c05d03b41d4b55d59a25b95c505`)
+is fetched by `lab/images/ws-scrcpy/Dockerfile`. That commit vendors
+scrcpy-server, which is Apache-2.0. Open5G applies
+`patches/0001-pathname.patch` (upstream `9d12bdd`, "Feat: pathname") and
+`patches/0002-open5g-bind.patch` on top of the pin. Those trees are not
+copied into git. Facts and pins are in `docs/THIRD_PARTY.md`.
+
 ## New code in this repository
 
 No license has been selected for code added here. Do not treat the absence
