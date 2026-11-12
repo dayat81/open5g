@@ -65,12 +65,29 @@ if [ -f "$state/upf-rule.txt" ]; then
   echo "android-ue: removed the UPF policy rule. The main default route was not changed."
 fi
 
+android_ue_phase_b_detach() {
+  echo "android-ue: phase B detach is not in this PR"
+}
+
 # UE before eNB. srsRAN's ZMQ note asks for that order on the way down.
+android_ue_phase_b_detach
+docker rm -f -v l5gd-android1 l5gd-android2 >/dev/null 2>&1 || true
 for svc in android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat; do
   android_ue_compose "$root" "$env_file" stop "$svc" || true
 done
 android_ue_compose "$root" "$env_file" rm -f \
   android1 android2 ue1-route ue2-route ue1 ue2 enb1 enb2 egress-dns egress cgnat || true
+for n in 1 2; do
+  network=$(android_ue_uemu_network_name "$n")
+  if docker network inspect "$network" >/dev/null 2>&1; then
+    if ! docker network rm "$network"; then
+      echo "android-ue: could not remove ${network}" >&2
+      rollback_rc=1
+    else
+      echo "android-ue: removed ${network}"
+    fi
+  fi
+done
 rm -f "$state/cgnat-ues.txt"
 echo "android-ue: profile stopped. Core, Mongo, and subscriber documents were not changed."
 exit "$rollback_rc"

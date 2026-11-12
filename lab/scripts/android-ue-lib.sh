@@ -263,6 +263,164 @@ android_ue_reject_placeholder() {
   esac
 }
 
+android_ue_adb_host_port() {
+  local n=$1
+  printf '%s\n' "$((14555 + n * 1000))"
+}
+
+android_ue_console_host_port() {
+  local n=$1
+  printf '%s\n' "$((14554 + n * 1000))"
+}
+
+android_ue_uemu_network_name() {
+  printf 'open5g-uemu%s\n' "$1"
+}
+
+# Fail closed unless the UEMU prefix is canonical IPv4 and misses the UE/PDN
+# pool, uu addresses, PDN addresses, and cgnat addresses. OTHER_SUBNET is the
+# other user's UEMU prefix. Later args are kind=value with kind pool, uu, pdn,
+# or cgnat.
+android_ue_uemu_check() {
+  python3 - "$@" <<'PY'
+import ipaddress
+import sys
+
+args = sys.argv[1:]
+if len(args) < 4:
+    sys.stderr.write("android-ue: UEMU check needs subnet, gateway, android address, and the other subnet\n")
+    sys.exit(1)
+
+def fail(msg):
+    sys.stderr.write(msg + "\n")
+    sys.exit(1)
+
+def network(text, label):
+    if not text or "REPLACE_" in text or "CHANGEME" in text:
+        fail("android-ue: %s is empty or still a placeholder" % label)
+    try:
+        net = ipaddress.ip_network(text, strict=True)
+    except ValueError as exc:
+        fail("android-ue: %s %s is not a canonical IPv4 prefix (%s)" % (label, text, exc))
+    if net.version != 4:
+        fail("android-ue: %s must be IPv4" % label)
+    return net
+
+def address(text, label):
+    if not text or "REPLACE_" in text or "CHANGEME" in text:
+        fail("android-ue: %s is empty or still a placeholder" % label)
+    try:
+        ip = ipaddress.ip_address(text)
+    except ValueError as exc:
+        fail("android-ue: %s %s is not an IPv4 address (%s)" % (label, text, exc))
+    if ip.version != 4:
+        fail("android-ue: %s must be IPv4" % label)
+    return ip
+
+subnet = network(args[0], "ANDROID_UE_UEMU_SUBNET")
+gateway = address(args[1], "ANDROID_UE_UEMU_GW")
+android = address(args[2], "ANDROID_UE_UEMU_ANDROID")
+other = network(args[3], "ANDROID_UE_UEMU_SUBNET")
+if subnet.overlaps(other):
+    fail("android-ue: per-user UEMU subnets %s and %s overlap" % (subnet, other))
+if gateway not in subnet or android not in subnet:
+    fail("android-ue: UEMU gateway and android address must be inside %s" % subnet)
+if gateway == android:
+    fail("android-ue: UEMU gateway and android address must differ")
+if gateway == subnet.network_address or android == subnet.network_address:
+    fail("android-ue: UEMU addresses must not be the subnet address")
+if subnet.prefixlen <= 30:
+    if gateway == subnet.broadcast_address or android == subnet.broadcast_address:
+        fail("android-ue: UEMU addresses must not be the broadcast address")
+for item in args[4:]:
+    if "=" not in item:
+        fail("android-ue: UEMU overlap entry must be kind=value")
+    kind, value = item.split("=", 1)
+    if kind not in {"pool", "uu", "pdn", "cgnat"}:
+        fail("android-ue: unknown UEMU overlap kind %s" % kind)
+    if kind == "pool":
+        pool = network(value, "UE pool")
+        if subnet.overlaps(pool):
+            fail("android-ue: UEMU subnet %s overlaps UE/PDN pool %s" % (subnet, pool))
+        continue
+    ip = address(value, kind)
+    if ip in subnet:
+        fail("android-ue: UEMU subnet %s contains %s address %s" % (subnet, kind, ip))
+PY
+}
+
+android_ue_apply_dns_flag() {
+  local flags=$1
+  local dns=$2
+  if [ -z "$dns" ]; then
+    printf '%s\n' "$flags"
+    return 0
+  fi
+  if ! printf '%s\n' "$dns" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "android-ue: ANDROID_UE_DNS must be an IPv4 address" >&2
+    return 1
+  fi
+  if [ "$dns" = "127.0.0.11" ]; then
+    echo "android-ue: ANDROID_UE_DNS must not be Docker's 127.0.0.11 resolver" >&2
+    return 1
+  fi
+  printf '%s -dns-server %s\n' "$flags" "$dns"
+}
+
+android_ue_help_has_metrics() {
+  local help_text=$1
+  printf '%s\n' "$help_text" | grep -q -- '-no-metrics'
+}
+
+android_ue_drop_metrics_flag() {
+  python3 - "$1" <<'PY'
+import shlex
+import sys
+parts = shlex.split(sys.argv[1])
+print(" ".join(part for part in parts if part != "-no-metrics"))
+PY
+}
+
+# Drop adb keys, account databases, and userdata from an opted-in AVD directory.
+# /root/.android is refused so adbkey is not kept with the AVD.
+android_ue_avd_sanitize() {
+  local dir=$1
+  local base leftover
+  if [ -z "$dir" ] || [ "$dir" = "/" ] || [ "$dir" = "/root" ] || [ "$dir" = "/root/.android" ]; then
+    echo "android-ue: refusing to sanitize ${dir:-an empty path}" >&2
+    return 1
+  fi
+  base=$(basename -- "$dir")
+  if [ "$base" = ".android" ]; then
+    echo "android-ue: AVD directory must not be named .android. That directory holds adbkey." >&2
+    return 1
+  fi
+  if [ ! -d "$dir" ]; then
+    mkdir -m 0700 -- "$dir"
+  fi
+  find "$dir" -type d -name snapshots -print0 | while IFS= read -r -d '' snap; do
+    rm -rf -- "$snap"
+  done
+  find "$dir" \( \
+    -name adbkey -o -name adbkey.pub -o -name userdata-qemu.img \
+    -o -name userdata-qemu.img.qcow2 -o -name cache.img -o -name accounts.db \
+  \) -print0 | while IFS= read -r -d '' junk; do
+    rm -f -- "$junk"
+  done
+  leftover=$(find "$dir" \( -name adbkey -o -name adbkey.pub -o -name userdata-qemu.img -o -name accounts.db \) -print)
+  if [ -n "$leftover" ]; then
+    echo "android-ue: AVD directory still has an adb key, account database, or userdata image" >&2
+    printf '%s\n' "$leftover" >&2
+    return 1
+  fi
+}
+
+android_ue_avd_wipe() {
+  local dir=$1
+  android_ue_avd_sanitize "$dir"
+  find "$dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+}
+
 android_ue_compose() {
   local root=$1
   local env_file=$2

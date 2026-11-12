@@ -13,9 +13,12 @@ with_cgnat=0
 with_socks=0
 install_upf_route=0
 print_services=0
+boot_only=0
+wipe=0
+log_dir=""
 
 usage() {
-  echo "usage: android-ue-up.sh --env-file FILE [--user ue1|ue2] [--with-cgnat] [--with-socks-egress] [--install-upf-route] [--print-services]" >&2
+  echo "usage: android-ue-up.sh --env-file FILE [--user ue1|ue2] [--with-cgnat] [--with-socks-egress] [--install-upf-route] [--boot-only] [--wipe] [--log-dir DIR] [--print-services]" >&2
   exit 2
 }
 
@@ -292,43 +295,257 @@ android_ue_accel_check() {
 
 android_ue_wait_boot() {
   local n=$1
-  local uu timeout deadline completed boot_gate
-  uu=$(get "UE${n}_UU")
-  android_ue_reject_placeholder "UE${n}_UU" "$uu"
-  timeout=$(get ANDROID_UE_BOOT_TIMEOUT)
-  if [ -z "$timeout" ]; then
-    timeout=600
-  fi
-  if ! printf '%s\n' "$timeout" | grep -Eq '^[0-9]+$'; then
-    echo "android-ue: ANDROID_UE_BOOT_TIMEOUT must be a number of seconds" >&2
-    exit 1
-  fi
+  echo "android-ue: android${n} is not started on the integrated path. The dummy0 preflight stays fail-closed. Use --boot-only."
+}
+
+android_ue_phase_b_attach() {
+  local n=$1
+  echo "android-ue: phase B attach for ue${n} is not in this PR"
+}
+
+android_ue_prepare_extra_flags() {
+  local image=$1
+  local flags=$2
+  local dns=$3
+  local help
+  flags=$(android_ue_apply_dns_flag "$flags" "$dns")
+  case "$flags" in
+    *-no-metrics*)
+      if help=$(docker run --rm --network none --entrypoint emulator "$image" -help-all 2>&1); then
+        if ! android_ue_help_has_metrics "$help"; then
+          echo "android-ue: this emulator does not advertise -no-metrics; removing it" >&2
+          flags=$(android_ue_drop_metrics_flag "$flags")
+        fi
+      else
+        echo "android-ue: could not probe emulator -help-all; EXTRA_FLAGS left unchanged" >&2
+      fi
+      ;;
+  esac
+  printf '%s\n' "$flags"
+}
+
+android_ue_measure_boot() {
+  local n=$1
+  local adb_port use_log_dir log_file timeout deadline completed state stable elapsed
+  local boot_seconds stable_ok
+  adb_port=$(android_ue_adb_host_port "$n")
+  use_log_dir=${log_dir:-${ANDROID_UE_LOG_DIR:-/tmp/open5g-android-boot}}
+  mkdir -p -- "$use_log_dir"
+  chmod 0700 "$use_log_dir"
+  log_file="${use_log_dir}/android${n}-boot.log"
+  : >"$log_file"
   if ! command -v adb >/dev/null 2>&1; then
     echo "android-ue: adb is not installed on this host" >&2
     exit 1
   fi
-  android_ue_accel_check "$n"
-  boot_gate=$(get ANDROID_UE_BOOT_GATE)
-  if [ -z "$boot_gate" ]; then
-    boot_gate=1
-  fi
-  if [ "$boot_gate" = "0" ]; then
-    echo "android-ue: ANDROID_UE_BOOT_GATE=0, not waiting for sys.boot_completed"
-    return 0
+  # Gate is 600s. ANDROID_UE_BOOT_TIMEOUT is the image watcher default.
+  # ANDROID_UE_BOOT_GATE=0 does not skip --boot-only.
+  timeout=600
+  if [ -z "${boot_started:-}" ]; then
+    boot_started=$(date +%s)
   fi
   deadline=$((SECONDS + timeout))
+  completed=""
   while [ "$SECONDS" -lt "$deadline" ]; do
-    adb connect "${uu}:5555" >/dev/null 2>&1 || true
-    completed=$(adb -s "${uu}:5555" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+    adb connect "127.0.0.1:${adb_port}" >/dev/null 2>&1 || true
+    completed=$(adb -s "127.0.0.1:${adb_port}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
     if [ "$completed" = "1" ]; then
-      echo "android-ue: sys.boot_completed=1 on ${uu}:5555"
-      return 0
+      break
     fi
     sleep 5
   done
-  echo "android-ue: sys.boot_completed was not 1 within ${timeout}s" >&2
-  android_ue_boot_diag "$n"
-  exit 1
+  boot_seconds=$(( $(date +%s) - boot_started ))
+  if [ "$completed" != "1" ]; then
+    echo "android-ue: sys.boot_completed was not 1 within ${timeout}s" | tee -a "$log_file" >&2
+    docker logs --tail 80 "l5gd-android${n}" >>"$log_file" 2>&1 || true
+    exit 1
+  fi
+  stable=${ANDROID_UE_ADB_STABLE:-120}
+  if ! printf '%s\n' "$stable" | grep -Eq '^[0-9]+$'; then
+    echo "android-ue: ANDROID_UE_ADB_STABLE must be a number of seconds" >&2
+    exit 1
+  fi
+  stable_ok=1
+  elapsed=0
+  while [ "$elapsed" -lt "$stable" ]; do
+    state=$(adb -s "127.0.0.1:${adb_port}" get-state 2>/dev/null | tr -d '\r' || true)
+    if [ "$state" != "device" ]; then
+      stable_ok=0
+      echo "android-ue: adb state is ${state:-missing} after ${elapsed}s" | tee -a "$log_file" >&2
+      break
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  {
+    echo "=== boot_progress logcat ==="
+    adb -s "127.0.0.1:${adb_port}" shell logcat -b events -d | grep boot_progress || true
+    echo "=== dmesg ==="
+    adb -s "127.0.0.1:${adb_port}" shell dmesg | grep -E 'boot_progress|Booting Linux' || true
+  } >>"$log_file" 2>&1 || true
+  echo "android-ue: sys.boot_completed=1 in ${boot_seconds}s on 127.0.0.1:${adb_port}" | tee -a "$log_file"
+  if [ "$stable_ok" -eq 1 ]; then
+    echo "android-ue: adb stayed device for ${stable}s" | tee -a "$log_file"
+  fi
+  echo "android-ue: boot_progress log ${log_file}" | tee -a "$log_file"
+  echo "android-ue: modem errors for ::1 and a guest without egress are expected on this boot" | tee -a "$log_file"
+  if [ "$stable_ok" -ne 1 ]; then
+    exit 1
+  fi
+}
+
+android_ue_boot_only() {
+  local n=$1
+  local allow image kvm_gid host_kvm_gid mem_raw limit_raw mem_mib limit_mib flags dns
+  local subnet gw android other_subnet persist avd_dir boot_tmp isolated_file persist_file
+  local -a overlap
+  if [ "$user" = "ue2" ]; then
+    allow=$(get ANDROID_UE_ALLOW_SECOND)
+    if [ "$allow" != 1 ]; then
+      echo "android-ue: ue2 is off until ANDROID_UE_ALLOW_SECOND=1. One emulator is the cap for this guest." >&2
+      exit 1
+    fi
+  fi
+  if [ ! -e /dev/kvm ]; then
+    echo "android-ue: /dev/kvm is missing. Nested KVM is a Lab Ops prerequisite." >&2
+    exit 1
+  fi
+  image=$(get ANDROID_UE_ANDROID_IMAGE)
+  if [ -z "$image" ]; then
+    image=open5g-android-emulator:local
+  fi
+  if ! android_ue_android_image_ok "$image"; then
+    echo "android-ue: ANDROID_UE_ANDROID_IMAGE must be open5g-android-emulator:local or include @sha256" >&2
+    exit 1
+  fi
+  kvm_gid=$(get ANDROID_UE_KVM_GID)
+  host_kvm_gid=$(stat -c %g /dev/kvm)
+  if [ -z "$kvm_gid" ] || printf '%s\n' "$kvm_gid" | grep -Eq 'REPLACE_|CHANGEME'; then
+    kvm_gid=$host_kvm_gid
+    echo "android-ue: ANDROID_UE_KVM_GID taken from stat /dev/kvm (${kvm_gid})"
+  fi
+  if ! android_ue_kvm_gid_ok "$kvm_gid" "$host_kvm_gid"; then
+    echo "android-ue: ANDROID_UE_KVM_GID must be a non-zero number and equal ${host_kvm_gid} from stat /dev/kvm" >&2
+    exit 1
+  fi
+  mem_raw=$(get ANDROID_UE_MEMORY)
+  limit_raw=$(get ANDROID_UE_MEM_LIMIT)
+  if [ -z "$limit_raw" ]; then
+    limit_raw=4096m
+  fi
+  if ! mem_mib=$(android_ue_mib "$mem_raw"); then
+    echo "android-ue: ANDROID_UE_MEMORY is not a size in MiB" >&2
+    exit 1
+  fi
+  if ! limit_mib=$(android_ue_mib "$limit_raw"); then
+    echo "android-ue: ANDROID_UE_MEM_LIMIT is not a size" >&2
+    exit 1
+  fi
+  if [ "$limit_mib" -lt $((mem_mib + 1536)) ]; then
+    echo "android-ue: ANDROID_UE_MEM_LIMIT (${limit_mib} MiB) is below ANDROID_UE_MEMORY (${mem_mib} MiB) plus 1536 MiB headroom" >&2
+    exit 1
+  fi
+  flags=$(get ANDROID_UE_EXTRA_FLAGS)
+  case "$flags" in
+    *partition-size=*)
+      echo "android-ue: ANDROID_UE_EXTRA_FLAGS uses -partition-size= which api-33 rejects. Use -partition-size <MiB>." >&2
+      exit 1
+      ;;
+  esac
+  dns=$(get ANDROID_UE_DNS)
+  subnet=$(get "ANDROID_UE_UEMU${n}_SUBNET")
+  gw=$(get "ANDROID_UE_UEMU${n}_GW")
+  android=$(get "ANDROID_UE_UEMU${n}_ANDROID")
+  if [ "$n" = 1 ]; then
+    other_subnet=$(get ANDROID_UE_UEMU2_SUBNET)
+  else
+    other_subnet=$(get ANDROID_UE_UEMU1_SUBNET)
+  fi
+  overlap=()
+  overlap+=("pool=$(get UE_POOL)")
+  overlap+=("uu=$(get UE1_UU)" "uu=$(get UE1_ENB_UU)" "uu=$(get UE2_UU)" "uu=$(get UE2_ENB_UU)")
+  overlap+=("pdn=$(get UE1_ADDR)" "pdn=$(get UE2_ADDR)")
+  overlap+=("cgnat=$(get CGNAT_SGI_ADDR)" "cgnat=$(get CGNAT_EGRESS_ADDR)" "cgnat=$(get CGNAT_SNAT_ADDR)")
+  android_ue_uemu_check "$subnet" "$gw" "$android" "$other_subnet" "${overlap[@]}"
+  flags=$(android_ue_prepare_extra_flags "$image" "$flags" "$dns")
+  export ANDROID_UE_EXTRA_FLAGS="$flags"
+  export ANDROID_UE_KVM_GID="$kvm_gid"
+  export ANDROID_UE_ANDROID_IMAGE="$image"
+  persist=$(get ANDROID_UE_AVD_PERSIST)
+  boot_tmp=$(mktemp -d)
+  trap 'rm -rf "$boot_tmp"' EXIT
+  isolated_file="${boot_tmp}/isolated.yml"
+  persist_file=""
+  cat >"$isolated_file" <<EOF
+services:
+  android${n}:
+    environment:
+      ANDROID_UE_ISOLATED: "1"
+EOF
+  if [ "$persist" = "1" ]; then
+    avd_dir=$(get "ANDROID_UE_AVD${n}_DIR")
+    android_ue_require_set "ANDROID_UE_AVD${n}_DIR" "$avd_dir"
+    case "$avd_dir" in
+      /*)
+        ;;
+      *)
+        echo "android-ue: ANDROID_UE_AVD${n}_DIR must be an absolute path" >&2
+        exit 1
+        ;;
+    esac
+    case "$avd_dir" in
+      *:*|*[[:space:]]*|*/.android|*/.android/*)
+        echo "android-ue: ANDROID_UE_AVD${n}_DIR must not be .android or contain a colon or space" >&2
+        exit 1
+        ;;
+    esac
+    if [ "$wipe" -eq 1 ]; then
+      android_ue_avd_wipe "$avd_dir"
+    else
+      android_ue_avd_sanitize "$avd_dir"
+    fi
+    persist_file="${boot_tmp}/avd.yml"
+    cat >"$persist_file" <<EOF
+services:
+  android${n}:
+    environment:
+      ANDROID_AVD_HOME: /opt/open5g-avd
+    volumes:
+      - ${avd_dir}:/opt/open5g-avd
+EOF
+    echo "android-ue: AVD persistence is on. userdata, accounts.db, and adbkey are removed before boot."
+  elif [ "$wipe" -eq 1 ]; then
+    docker rm -f -v "l5gd-android${n}" >/dev/null 2>&1 || true
+  fi
+  echo "android-ue: --boot-only starts android${n} on $(android_ue_uemu_network_name "$n"). Phase B is not attached."
+  boot_started=$(date +%s)
+  android_ue_boot_compose "$root" "$env_file" "$isolated_file" "$persist_file" up -d "android${n}"
+  android_ue_measure_boot "$n"
+}
+
+android_ue_boot_compose() {
+  local root=$1
+  local env_file=$2
+  local isolated_file=$3
+  local persist_file=$4
+  shift 4
+  local -a compose files
+  if [ -n "${ANDROID_UE_COMPOSE_BIN:-}" ]; then
+    # shellcheck disable=SC2206
+    compose=($ANDROID_UE_COMPOSE_BIN)
+  elif command -v docker-compose >/dev/null 2>&1; then
+    compose=(docker-compose)
+  else
+    compose=(docker compose)
+  fi
+  files=(
+    -f "$root/lab/compose/docker-compose.android-emulator.standalone.yml"
+    -f "$isolated_file"
+  )
+  if [ -n "$persist_file" ]; then
+    files+=(-f "$persist_file")
+  fi
+  "${compose[@]}" "${files[@]}" --env-file "$env_file" --profile android-standalone "$@"
 }
 
 android_ue_probe_sgi() {
@@ -369,6 +586,13 @@ while [ "$#" -gt 0 ]; do
     --with-cgnat) with_cgnat=1 ;;
     --with-socks-egress) with_socks=1 ;;
     --install-upf-route) install_upf_route=1 ;;
+    --boot-only) boot_only=1 ;;
+    --wipe) wipe=1 ;;
+    --log-dir)
+      shift
+      [ "$#" -gt 0 ] || usage
+      log_dir=$1
+      ;;
     --print-services) print_services=1 ;;
     *) usage ;;
   esac
@@ -396,13 +620,26 @@ if [ "$with_socks" -eq 1 ]; then
 fi
 
 if [ "$print_services" -eq 1 ]; then
-  printf '%s\n' "ue${n}" "enb${n}" "ue${n}-route" "android${n}"
+  if [ "$boot_only" -eq 1 ]; then
+    printf '%s\n' "android${n}"
+    exit 0
+  fi
+  printf '%s\n' "ue${n}" "enb${n}" "ue${n}-route"
   if [ "$with_cgnat" -eq 1 ]; then
     echo cgnat
   fi
   if [ "$with_socks" -eq 1 ]; then
     printf '%s\n' egress egress-dns
   fi
+  exit 0
+fi
+
+if [ "$boot_only" -eq 1 ]; then
+  if [ "$with_cgnat" -eq 1 ] || [ "$with_socks" -eq 1 ] || [ "$install_upf_route" -eq 1 ]; then
+    echo "android-ue: --boot-only does not start cgnat, the SOCKS tunnel, or the UPF route" >&2
+    exit 2
+  fi
+  android_ue_boot_only "$n"
   exit 0
 fi
 
@@ -555,7 +792,7 @@ android_ue_require_ipv6 "$n"
 android_ue_install_ip6_filter "$n"
 android_ue_install_gtpu_route "$n"
 android_ue_probe_sgi "$n"
-android_ue_compose "$root" "$env_file" up -d "android${n}"
+android_ue_phase_b_attach "$n"
 android_ue_wait_boot "$n"
 
 if [ "$with_cgnat" -eq 1 ]; then
@@ -633,4 +870,4 @@ if [ "$install_upf_route" -eq 1 ]; then
   fi
 fi
 
-echo "android-ue: ${user} is up. On the guest, adb connect $(get "UE${n}_UU"):5555. Core containers were not restarted."
+echo "android-ue: ${user} UE path is up. android${n} was not started. --boot-only publishes adb on 127.0.0.1:$(android_ue_adb_host_port "$n"). Core containers were not restarted."

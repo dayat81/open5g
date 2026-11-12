@@ -18,3 +18,5 @@ sudo bash lab/images/android-emulator/build.sh
 ```
 
 The tag is `open5g-android-emulator:local` unless `ANDROID_UE_ANDROID_IMAGE` is set. `up` accepts that local tag, or a registry name that contains `@sha256`. The local tag is allowed because this Dockerfile pins its base with `@sha256`.
+
+`open5g-preflight.sh` still requires `dummy0` and the ULA unless `ANDROID_UE_ISOLATED` is exactly `1`. Any other value, including empty, keeps that fail-closed check. The production compose file does not set the variable. `--boot-only` injects it for the one container it starts. When `ANDROID_AVD_HOME` stays `/data`, the AVD lives in the container layer. A different directory is a persisted AVD: the preflight deletes `adbkey`, `adbkey.pub`, `accounts.db`, userdata images, and `snapshots/` there, and leaves `config.ini`.

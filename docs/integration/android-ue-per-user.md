@@ -40,7 +40,7 @@ srsENB  -- S1-MME --> MME ---- S6a ---- HSS (Mongo)
                                                   internet
 ```
 
-Control-plane ADB does not follow that path. It is published on the guest loopback into the shared netns. The reply stays on the uu interface because the peer is the bridge gateway, which is a connected route. New destinations that are not the eNB use `tun_srsue`.
+Control-plane ADB does not follow that path. Phase A publishes it on the guest loopback into the emulator's own `uemuN` netns. It is not on the uu interface. New destinations that are not the eNB still use `tun_srsue` inside the UE netns. The emulator does not reach that route until phase B.
 
 The UE pool, SGi subnet, and the planned CGNAT hop are the ones already written in `lab/compose/docker-compose.yml` and `infra/group_vars/all/lab.yml` (`ue_sessions`, `cgnat_ip`). The overlay does not repeat them as literals. The env file supplies them.
 
@@ -52,7 +52,7 @@ The UE pool, SGi subnet, and the planned CGNAT hop are the ones already written 
 | Test IMSI | One IMSI in the lab PLMN (MCC/MNC from the existing plan). Seeded with the existing subscriber mechanism: `infra/roles/subscribers/templates/seed-subscriber.js.j2`, which is a Mongo `replaceOne`. The dashboard, once merged, can later edit QoS on that document. This overlay does not write Mongo. |
 | srsUE | Container `l5gd-ueN`. USIM comes from `lab/config/ran/android-ue.conf.template` after `envsubst`. Placeholders are `UE_IMSI`, `UE_KI`, `UE_OPC`, `UE_IMEI`. |
 | srsENB | Container `l5gd-enbN`. One eNB per UE. See the multi-UE decision below. eNB ID and S1 addresses are not the stock pair. |
-| Emulator | Container `l5gd-androidN`, image `open5g-android-emulator:local`, `network_mode: service:ueN`. |
+| Emulator | Container `l5gd-androidN`, image `open5g-android-emulator:local`, its own netns on internal network `uemuN`. Phase A does not attach it to `tun_srsue`. |
 
 `ue1` and `ue2` are the template. The up script starts `ue1` only. `ue2` requires `ANDROID_UE_ALLOW_SECOND=1` because the current guest cannot honestly run two emulators. The generator refuses a count above 2.
 
@@ -62,7 +62,9 @@ The Gradiant srsRAN image ships default `KEY` and `OPC` environment values. The 
 
 ## Default route through tun_srsue
 
-The emulator uses `network_mode: service:ueN`. Compose ignores any network or port setting on that service. It shares the srsUE network namespace, so it sees `tun_srsue` and the uu interface, and it cannot be given a second docker network that bypasses the EPC.
+Phase A gives the emulator its own netns on `uemuN` (`internal: true`, IPv4 only, `enable_ipv6: false`). It does not use `network_mode: service:ueN` and it does not depend on the route sidecar. `ueN` is not on `uemuN` yet. The address `.1` is the reserved gateway and `.2` is the emulator. Phase B, not this change, attaches `ueN` as that gateway, turns on forwarding from `uemuN` to `tun_srsue`, MASQUERADEs, installs the emulator default route with a pid guard, and extends the existing `ANDROID_UE_IN4` drop for new packets from `tun_srsue` toward `uemuN`. Until that lands, traffic from the emulator does not enter the EPC. `android_ue_phase_b_attach` and `android_ue_phase_b_detach` are the hooks and they do not install those rules.
+
+`ANDROID_UE_DNS`, when set, becomes the emulator's `-dns-server`. It is optional for `--boot-only`. Phase B sets it to the PDN DNS. The UE container's `dns:` field is still `ANDROID_UE_PGW_DNS`.
 
 `srsUE` is not started with `gw.netns`. The upstream ZMQ note uses a netns because the UE and a same-host EPC would otherwise short-circuit. Here the EPC is already a different container netns. A `gw.netns` would create `tun_srsue` where the emulator cannot see it.
 
@@ -73,11 +75,11 @@ After attach, `l5gd-ueN-route` (same netns, `NET_ADMIN`) does four things and th
 3. Replace the default route with `default dev tun_srsue`. Linux then sources off-net packets from the tun address, which is the UE address the PGW and the PCRF session know.
 4. iptables OUTPUT: accept loopback, accept TCP to the eNB (ZMQ), accept output via `tun_srsue`, accept established replies (ADB), drop the rest. ip6tables OUTPUT drops everything except loopback, so IPv6 is not a second path.
 
-The Android guest does not see `tun_srsue`. QEMU user-mode networking (SLIRP) inside the emulator process is NATed by that process. The process's own packets use the container routing table. `adb shell ip route` shows the SLIRP network. The check that matters is `ip route get` in the shared netns, plus a ping from the Android shell to a literal SGi address.
+The Android guest does not see `tun_srsue`. In phase A the emulator process is not in the UE netns either, so a ping from the Android shell to an SGi address is not a phase A check. Phase B is what forwards that process from `uemuN` into this netns. The route sidecar below still applies to srsUE.
 
 The uu network is the core compose network marked `internal: true`, so even a packet that escaped the OUTPUT filter still cannot be routed to the internet by Docker. The filter is there so a later non-internal network on this netns would not become a bypass. The emulator is not given `NET_ADMIN` or `/dev/net/tun`, so it cannot undo the route.
 
-The emulator does not use Docker's embedded resolver at `127.0.0.11`. Compose sets `dns:` on the UE service, and the emulator is started with `-dns-server` set to `ANDROID_UE_PGW_DNS`, the address the SMF/PGW gives the UE. That is what keeps the query off Docker's resolver: Docker rewrites `127.0.0.11:53` in nat OUTPUT before the filter guard runs, so a reject of destination port 53 never sees those packets. A query that uses the PGW resolver has to leave on `tun_srsue`.
+The emulator does not use Docker's embedded resolver at `127.0.0.11`. `ANDROID_UE_DNS` is an optional `-dns-server` and must not be `127.0.0.11`. The UE service `dns:` stays `ANDROID_UE_PGW_DNS`. Docker rewrites `127.0.0.11:53` in nat OUTPUT before the UE filter guard runs, so a reject of destination port 53 never sees those packets.
 
 Policy routing (`ip rule`) was the other option. It is the wrong default here: one netns and one default route is the thing an operator can read. A second table would only be needed if srsUE itself had to keep a different default, and it does not.
 
@@ -123,8 +125,8 @@ Source: https://github.com/HQarroum/docker-android at commit `f569246983ee994aed
 | KVM | `--device /dev/kvm`. The image is built around hardware virtualization. |
 | Upstream size | At least 4 GiB RAM and 8 GiB disk for API 33. Image defaults are `MEMORY=8192` and `CORES=4`. Docker Hub lists `api-33` as linux/amd64, about 2.54 GB compressed. |
 | This overlay | `MEMORY=2048`, `CORES=2`, container limit `ANDROID_UE_MEM_LIMIT` (default 4096 MiB), `shm_size` 1 GiB. The limit must be at least the emulator memory plus 1536 MiB. `up` refuses a smaller limit. |
-| Screen | The image is headless. It has no web VNC. The emulator listens on `127.0.0.1:5555`, and the image's socat binds that to the uu address on port 5555. `uu` is internal, so this overlay does not publish ADB or VNC on the host. On the guest, `adb connect <UE_UU>:5555`. From a laptop, `ssh -L` to that address. `SKIP_AUTH=true` matches the image default. |
-| Data | The upstream image wipes the AVD on restart. This overlay does not add a data volume. |
+| Screen | The image is headless. It has no web VNC. ADB is published on `127.0.0.1:15555` for ue1 and `127.0.0.1:16555` for ue2. The console is `127.0.0.1:15554` and `127.0.0.1:16554`. Nothing is published on `0.0.0.0`. `SKIP_AUTH=true` matches the image default. |
+| Data | The AVD stays in the container layer (`ANDROID_AVD_HOME=/data`) and `down` removes that container. Opt-in persistence is a host directory mounted at `/opt/open5g-avd`. That path is not `/root/.android`, so `adbkey` is not kept. Before start, userdata images, `accounts.db`, and `snapshots/` are deleted. `config.ini` can remain. |
 
 How many instances: the guest in the lab notes is 8 vCPU, 16 GiB RAM, and 40 GiB disk, and it already runs the EPC. The stock srsRAN pair is requested at 2.5 CPU and 2048 MiB each. One extra eNB, one srsUE, and one emulator at the caps above is the realistic first run, and only if the stock `l5gd-enb` / `l5gd-ue` are stopped so they are not also holding CPU, RAM, and an IMSI. Two emulators plus two eNB/UE pairs do not fit that guest. The compose file defines two users so the mapping is concrete. It is not a claim that both boot.
 
