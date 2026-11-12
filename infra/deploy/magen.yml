@@ -1,0 +1,6 @@
+---
+- name: Open5G on MAGEN_HOST
+  hosts: magen
+  gather_facts: false
+  roles:
+    - role: magen

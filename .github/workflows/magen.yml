@@ -1,0 +1,32 @@
+name: magen
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  magen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck, yamllint, and Ansible
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y shellcheck python3-pip
+          python3 -m pip install --user 'ansible-core>=2.16,<2.19' 'ansible-lint>=24,<26' 'yamllint>=1.35'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Shellcheck and magen fixtures
+        run: bash lab/scripts/check-magen.sh
+      - name: Lint the magen playbook
+        working-directory: infra
+        run: |
+          yamllint -c .yamllint.yml deploy/magen.yml roles/magen inventory/magen.example inventory/magen-fixture.yml group_vars/magen.yml.example
+          ansible-lint -c .ansible-lint deploy/magen.yml
+          ANSIBLE_INVENTORY=inventory/magen-fixture.yml ansible-playbook deploy/magen.yml --syntax-check
+      - name: Check-mode preflight against the fixture
+        working-directory: infra
+        run: |
+          ANSIBLE_INVENTORY=inventory/magen-fixture.yml ansible-playbook deploy/magen.yml --check --tags preflight \
+            -e "magen_repo=${GITHUB_WORKSPACE}" \
+            -e "magen_env_file=${GITHUB_WORKSPACE}/lab/scripts/fixtures/magen/env" \
+            -e "magen_fixture_root=${GITHUB_WORKSPACE}/lab/scripts/fixtures/magen/pass"

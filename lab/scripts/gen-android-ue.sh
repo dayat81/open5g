@@ -12,9 +12,10 @@ fi
 count=2
 mode="write"
 out=""
+target=lab
 
 usage() {
-  echo "usage: gen-android-ue.sh [--check | --stdout | --write] [--count 1|2]" >&2
+  echo "usage: gen-android-ue.sh [--check | --stdout | --write] [--count 1|2] [--target lab|magen]" >&2
   exit 2
 }
 
@@ -29,6 +30,11 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -gt 0 ] || usage
       count=$1
       ;;
+    --target)
+      shift
+      [ "$#" -gt 0 ] || usage
+      target=$1
+      ;;
     *) usage ;;
   esac
   shift
@@ -38,6 +44,14 @@ case "$count" in
   1|2) ;;
   *)
     echo "android-ue cap is 2 (got ${count})" >&2
+    exit 2
+    ;;
+esac
+
+case "$target" in
+  lab|magen) ;;
+  *)
+    echo "android-ue: target must be lab or magen" >&2
     exit 2
     ;;
 esac
@@ -237,11 +251,15 @@ EOF
       EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS}"
       BOOT_TIMEOUT: \${ANDROID_UE_BOOT_TIMEOUT:-600}
       ANDROID_UE_IPV6_MODE: "off"
+      ANDROID_UE_SCREEN_BIND: \${O5G_SCREEN_ANDROID${n}:?O5G_SCREEN_ANDROID${n}}
+      ANDROID_UE_SCREEN_PORT: "8000"
     volumes:
       - ../images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro
     networks:
       uemu${n}:
         ipv4_address: \${ANDROID_UE_UEMU${n}_ANDROID:?ANDROID_UE_UEMU${n}_ANDROID}
+      screen:
+        ipv4_address: \${O5G_SCREEN_ANDROID${n}:?O5G_SCREEN_ANDROID${n}}
 
 EOF
 }
@@ -397,6 +415,11 @@ EOF
 }
 
 if [ "$android_ue_gen_skip_main" = 0 ]; then
+if [ "$target" = "magen" ]; then
+  export MAGEN_EMIT_MODE="$mode"
+  export MAGEN_EMIT_COUNT="$count"
+  exec "$root/lab/scripts/gen-magen.sh"
+fi
 tmp=$(mktemp)
 tmp_fragment=$(mktemp)
 tmp_standalone=$(mktemp)

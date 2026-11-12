@@ -1,6 +1,8 @@
 .env
 vault.yml
 inventory/lab5g-dev.yml
+inventory/magen.yml
+group_vars/magen.yml
 rendered/
 *.retry
 __pycache__/
