@@ -22,9 +22,26 @@ jobs:
           ANDROID_UE_REQUIRE_COMPOSE_VERSION: 2.29.7
         run: lab/scripts/check-android-ue.sh
 
+  screen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Serve the patched ws-scrcpy pathname
+        run: bash lab/images/ws-scrcpy/check-serve.sh
+
   images:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build the Open5G Android emulator image
         run: bash lab/images/android-emulator/build.sh
+
+  screen-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the ws-scrcpy image
+        run: docker build -f lab/images/ws-scrcpy/Dockerfile -t open5g-ws-scrcpy:local lab/images/ws-scrcpy

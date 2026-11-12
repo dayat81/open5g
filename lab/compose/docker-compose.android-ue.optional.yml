@@ -3,6 +3,7 @@
 # Run this file on its own. Do not combine it with the core compose file.
 # Addresses, images, and USIM values come from the env file. ZMQ TCP ports are
 # the lab's verified single-pair ports and stay inside each container netns.
+# The screen sidecar shares the UE netns and is not published on the host.
 
 services:
   ue1:
@@ -52,6 +53,8 @@ services:
     networks:
       uu:
         ipv4_address: ${UE1_UU}
+      screen:
+        ipv4_address: ${UE1_SCREEN_ADDR:?UE1_SCREEN_ADDR}
 
   enb1:
     image: ${ANDROID_UE_SRS_IMAGE}
@@ -107,6 +110,11 @@ services:
       ANDROID_UE_TUN: tun_srsue
       ANDROID_UE_ATTACH_TIMEOUT: ${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
       ANDROID_UE_IPV6_ULA: ${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
+      ANDROID_UE_UU: ${UE1_UU}
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
+      ANDROID_UE_SCREEN_ALLOW_FROM: ${ANDROID_UE_SCREEN_ALLOW_FROM:-}
+      ANDROID_UE_SCREEN_ADDR: ${UE1_SCREEN_ADDR:?UE1_SCREEN_ADDR}
+      ANDROID_UE_SCREEN_IMAGE: ${ANDROID_UE_SCREEN_IMAGE:-}
     volumes:
       - ../scripts/android-ue-route.sh:/opt/android-ue/android-ue-route.sh:ro
     depends_on:
@@ -127,6 +135,7 @@ services:
     group_add:
       - "${ANDROID_UE_KVM_GID:?ANDROID_UE_KVM_GID}"
     environment:
+      ANDROID_UE_UU: ${UE1_UU}
       MEMORY: ${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
       CORES: ${ANDROID_UE_CORES:?ANDROID_UE_CORES}
       SKIP_AUTH: ${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
@@ -137,6 +146,29 @@ services:
     depends_on:
       ue1-route:
         condition: service_completed_successfully
+
+  ue1-screen:
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: l5gd-ue1-screen
+    restart: "no"
+    profiles: ["android-ue"]
+    cpus: 0.5
+    mem_limit: 512m
+    network_mode: "service:ue1"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_BIND: ${UE1_SCREEN_ADDR:?UE1_SCREEN_ADDR}
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
+      ANDROID_UE_SCREEN_PATH: /emulator/ue1
+      ANDROID_UE_SCREEN_MAX_SIZE: ${ANDROID_UE_SCREEN_MAX_SIZE:-800}
+      ANDROID_UE_SCREEN_BIT_RATE: ${ANDROID_UE_SCREEN_BIT_RATE:-2000000}
+      ANDROID_UE_SCREEN_MAX_FPS: ${ANDROID_UE_SCREEN_MAX_FPS:-15}
+      ANDROID_UE_UU: ${UE1_UU}
+    volumes:
+      - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
+    depends_on:
+      android1:
+        condition: service_started
 
   ue2:
     image: ${ANDROID_UE_SRS_IMAGE:?ANDROID_UE_SRS_IMAGE}
@@ -185,6 +217,8 @@ services:
     networks:
       uu:
         ipv4_address: ${UE2_UU}
+      screen:
+        ipv4_address: ${UE2_SCREEN_ADDR:?UE2_SCREEN_ADDR}
 
   enb2:
     image: ${ANDROID_UE_SRS_IMAGE}
@@ -240,6 +274,11 @@ services:
       ANDROID_UE_TUN: tun_srsue
       ANDROID_UE_ATTACH_TIMEOUT: ${ANDROID_UE_ATTACH_TIMEOUT:?ANDROID_UE_ATTACH_TIMEOUT}
       ANDROID_UE_IPV6_ULA: ${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
+      ANDROID_UE_UU: ${UE2_UU}
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
+      ANDROID_UE_SCREEN_ALLOW_FROM: ${ANDROID_UE_SCREEN_ALLOW_FROM:-}
+      ANDROID_UE_SCREEN_ADDR: ${UE2_SCREEN_ADDR:?UE2_SCREEN_ADDR}
+      ANDROID_UE_SCREEN_IMAGE: ${ANDROID_UE_SCREEN_IMAGE:-}
     volumes:
       - ../scripts/android-ue-route.sh:/opt/android-ue/android-ue-route.sh:ro
     depends_on:
@@ -260,6 +299,7 @@ services:
     group_add:
       - "${ANDROID_UE_KVM_GID:?ANDROID_UE_KVM_GID}"
     environment:
+      ANDROID_UE_UU: ${UE2_UU}
       MEMORY: ${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
       CORES: ${ANDROID_UE_CORES:?ANDROID_UE_CORES}
       SKIP_AUTH: ${ANDROID_UE_SKIP_AUTH:?ANDROID_UE_SKIP_AUTH}
@@ -270,6 +310,29 @@ services:
     depends_on:
       ue2-route:
         condition: service_completed_successfully
+
+  ue2-screen:
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: l5gd-ue2-screen
+    restart: "no"
+    profiles: ["android-ue"]
+    cpus: 0.5
+    mem_limit: 512m
+    network_mode: "service:ue2"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_BIND: ${UE2_SCREEN_ADDR:?UE2_SCREEN_ADDR}
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:?ANDROID_UE_SCREEN_PORT}
+      ANDROID_UE_SCREEN_PATH: /emulator/ue2
+      ANDROID_UE_SCREEN_MAX_SIZE: ${ANDROID_UE_SCREEN_MAX_SIZE:-800}
+      ANDROID_UE_SCREEN_BIT_RATE: ${ANDROID_UE_SCREEN_BIT_RATE:-2000000}
+      ANDROID_UE_SCREEN_MAX_FPS: ${ANDROID_UE_SCREEN_MAX_FPS:-15}
+      ANDROID_UE_UU: ${UE2_UU}
+    volumes:
+      - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
+    depends_on:
+      android2:
+        condition: service_started
 
   cgnat:
     image: ${ANDROID_UE_CGNAT_IMAGE:?ANDROID_UE_CGNAT_IMAGE}
@@ -353,3 +416,10 @@ networks:
   egress:
     external: true
     name: ${ANDROID_UE_EGRESS_NETWORK:?ANDROID_UE_EGRESS_NETWORK}
+  screen:
+    name: l5gd-screen
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ANDROID_UE_SCREEN_SUBNET:?ANDROID_UE_SCREEN_SUBNET}
+          gateway: ${ANDROID_UE_SCREEN_GATEWAY:?ANDROID_UE_SCREEN_GATEWAY}

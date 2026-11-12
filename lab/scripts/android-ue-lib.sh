@@ -219,6 +219,10 @@ android_ue_nonloop_v6_ok() {
   android_ue_ula_proc_ok "$@"
 }
 
+android_ue_screen_image_ok() {
+  printf '%s\n' "$1" | grep -Eq '@sha256:[0-9A-Fa-f]{64}([^0-9A-Fa-f]|$)'
+}
+
 android_ue_android_image_ok() {
   local image=$1
   case "$image" in

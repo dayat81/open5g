@@ -186,6 +186,27 @@ def authorize(actor: Actor, assignment: Assignment, action: str) -> Decision:
     return Decision(False, 403, "role_forbidden")
 
 
+def authorize_emulator(actor: Actor, owner_user_id: str | None, assignment_group_id: str | None = None) -> Decision:
+    """Screen access uses the same group rule as profile read (FR-17).
+
+    Admin may open every UE. An instructor may open a UE only when their
+    current group is the assignment group. A student may open only a UE
+    assigned to them.
+    """
+
+    if not owner_user_id or not assignment_group_id:
+        if actor.role == "admin":
+            return Decision(True, 200, "admin_read")
+        if actor.role == "instructor":
+            return Decision(False, 403, "cross_group_forbidden")
+        return Decision(False, 403, "not_owner")
+    return authorize(
+        actor,
+        Assignment("emulator", "", owner_user_id, assignment_group_id),
+        "read",
+    )
+
+
 def _walk_keys(payload: Any) -> list[tuple[str, Any]]:
     found: list[tuple[str, Any]] = []
     if isinstance(payload, dict):

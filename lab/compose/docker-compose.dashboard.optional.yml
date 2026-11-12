@@ -1,0 +1,59 @@
+# OPTIONAL. Not loaded by `docker-compose -f docker-compose.yml up`.
+# Guest tool: standalone docker-compose v2.29.7.
+# Container env comes from dashboard.env.example, then dashboard.env when that file exists.
+# dashboard.env is gitignored. Startup still rejects REPLACE_ placeholders.
+# Only dashboard-web publishes the UI, on 127.0.0.1 unless DASHBOARD_WEB_BIND is set.
+# Postgres also publishes 5432, and only on 127.0.0.1, for the host screen listener.
+# WEB_PORT defaults to 3300. Port 3000 stays with Grafana.
+# Reach the UI with an SSH tunnel to that address. The API is not published.
+name: lab5g-dev-dashboard
+services:
+  dashboard-postgres:
+    profiles: ["dashboard"]
+    image: ${DASHBOARD_POSTGRES_IMAGE:-postgres:16}
+    restart: "no"
+    env_file:
+      - path: dashboard.env.example
+        required: true
+      - path: dashboard.env
+        required: false
+    volumes:
+      - dashboard-postgres-data:/var/lib/postgresql/data
+    networks: [dashboard]
+    ports:
+      - "127.0.0.1:${DASHBOARD_POSTGRES_PORT:-5432}:5432"
+  dashboard-api:
+    profiles: ["dashboard"]
+    image: ${DASHBOARD_API_IMAGE:-open5g-dashboard-api:local}
+    restart: "no"
+    depends_on: [dashboard-postgres]
+    command: ["python", "-m", "open5g_dashboard"]
+    env_file:
+      - path: dashboard.env.example
+        required: true
+      - path: dashboard.env
+        required: false
+    expose:
+      - "8000"
+    networks: [dashboard, mgmt]
+  dashboard-web:
+    profiles: ["dashboard"]
+    image: ${DASHBOARD_WEB_IMAGE:-open5g-dashboard-web:local}
+    restart: "no"
+    depends_on: [dashboard-api]
+    environment:
+      OPEN5G_API_INTERNAL_URL: ${OPEN5G_API_INTERNAL_URL:-http://dashboard-api:8000}
+      WEB_PORT: ${WEB_PORT:-3300}
+      PORT: ${WEB_PORT:-3300}
+    ports:
+      - "${DASHBOARD_WEB_BIND:-127.0.0.1}:${WEB_PORT:-3300}:${WEB_PORT:-3300}"
+    networks: [web, dashboard]
+networks:
+  dashboard:
+    internal: true
+  web: {}
+  mgmt:
+    external: true
+    name: lab5g-dev_mgmt
+volumes:
+  dashboard-postgres-data:

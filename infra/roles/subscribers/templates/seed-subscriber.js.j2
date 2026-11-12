@@ -1,4 +1,5 @@
 // APN profile example. Replace per user; never commit Ki or OPc.
+// replaceOne overwrites the whole subscriber, including dashboard QoS and open5g_dashboard.generation.
 db = db.getSiblingDB('open5gs');
 db.subscribers.replaceOne(
   {imsi: '{{ subscribers_imsi }}'},

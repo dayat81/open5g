@@ -10,7 +10,7 @@ for file in (root / 'group_vars/all').glob('*.yml'):
 context.update(iac_dry_run=True, ran_srsran_profile='endc')
 env = Environment(undefined=StrictUndefined, keep_trailing_newline=True)
 for source in root.glob('roles/*/templates/*.j2'):
-    if source.name in ('seed-subscriber.js.j2', 'cloud-user-data.yml.j2', 'lab-routes.sh.j2'):
+    if source.name in ('seed-subscriber.js.j2', 'cloud-user-data.yml.j2', 'lab-routes.sh.j2', 'dashboard.env.j2'):
         continue
     if source.name == 'fd.conf.j2':
         items = [{'identity': 'hss', 'peer': 'mme', 'peer_address': context['core']['mme_s6a']}]

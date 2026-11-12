@@ -1,9 +1,12 @@
 "use client";
 
+import { LiveProfileEditor } from "@/components/LiveProfileEditor";
 import { ProfileEditor } from "@/components/ProfileEditor";
-import { createClient } from "@/lib/api";
 
 export default function ProfilPage() {
-  const client = createClient(process.env.NEXT_PUBLIC_API_BASE);
-  return <ProfileEditor client={client} />;
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+  if (!apiBase) {
+    return <ProfileEditor />;
+  }
+  return <LiveProfileEditor apiBase={apiBase} />;
 }

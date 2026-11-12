@@ -16,8 +16,11 @@ scripts=(
   lab/scripts/android-ue-set-addr.sh
   lab/scripts/android-ue-tunnel.sh
   lab/scripts/check-android-ue.sh
+  lab/scripts/android-ue-magen.sh
+  lab/scripts/android-ue-screen-smoke.sh
   lab/images/android-emulator/build.sh
   lab/images/android-emulator/open5g-preflight.sh
+  lab/images/ws-scrcpy/check-serve.sh
 )
 sh_scripts=(
   lab/scripts/render-cgnat.sh
@@ -25,6 +28,7 @@ sh_scripts=(
   lab/scripts/android-ue-egress.sh
   lab/scripts/android-ue-add-ue.sh
   lab/scripts/render-corefile.sh
+  lab/scripts/android-ue-screen.sh
 )
 
 echo "shellcheck"
@@ -45,7 +49,10 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
   ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
-  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE ANDROID_UE_KVM_GID; do
+  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE \
+  ANDROID_UE_SCREEN_IMAGE ANDROID_UE_KVM_GID \
+  O5G_SCREEN_SUBNET O5G_SCREEN_GATEWAY O5G_SCREEN_EMULATOR_ADDR \
+  O5G_SCREEN_LISTENER_ADDR O5G_SCREEN_LISTENER_IMAGE O5G_DASHBOARD_NETWORK; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -80,6 +87,8 @@ scan_paths=(
   lab/scripts/check-android-ue.sh
   docs/integration/android-ue-per-user.md
   docs/deploy/android-ue-lab5g-dev.md
+  docs/deploy/android-emulator-dashboard.md
+  lab/scripts/android-ue-screen.sh
   .github/workflows/android-ue.yml
   lab/images/android-emulator
 )
@@ -340,6 +349,11 @@ if [ -z "$again_at" ] || [ -z "$route_up_at" ] || [ "$again_at" -ge "$route_up_a
   echo "up starts the route sidecar after android is already running" >&2
   exit 1
 fi
+screen_only_at=$(grep -n -F -- '--install-screen' lab/scripts/android-ue-up.sh | head -n 1 | cut -d: -f1)
+if [ -z "$screen_only_at" ] || [ "$screen_only_at" -ge "$again_at" ]; then
+  echo "screen-only path does not install ANDROID_UE_SCREEN before the second up is refused" >&2
+  exit 1
+fi
 # shellcheck disable=SC2016
 grep -q 'disable_ipv6 on ${key}' lab/scripts/android-ue-up.sh
 grep -q 'accept_ra autoconf forwarding' lab/scripts/android-ue-up.sh
@@ -444,6 +458,10 @@ printf '%s\n' "$nft_rules" | grep -q 'hook input'
 printf '%s\n' "$nft_rules" | grep -q 'policy drop'
 printf '%s\n' "$nft_rules" | grep -q 'iif "lo" accept'
 printf '%s\n' "$nft_rules" | grep -q 'oif "lo" accept'
+if printf '%s\n' "$nft_rules" | grep 'iif' | grep -v 'iif "lo"'; then
+  echo "IPv6 input accepts an interface other than lo, so l5gd-screen would stay open" >&2
+  exit 1
+fi
 if printf '%s\n' "$nft_rules" | grep -q '::1'; then
   echo "IPv6 nft filter still has a redundant ::1 rule" >&2
   exit 1
@@ -526,6 +544,212 @@ if grep -n -E 'ADB_HOST_PORT|:[0-9]*:(5554|5555|5900|6080)' lab/compose/docker-c
   echo "android-ue still publishes ADB or VNC to the host" >&2
   exit 1
 fi
+python3 - <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path("lab/compose/docker-compose.android-ue.optional.yml").read_text()
+blocks = {}
+name = None
+buf = []
+for line in text.splitlines():
+    if line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
+        if name:
+            blocks[name] = "\n".join(buf)
+        name = line.strip()[:-1]
+        buf = [line]
+    else:
+        buf.append(line)
+if name:
+    blocks[name] = "\n".join(buf)
+for key in ("android1", "android2", "ue1-screen", "ue2-screen"):
+    body = blocks.get(key, "")
+    if "NET_ADMIN" in body:
+        sys.exit(f"{key} has NET_ADMIN")
+for key in ("ue1-screen", "ue2-screen"):
+    body = blocks.get(key, "")
+    if "network_mode:" not in body or "SCREEN_ADDR" not in body:
+        sys.exit(f"{key} is missing its screen-network bind")
+    if "SCREEN_BIND:" in body and "UU}" in body.split("SCREEN_BIND:", 1)[1].splitlines()[0]:
+        sys.exit(f"{key} binds the screen listener to the uu address")
+    if "ports:" in body or "0.0.0.0" in body or "ADB_HOST_PORT" in body:
+        sys.exit(f"{key} publishes a port or binds every interface")
+    if "5038" not in body and "ANDROID_UE_UU" not in body:
+        sys.exit(f"{key} does not give ws-scrcpy its own adb target")
+PY
+echo "screen bind"
+if ANDROID_UE_SCREEN_BIND=0.0.0.0 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "screen bind accepted 0.0.0.0" >&2
+  exit 1
+fi
+if ANDROID_UE_SCREEN_BIND=127.0.0.1 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "screen bind accepted loopback" >&2
+  exit 1
+fi
+if ! ANDROID_UE_SCREEN_MODE=standalone ANDROID_UE_SCREEN_BIND=127.0.0.1 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "standalone screen bind rejected loopback" >&2
+  exit 1
+fi
+if ANDROID_UE_SCREEN_MODE=standalone ANDROID_UE_SCREEN_BIND=0.0.0.0 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "standalone screen bind accepted 0.0.0.0" >&2
+  exit 1
+fi
+if ! ANDROID_UE_SCREEN_BIND=192.0.2.32 lab/scripts/android-ue-screen.sh --check-bind; then
+  echo "screen bind rejected a unicast address" >&2
+  exit 1
+fi
+if ANDROID_UE_SCREEN_ALLOW_FROM=0.0.0.0 lab/scripts/android-ue-route.sh --check-allow; then
+  echo "screen allow accepted 0.0.0.0" >&2
+  exit 1
+fi
+if ! ANDROID_UE_SCREEN_ALLOW_FROM=192.0.2.1 lab/scripts/android-ue-route.sh --check-allow; then
+  echo "screen allow rejected a unicast address" >&2
+  exit 1
+fi
+skipped=$(lab/scripts/android-ue-route.sh --print-screen-rule)
+if [ "$skipped" != "skipped" ]; then
+  echo "screen rule ran while the image is still a placeholder: ${skipped}" >&2
+  exit 1
+fi
+digest=$(python3 -c 'print("b"*64)')
+rule=$(ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy@sha256:${digest}" \
+  ANDROID_UE_SCREEN_IFACE=eth1 \
+  ANDROID_UE_SCREEN_ALLOW_FROM=192.0.2.1 \
+  ANDROID_UE_SCREEN_PORT=8000 \
+  lab/scripts/android-ue-route.sh --print-screen-rule)
+case "$rule" in
+  *"-A INPUT -j ANDROID_UE_SCREEN"*) ;;
+  *)
+    echo "screen chain is not appended to INPUT: ${rule}" >&2
+    exit 1
+    ;;
+esac
+printf '%s\n' "$rule" | grep -q -- '-A ANDROID_UE_SCREEN -i eth1 -p tcp --dport 8000 -s 192.0.2.1 -j ACCEPT'
+printf '%s\n' "$rule" | grep -q -- '-A ANDROID_UE_SCREEN -p tcp --dport 8000 -j DROP'
+if printf '%s\n' "$rule" | grep -q -- '-I INPUT'; then
+  echo "screen chain is inserted ahead of ANDROID_UE_IN4: ${rule}" >&2
+  exit 1
+fi
+adb_rule=$(ANDROID_UE_ADB_IFACE=uu0 bash lab/scripts/android-ue-route.sh --print-adb-allow)
+printf '%s\n' "$adb_rule" | grep -q -- '-i uu0'
+printf '%s\n' "$adb_rule" | grep -q -- '-m multiport --dports 5554,5555 -j ACCEPT'
+if grep -q -- '-P INPUT' lab/scripts/android-ue-route.sh; then
+  echo "route script changes the INPUT policy" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! grep -q -- '-A INPUT -j "$chain"' lab/scripts/android-ue-route.sh; then
+  echo "adb allowlist is not appended after ANDROID_UE_IN4" >&2
+  exit 1
+fi
+echo "magen standalone screen"
+magen=lab/compose/docker-compose.magen-screen.optional.yml
+grep -q 'network_mode: "container:l5gd-android-magen"' "$magen"
+grep -q 'ANDROID_UE_SCREEN_MODE: standalone' "$magen"
+grep -q 'ANDROID_UE_ADB_MODE: standalone' "$magen"
+grep -q 'o5g-screen:' "$magen"
+grep -q 'internal: true' "$magen"
+grep -q 'enable_ipv6: false' "$magen"
+# shellcheck disable=SC2016
+grep -q '127.0.0.1:${OPEN5G_EMULATOR_SCREEN_BIND_PORT:-3301}:3301' "$magen"
+if grep -q 'ANDROID_UE_UU' "$magen" || grep -q '0.0.0.0' "$magen" || grep -q 'NET_ADMIN' "$magen"; then
+  echo "magen compose passes ANDROID_UE_UU, binds every address, or adds NET_ADMIN" >&2
+  exit 1
+fi
+if grep -q '8000:8000' "$magen"; then
+  echo "magen compose publishes the screen port" >&2
+  exit 1
+fi
+python3 - "$magen" <<'PY'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+emulator = text.split("  magen-emulator:", 1)[1].split("  magen-screen:", 1)[0]
+sidecar = text.split("  magen-screen:", 1)[1].split("  magen-listener:", 1)[0]
+if "ports:" in emulator or "ports:" in sidecar:
+    sys.exit("magen emulator or sidecar publishes a port")
+if "ANDROID_UE_SCREEN_BIND: 127.0.0.1" in text:
+    sys.exit("magen sidecar still binds loopback")
+if "O5G_SCREEN_EMULATOR_ADDR" not in sidecar:
+    sys.exit("magen sidecar does not bind the emulator address on o5g-screen")
+PY
+if grep -q 'magen-screen' lab/scripts/android-ue-up.sh; then
+  echo "android-ue-up loads the magen screen profile" >&2
+  exit 1
+fi
+digest=$(python3 -c 'print("c"*64)')
+magen_env=$tmp/magen.env
+cat >"$magen_env" <<EOF
+ANDROID_UE_ANDROID_IMAGE=example.invalid/android@sha256:${digest}
+ANDROID_UE_SCREEN_IMAGE=example.invalid/ws-scrcpy@sha256:${digest}
+O5G_SCREEN_LISTENER_IMAGE=example.invalid/listener@sha256:${digest}
+O5G_SCREEN_EMULATOR_ADDR=192.0.2.32
+O5G_SCREEN_LISTENER_ADDR=192.0.2.33
+O5G_SCREEN_SUBNET=192.0.2.0/24
+O5G_SCREEN_GATEWAY=192.0.2.1
+O5G_DASHBOARD_NETWORK=dashboard
+ANDROID_UE_SCREEN_PORT=8000
+EOF
+if ! lab/scripts/android-ue-magen.sh --env-file "$magen_env" --check; then
+  echo "magen wrapper rejected a pinned image" >&2
+  exit 1
+fi
+sed 's/@sha256:.*/:local/' "$magen_env" >"$tmp/magen-local.env"
+if lab/scripts/android-ue-magen.sh --env-file "$tmp/magen-local.env" --check; then
+  echo "magen wrapper accepted an image without a digest" >&2
+  exit 1
+fi
+printf '\nANDROID_UE_UU=192.0.2.40\n' >>"$magen_env"
+if lab/scripts/android-ue-magen.sh --env-file "$magen_env" --check; then
+  echo "magen wrapper accepted ANDROID_UE_UU" >&2
+  exit 1
+fi
+patched=$(mktemp -d)
+cp -a lab/images/android-emulator/upstream/. "$patched"
+patch -p1 -d "$patched" <lab/images/android-emulator/patches/0001-open5g-boot.patch >/dev/null
+start_script=$patched/scripts/start-emulator.sh
+grep -q 'adb -P 5037 server nodaemon' "$start_script"
+if grep -q 'adb -a' "$start_script"; then
+  echo "vendored emulator still starts adb -a" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+grep -q 'bind="${ANDROID_UE_UU}"' "$start_script"
+grep -q 'ANDROID_UE_ADB_MODE' "$start_script"
+grep -q 'standalone mode does not take ANDROID_UE_UU' "$start_script"
+if grep -q 'ip addr list eth0' "$start_script" || grep -q 'bind="0.0.0.0"' "$start_script" || grep -q 'bind="eth0"' "$start_script"; then
+  echo "vendored socat still binds eth0 or every address" >&2
+  exit 1
+fi
+rm -rf "$patched"
+grep -q '5038' lab/scripts/android-ue-screen.sh
+grep -q 'ANDROID_UE_UU' lab/scripts/android-ue-screen.sh
+grep -q 'adb_target=127.0.0.1:5555' lab/scripts/android-ue-screen.sh
+if grep -q 'adb -P 5037' lab/scripts/android-ue-screen.sh || grep -q 'adb -a' lab/scripts/android-ue-screen.sh; then
+  echo "screen sidecar still shares the emulator adb server" >&2
+  exit 1
+fi
+grep -q 'l5gd-screen address' lab/scripts/android-ue-up.sh
+empty=$(ANDROID_UE_SCREEN_IMAGE='' lab/scripts/android-ue-route.sh --print-screen-rule)
+if [ "$empty" != "skipped" ]; then
+  echo "screen rule ran while the image is empty: ${empty}" >&2
+  exit 1
+fi
+grep -q 'INCLUDE_ADB_SHELL": false' lab/images/ws-scrcpy/build.config.override.json
+grep -q '@sha256:' lab/images/ws-scrcpy/Dockerfile
+grep -q 'WS_SCRCPY_COMMIT=' lab/images/ws-scrcpy/Dockerfile
+grep -q 'WS_SCRCPY_PATHNAME' lab/images/ws-scrcpy/patches/0001-pathname.patch
+grep -q 'server.listen(port, listenHost' lab/images/ws-scrcpy/patches/0002-open5g-bind.patch
+grep -q '2000000' lab/images/ws-scrcpy/patches/0002-open5g-bind.patch
+grep -q 'open5g-limits.js' lab/scripts/android-ue-screen.sh
+if grep -E -q '^[[:space:]]*npm run dist([[:space:]]|$)' lab/scripts/android-ue-screen.sh; then
+  echo "screen entrypoint rebuilds ws-scrcpy on every start" >&2
+  exit 1
+fi
+grep -q -- '--screen-only' docs/deploy/android-emulator-dashboard.md
+grep -q 'o5g-screen' docs/deploy/android-emulator-dashboard.md
+grep -q 'S1 evidence is pending' docs/deploy/android-emulator-dashboard.md
+grep -q 'name: l5gd-screen' lab/compose/docker-compose.android-ue.optional.yml
+grep -q 'internal: true' lab/compose/docker-compose.android-ue.optional.yml
 extra_flags=$(awk -F= '$1 == "ANDROID_UE_EXTRA_FLAGS" { sub(/^[^=]*=/, ""); print; exit }' lab/compose/android-ue.env.example)
 case "$extra_flags" in
   *partition-size=*)
@@ -545,6 +769,15 @@ fi
 echo "UPF policy rule is idempotent"
 # shellcheck source=android-ue-lib.sh
 . lab/scripts/android-ue-lib.sh
+digest=$(python3 -c 'print("a"*64)')
+if ! android_ue_screen_image_ok "example.invalid/ws-scrcpy@sha256:${digest}"; then
+  echo "pinned screen image was rejected" >&2
+  exit 1
+fi
+if android_ue_screen_image_ok "example.invalid/ws-scrcpy:test"; then
+  echo "unpinned screen image was accepted" >&2
+  exit 1
+fi
 upf_dir=$(mktemp -d)
 upf_file=$upf_dir/upf-rule.txt
 decision=$(android_ue_upf_rule_decide "0: from all lookup local" "192.0.2.50/32" "$upf_file")
@@ -903,6 +1136,18 @@ fi
 echo "up-script service list"
 without=$(lab/scripts/android-ue-up.sh --env-file "$example" --print-services)
 printf '%s\n' "$without" | grep -qx 'ue1'
+if printf '%s\n' "$without" | grep -qx 'ue1-screen'; then
+  echo "screen sidecar starts while its image is still a placeholder" >&2
+  exit 1
+fi
+screen_env=$tmp/screen.env
+sed 's/^ANDROID_UE_SCREEN_IMAGE=.*/ANDROID_UE_SCREEN_IMAGE=example.invalid\/ws-scrcpy:test/' "$example" >"$screen_env"
+screen_list=$(lab/scripts/android-ue-up.sh --env-file "$screen_env" --print-services)
+printf '%s\n' "$screen_list" | grep -qx 'ue1-screen'
+if printf '%s\n' "$screen_list" | grep -qx 'egress'; then
+  echo "screen list started egress" >&2
+  exit 1
+fi
 if printf '%s\n' "$without" | grep -qx 'egress'; then
   echo "egress is in the default service list" >&2
   exit 1
@@ -938,6 +1183,9 @@ rendered=$tmp/rendered.yml
 grep -q 'service:ue1' "$rendered"
 grep -q 'service:ue2' "$rendered"
 grep -q 'container_name: l5gd-android1' "$rendered"
+grep -q 'container_name: l5gd-ue1-screen' "$rendered"
+grep -q 'container_name: l5gd-ue2-screen' "$rendered"
+grep -q 'ANDROID_UE_SCREEN_BIND' lab/compose/docker-compose.android-ue.optional.yml
 grep -q 'container_name: l5gd-cgnat' "$rendered"
 grep -q 'android-ue' "$rendered"
 grep -q 'REPLACE_ANDROID_UE_PGW_DNS' "$rendered"

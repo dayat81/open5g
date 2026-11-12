@@ -13,9 +13,10 @@ with_cgnat=0
 with_socks=0
 install_upf_route=0
 print_services=0
+screen_only=0
 
 usage() {
-  echo "usage: android-ue-up.sh --env-file FILE [--user ue1|ue2] [--with-cgnat] [--with-socks-egress] [--install-upf-route] [--print-services]" >&2
+  echo "usage: android-ue-up.sh --env-file FILE [--user ue1|ue2] [--with-cgnat] [--with-socks-egress] [--install-upf-route] [--screen-only] [--print-services]" >&2
   exit 2
 }
 
@@ -237,7 +238,7 @@ android_ue_require_ipv6() {
 
 android_ue_install_ip6_filter() {
   local n=$1
-  local pid rendered
+  local pid rendered screen_addr screen_iface
   if [ "${ANDROID_UE_IPV6_NO_FILTER_OK:-0}" = "1" ]; then
     echo "android-ue: ANDROID_UE_IPV6_NO_FILTER_OK=1, not installing the IPv6 filter"
     return 0
@@ -247,6 +248,13 @@ android_ue_install_ip6_filter() {
     exit 1
   fi
   pid=$(docker inspect -f '{{.State.Pid}}' "l5gd-ue${n}")
+  screen_addr=$(get "UE${n}_SCREEN_ADDR")
+  screen_iface=$(nsenter -t "$pid" -n ip -4 -o addr show | awk -v addr="$screen_addr" '$4 ~ "^" addr "/" { print $2; exit }')
+  if [ -z "$screen_iface" ] || [ "$screen_iface" = "lo" ]; then
+    echo "android-ue: l5gd-screen address ${screen_addr} is not on an interface yet" >&2
+    exit 1
+  fi
+  echo "android-ue: l5gd-screen address ${screen_addr} is on ${screen_iface} before the IPv6 filter"
   rendered=$(mktemp)
   android_ue_render_ip6_nft >"$rendered"
   nsenter -t "$pid" -n nft delete table ip6 android_ue >/dev/null 2>&1 || true
@@ -369,6 +377,7 @@ while [ "$#" -gt 0 ]; do
     --with-cgnat) with_cgnat=1 ;;
     --with-socks-egress) with_socks=1 ;;
     --install-upf-route) install_upf_route=1 ;;
+    --screen-only) screen_only=1 ;;
     --print-services) print_services=1 ;;
     *) usage ;;
   esac
@@ -391,12 +400,24 @@ state=$(android_ue_state_dir)
 get() { android_ue_env_get "$env_file" "$1"; }
 n=${user#ue}
 
+android_ue_screen_enabled() {
+  local image
+  image=$(get ANDROID_UE_SCREEN_IMAGE)
+  case "$image" in
+    ""|REPLACE_*) return 1 ;;
+  esac
+  return 0
+}
+
 if [ "$with_socks" -eq 1 ]; then
   with_cgnat=1
 fi
 
 if [ "$print_services" -eq 1 ]; then
   printf '%s\n' "ue${n}" "enb${n}" "ue${n}-route" "android${n}"
+  if android_ue_screen_enabled; then
+    echo "ue${n}-screen"
+  fi
   if [ "$with_cgnat" -eq 1 ]; then
     echo cgnat
   fi
@@ -540,6 +561,29 @@ if [ "$install_upf_route" -eq 1 ] && [ "$with_socks" -eq 1 ]; then
   fi
 fi
 
+if [ "$screen_only" -eq 1 ]; then
+  if ! android_ue_screen_enabled; then
+    echo "android-ue: --screen-only needs ANDROID_UE_SCREEN_IMAGE" >&2
+    exit 1
+  fi
+  if ! android_ue_screen_image_ok "$(get ANDROID_UE_SCREEN_IMAGE)"; then
+    echo "android-ue: ANDROID_UE_SCREEN_IMAGE must be pinned with @sha256" >&2
+    exit 1
+  fi
+  if ! ANDROID_UE_SCREEN_ALLOW_FROM="$(get ANDROID_UE_SCREEN_ALLOW_FROM)" bash "$script_dir/android-ue-route.sh" --check-allow; then
+    exit 1
+  fi
+  if ! docker inspect -f '{{.State.Running}}' "l5gd-ue${n}" 2>/dev/null | grep -qx true; then
+    echo "android-ue: --screen-only needs l5gd-ue${n} already running" >&2
+    exit 1
+  fi
+  android_ue_compose "$root" "$env_file" run --rm -T --no-deps --entrypoint /bin/bash \
+    "ue${n}-route" /opt/android-ue/android-ue-route.sh --install-screen
+  android_ue_compose "$root" "$env_file" up -d "ue${n}-screen"
+  echo "android-ue: screen sidecar is up. The route sidecar was not started again."
+  exit 0
+fi
+
 if docker inspect -f '{{.State.Running}}' "l5gd-android${n}" 2>/dev/null | grep -qx true; then
   echo "android-ue: android${n} is already running; refusing to run the route sidecar again" >&2
   exit 1
@@ -631,6 +675,20 @@ if [ "$install_upf_route" -eq 1 ]; then
     printf 'from %s/32 lookup 1080\n' "$ue_addr" >"$state/upf-rule.txt"
     echo "android-ue: UPF steers only ${ue_addr}/32 via table 1080. The main default route was not changed."
   fi
+fi
+
+if android_ue_screen_enabled; then
+  if ! android_ue_screen_image_ok "$(get ANDROID_UE_SCREEN_IMAGE)"; then
+    echo "android-ue: ANDROID_UE_SCREEN_IMAGE must be pinned with @sha256" >&2
+    exit 1
+  fi
+  if ! ANDROID_UE_SCREEN_ALLOW_FROM="$(get ANDROID_UE_SCREEN_ALLOW_FROM)" bash "$script_dir/android-ue-route.sh" --check-allow; then
+    exit 1
+  fi
+  android_ue_compose "$root" "$env_file" up -d "ue${n}-screen"
+  echo "android-ue: screen sidecar is up on l5gd-screen. No host port is published."
+else
+  echo "android-ue: screen sidecar is off until ANDROID_UE_SCREEN_IMAGE is a real image."
 fi
 
 echo "android-ue: ${user} is up. On the guest, adb connect $(get "UE${n}_UU"):5555. Core containers were not restarted."

@@ -1,6 +1,6 @@
 diff -ruN a/Dockerfile b/Dockerfile
---- a/Dockerfile	2026-11-11 09:53:58.937633148 +0000
-+++ b/Dockerfile	2026-11-11 09:57:36.777534749 +0000
+--- a/Dockerfile	2026-11-11 11:05:15.309452166 +0000
++++ b/Dockerfile	2026-11-12 05:16:16.945104239 +0000
 @@ -1,4 +1,4 @@
 -FROM eclipse-temurin:25
 +FROM eclipse-temurin:25@sha256:83f4a7fc27df94dcc7b8de04d14cbbba8da14406f921e966969c3b09000aa507
@@ -39,8 +39,8 @@ diff -ruN a/Dockerfile b/Dockerfile
 +ENTRYPOINT ["/opt/start-emulator.sh"]
 +HEALTHCHECK --start-period=900s --interval=30s --timeout=10s --retries=3 CMD adb shell getprop sys.boot_completed | tr -d '\r' | grep -qx 1
 diff -ruN a/scripts/emulator-monitoring.sh b/scripts/emulator-monitoring.sh
---- a/scripts/emulator-monitoring.sh	2026-11-11 09:53:58.937633148 +0000
-+++ b/scripts/emulator-monitoring.sh	2026-11-11 09:57:36.777534749 +0000
+--- a/scripts/emulator-monitoring.sh	2026-11-11 11:05:15.309452166 +0000
++++ b/scripts/emulator-monitoring.sh	2026-11-12 05:16:16.945104239 +0000
 @@ -35,7 +35,8 @@
    adb wait-for-device
  
@@ -52,8 +52,8 @@ diff -ruN a/scripts/emulator-monitoring.sh b/scripts/emulator-monitoring.sh
    COMPLETED=$(adb shell getprop sys.boot_completed | tr -d '\r')
    while [ "$COMPLETED" != "1" ]; do
 diff -ruN a/scripts/install-sdk.sh b/scripts/install-sdk.sh
---- a/scripts/install-sdk.sh	2026-11-11 09:53:58.937633148 +0000
-+++ b/scripts/install-sdk.sh	2026-11-11 09:57:36.777534749 +0000
+--- a/scripts/install-sdk.sh	2026-11-11 11:05:15.309452166 +0000
++++ b/scripts/install-sdk.sh	2026-11-12 05:16:16.945104239 +0000
 @@ -7,11 +7,12 @@
  # install the SDK, platform tools and the emulator.
  if [ "$INSTALL_ANDROID_SDK" == "1" ]; then
@@ -71,9 +71,10 @@ diff -ruN a/scripts/install-sdk.sh b/scripts/install-sdk.sh
    sdkmanager --install "$PACKAGE_PATH" "$ANDROID_PLATFORM_VERSION" platform-tools emulator
  fi
 diff -ruN a/scripts/start-emulator.sh b/scripts/start-emulator.sh
---- a/scripts/start-emulator.sh	2026-11-11 09:53:58.937633148 +0000
-+++ b/scripts/start-emulator.sh	2026-11-11 09:57:36.777534749 +0000
-@@ -13,7 +13,7 @@
+--- a/scripts/start-emulator.sh	2026-11-11 11:05:15.309452166 +0000
++++ b/scripts/start-emulator.sh	2026-11-12 05:16:16.961104048 +0000
+@@ -12,15 +12,34 @@
+ OPT_CORES=${CORES:-4}
  OPT_SKIP_AUTH=${SKIP_AUTH:-true}
  AUTH_FLAG=
 -# Start ADB server by listening on all interfaces.
@@ -82,8 +83,39 @@ diff -ruN a/scripts/start-emulator.sh b/scripts/start-emulator.sh
 -adb -a -P 5037 server nodaemon &
 +adb -P 5037 server nodaemon &
  
- # Detect ip and forward ADB ports from the container's network
-@@ -55,6 +55,8 @@
+-# Detect ip and forward ADB ports from the container's network
+-# interface to localhost.
+-LOCAL_IP=$(ip addr list eth0 | grep "inet " | cut -d' ' -f6 | cut -d/ -f1)
+-socat tcp-listen:"$EMULATOR_CONSOLE_PORT",bind="$LOCAL_IP",fork tcp:127.0.0.1:"$EMULATOR_CONSOLE_PORT" &
+-socat tcp-listen:"$ADB_PORT",bind="$LOCAL_IP",fork tcp:127.0.0.1:"$ADB_PORT" &
++# Open5G: lab mode binds socat to the uu address. eth0 is not stable with a second network.
++# Standalone mode has no uu address. The emulator adb port stays on 127.0.0.1 and socat is not started.
++if [ "${ANDROID_UE_ADB_MODE:-}" = "standalone" ]; then
++  if [ -n "${ANDROID_UE_UU:-}" ]; then
++    echo "start-emulator: standalone mode does not take ANDROID_UE_UU" >&2
++    exit 1
++  fi
++else
++  case "${ANDROID_UE_ADB_MODE:-}" in
++    "") ;;
++    *)
++      echo "start-emulator: unknown ANDROID_UE_ADB_MODE" >&2
++      exit 1
++      ;;
++  esac
++  case "${ANDROID_UE_UU:-}" in
++    ""|0.0.0.0|eth0|127.*|0.*)
++      echo "start-emulator: refusing socat bind ${ANDROID_UE_UU:-empty}" >&2
++      exit 1
++      ;;
++  esac
++  socat tcp-listen:"$EMULATOR_CONSOLE_PORT",bind="${ANDROID_UE_UU}",fork,reuseaddr tcp:127.0.0.1:"$EMULATOR_CONSOLE_PORT" &
++  socat tcp-listen:"$ADB_PORT",bind="${ANDROID_UE_UU}",fork,reuseaddr tcp:127.0.0.1:"$ADB_PORT" &
++fi
+ 
+ export USER=root
+ 
+@@ -55,6 +74,8 @@
    export GPU_MODE="swiftshader_indirect"
  fi
  

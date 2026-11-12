@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from psycopg.types.json import Json
@@ -351,3 +352,209 @@ def insert_catalog(conn, kind: str, name: str, max_ambr_dl_bps, enforced: bool, 
 
 def list_caps(conn):
     return conn.execute("SELECT * FROM catalog_entries ORDER BY name").fetchall()
+
+
+def list_emulator_endpoints(conn):
+    return conn.execute("SELECT * FROM emulator_endpoints ORDER BY ue_id").fetchall()
+
+
+def emulator_endpoint(conn, ue_id: str):
+    return conn.execute("SELECT * FROM emulator_endpoints WHERE ue_id = %s", (ue_id,)).fetchone()
+
+
+def upsert_emulator_screen_status(conn, ue_id: str, status: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO emulator_screen_status (ue_id, status, checked_at)
+        VALUES (%s, %s, now())
+        ON CONFLICT (ue_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            checked_at = now()
+        """,
+        (ue_id, status),
+    )
+
+
+def emulator_screen_is_up(conn, ue_id: str, stale_seconds: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM emulator_screen_status
+        WHERE ue_id = %s
+          AND status = 'up'
+          AND checked_at >= now() - (%s * interval '1 second')
+        """,
+        (ue_id, stale_seconds),
+    ).fetchone()
+    return row is not None
+
+
+def upsert_emulator_endpoint(conn, ue_id: str, assignment_id: str, host, port, apn, attach_ipv4):
+    return conn.execute(
+        """
+        INSERT INTO emulator_endpoints (
+            ue_id, assignment_id, internal_host, internal_port, apn, attach_ipv4
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (ue_id) DO UPDATE SET
+            assignment_id = EXCLUDED.assignment_id,
+            internal_host = EXCLUDED.internal_host,
+            internal_port = EXCLUDED.internal_port,
+            apn = EXCLUDED.apn,
+            attach_ipv4 = EXCLUDED.attach_ipv4
+        RETURNING *
+        """,
+        (ue_id, assignment_id, host, port, apn, attach_ipv4),
+    ).fetchone()
+
+
+def open_emulator_session(conn, ue_id: str):
+    return conn.execute(
+        """
+        SELECT * FROM emulator_sessions
+        WHERE ue_id = %s AND closed_at IS NULL
+        """,
+        (ue_id,),
+    ).fetchone()
+
+
+def emulator_session_by_token(conn, token_hash: str):
+    return conn.execute(
+        """
+        SELECT * FROM emulator_sessions
+        WHERE token_hash = %s AND closed_at IS NULL
+        """,
+        (token_hash,),
+    ).fetchone()
+
+
+def emulator_session_open(conn, session_id: str):
+    return conn.execute(
+        """
+        SELECT 1 FROM emulator_sessions
+        WHERE id = %s AND closed_at IS NULL
+        """,
+        (session_id,),
+    ).fetchone()
+
+
+def insert_emulator_session(conn, ue_id: str, actor_id: str, dashboard_session_id: str, exchange_hash: str, exchange_expires_at):
+    return conn.execute(
+        """
+        INSERT INTO emulator_sessions (
+            ue_id, actor_id, dashboard_session_id, exchange_hash, exchange_expires_at
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (ue_id, actor_id, dashboard_session_id, exchange_hash, exchange_expires_at),
+    ).fetchone()
+
+
+def emulator_session_by_exchange(conn, exchange_hash: str):
+    return conn.execute(
+        """
+        SELECT * FROM emulator_sessions
+        WHERE exchange_hash = %s
+          AND closed_at IS NULL
+          AND exchange_used_at IS NULL
+          AND exchange_expires_at > now()
+        """,
+        (exchange_hash,),
+    ).fetchone()
+
+
+def claim_emulator_exchange(conn, session_id: str, token_hash: str):
+    return conn.execute(
+        """
+        UPDATE emulator_sessions
+        SET exchange_used_at = now(), token_hash = %s, last_client_at = now()
+        WHERE id = %s AND closed_at IS NULL AND exchange_used_at IS NULL
+        RETURNING *
+        """,
+        (token_hash, session_id),
+    ).fetchone()
+
+
+def dashboard_session_alive(conn, session_id: str | None) -> bool:
+    if not session_id:
+        return False
+    row = conn.execute("SELECT expires_at FROM sessions WHERE id = %s", (session_id,)).fetchone()
+    if row is None:
+        return False
+    expires = row["expires_at"]
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return expires > datetime.now(timezone.utc)
+
+
+def close_emulator_sessions_for_actor(conn, actor_id: str, reason: str):
+    return conn.execute(
+        """
+        UPDATE emulator_sessions
+        SET closed_at = now(), close_reason = %s
+        WHERE actor_id = %s AND closed_at IS NULL
+        RETURNING *
+        """,
+        (reason, actor_id),
+    ).fetchall()
+
+
+def close_emulator_session(conn, session_id: str, reason: str):
+    return conn.execute(
+        """
+        UPDATE emulator_sessions
+        SET closed_at = now(), close_reason = %s
+        WHERE id = %s AND closed_at IS NULL
+        RETURNING *
+        """,
+        (reason, session_id),
+    ).fetchone()
+
+
+def touch_emulator_session(conn, session_id: str) -> None:
+    conn.execute(
+        """
+        UPDATE emulator_sessions
+        SET last_client_at = now()
+        WHERE id = %s AND closed_at IS NULL
+        """,
+        (session_id,),
+    )
+
+
+def expired_emulator_sessions(conn, idle_cutoff, absolute_cutoff):
+    return conn.execute(
+        """
+        SELECT * FROM emulator_sessions
+        WHERE closed_at IS NULL
+          AND (last_client_at <= %s OR opened_at <= %s)
+        """,
+        (idle_cutoff, absolute_cutoff),
+    ).fetchall()
+
+
+def profile_for_assignment(conn, assignment_id: str):
+    return conn.execute("SELECT * FROM profiles WHERE assignment_id = %s", (assignment_id,)).fetchone()
+
+
+def insert_sync(conn, profile_id: str, desired_version: int, state: str, detail: dict) -> str:
+    row = conn.execute(
+        """
+        INSERT INTO subscriber_sync (profile_id, desired_version, state, detail)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id
+        """,
+        (profile_id, desired_version, state, Json(detail)),
+    ).fetchone()
+    return str(row["id"])
+
+
+def finish_sync(conn, sync_id: str, state: str, generation: int | None) -> None:
+    conn.execute(
+        """
+        UPDATE subscriber_sync
+        SET state = %s, mongo_generation = %s, observed_at = now()
+        WHERE id = %s
+        """,
+        (state, generation, sync_id),
+    )

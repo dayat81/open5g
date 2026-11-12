@@ -4,8 +4,137 @@
 # and drop other new output so the emulator cannot bypass the EPC.
 set -euo pipefail
 
+screen_allow_ok() {
+  case "$1" in
+    ""|REPLACE_*|0.0.0.0|127.*|0.*) return 1 ;;
+  esac
+  printf '%s\n' "$1" | awk -F. 'NF != 4 { exit 1 } { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i + 0 > 255) exit 1 }'
+}
+
+screen_rules_active() {
+  case "${ANDROID_UE_SCREEN_IMAGE:-}" in
+    ""|REPLACE_*) return 1 ;;
+  esac
+  return 0
+}
+
+iface_for_addr() {
+  local want=$1
+  local forced=$2
+  if [ -n "$forced" ]; then
+    printf '%s\n' "$forced"
+    return 0
+  fi
+  ip -4 -o addr show | awk -v addr="$want" '$4 ~ "^" addr "/" { print $2; exit }'
+}
+
+screen_iface_for() {
+  iface_for_addr "$1" "${ANDROID_UE_SCREEN_IFACE:-}"
+}
+
+android_ue_render_screen_chain() {
+  local iface=$1
+  local port=$2
+  local allow=$3
+  # Appended after ANDROID_UE_IN4. Do not insert at INPUT 1 and do not set the policy.
+  printf '%s\n' "-A INPUT -j ANDROID_UE_SCREEN"
+  printf '%s\n' "-A ANDROID_UE_SCREEN -i ${iface} -p tcp --dport ${port} -s ${allow} -j ACCEPT"
+  printf '%s\n' "-A ANDROID_UE_SCREEN -p tcp --dport ${port} -j DROP"
+}
+
+android_ue_route_prepare_screen() {
+  local iface port allow
+  if ! screen_rules_active; then
+    echo "android-ue-route: screen rules stay off until the image is pinned" >&2
+    return 1
+  fi
+  port=${ANDROID_UE_SCREEN_PORT:-8000}
+  case "$port" in
+    ''|*[!0-9]*)
+      echo "android-ue-route: screen port is not numeric" >&2
+      return 1
+      ;;
+  esac
+  allow=${ANDROID_UE_SCREEN_ALLOW_FROM:-}
+  if ! screen_allow_ok "$allow"; then
+    echo "android-ue-route: screen allow source must be one non-loopback IPv4 address" >&2
+    return 1
+  fi
+  iface=$(screen_iface_for "${ANDROID_UE_SCREEN_ADDR:-}")
+  if [ -z "$iface" ] || [ "$iface" = "lo" ]; then
+    echo "android-ue-route: screen address has no non-loopback interface" >&2
+    return 1
+  fi
+  ANDROID_UE_SCREEN_IFACE_FOUND=$iface
+  ANDROID_UE_SCREEN_PORT_FOUND=$port
+  ANDROID_UE_SCREEN_ALLOW_FOUND=$allow
+}
+
+android_ue_route_install_screen() {
+  local bin=iptables
+  local chain=ANDROID_UE_SCREEN
+  android_ue_route_prepare_screen
+  if ! "$bin" -N "$chain" 2>/dev/null; then
+    "$bin" -F "$chain"
+  fi
+  if ! "$bin" -C INPUT -j "$chain" 2>/dev/null; then
+    "$bin" -A INPUT -j "$chain"
+  fi
+  "$bin" -A "$chain" -i "$ANDROID_UE_SCREEN_IFACE_FOUND" -p tcp --dport "$ANDROID_UE_SCREEN_PORT_FOUND" -s "$ANDROID_UE_SCREEN_ALLOW_FOUND" -j ACCEPT
+  "$bin" -A "$chain" -p tcp --dport "$ANDROID_UE_SCREEN_PORT_FOUND" -j DROP
+  echo "android-ue-route: $(android_ue_render_screen_chain "$ANDROID_UE_SCREEN_IFACE_FOUND" "$ANDROID_UE_SCREEN_PORT_FOUND" "$ANDROID_UE_SCREEN_ALLOW_FOUND" | tr '\n' ' ')"
+}
+
+android_ue_render_adb_allow() {
+  local iface=$1
+  printf '%s\n' "-A ANDROID_UE_ADB -i ${iface} -p tcp -m multiport --dports 5554,5555 -j ACCEPT"
+  printf '%s\n' "-A ANDROID_UE_ADB -p tcp -m multiport --dports 5554,5555 -j DROP"
+}
+
+if [ "${1:-}" = "--check-allow" ]; then
+  if screen_allow_ok "${ANDROID_UE_SCREEN_ALLOW_FROM:-}"; then
+    exit 0
+  fi
+  echo "android-ue-route: screen allow source must be one non-loopback IPv4 address" >&2
+  exit 1
+fi
+
+if [ "${1:-}" = "--print-screen-rule" ]; then
+  if ! screen_rules_active; then
+    printf '%s\n' skipped
+    exit 0
+  fi
+  iface=$(screen_iface_for "${ANDROID_UE_SCREEN_ADDR:-}")
+  if [ -z "$iface" ] || [ "$iface" = "lo" ]; then
+    echo "android-ue-route: screen interface is missing" >&2
+    exit 1
+  fi
+  if ! android_ue_route_prepare_screen; then
+    exit 1
+  fi
+  android_ue_render_screen_chain "$ANDROID_UE_SCREEN_IFACE_FOUND" "$ANDROID_UE_SCREEN_PORT_FOUND" "$ANDROID_UE_SCREEN_ALLOW_FOUND"
+  exit 0
+fi
+
+if [ "${1:-}" = "--install-screen" ]; then
+  android_ue_route_install_screen
+  exit 0
+fi
+
+if [ "${1:-}" = "--print-adb-allow" ]; then
+  iface=${ANDROID_UE_ADB_IFACE:-}
+  if [ -z "$iface" ] || [ "$iface" = "lo" ]; then
+    echo "android-ue-route: uu interface is missing" >&2
+    exit 1
+  fi
+  android_ue_render_adb_allow "$iface"
+  exit 0
+fi
+
 # IPv4 INPUT. lo and established flows stay open. New packets from tun_srsue
 # are dropped. uu (5554/5555) is not named here, so those listeners stay reachable.
+# The screen rule, when the image is set, is appended after ANDROID_UE_IN4.
+# 5554/5555 are not in that rule. They have their own chain.
 android_ue_render_ip4_input() {
   cat <<'EOF'
 -A ANDROID_UE_IN4 -i lo -j ACCEPT
@@ -58,6 +187,8 @@ if ! ip -4 -o addr show dev "$tun" 2>/dev/null | grep -q ' inet '; then
   exit 1
 fi
 
+# The vendored image binds socat to ANDROID_UE_UU. Do not rename interfaces here.
+
 route_line=$(ip -4 route get "$enb")
 dev=$(printf '%s\n' "$route_line" | awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
 if [ -z "$dev" ] || [ "$dev" = "$tun" ]; then
@@ -103,6 +234,28 @@ android_ue_route_install_input4() {
   "$bin" -A "$chain" -i "$tun" -j DROP
 }
 android_ue_route_install_input4
+android_ue_route_install_adb() {
+  local bin=iptables
+  local chain=ANDROID_UE_ADB
+  local iface
+  iface=$(iface_for_addr "${ANDROID_UE_UU:?ANDROID_UE_UU}" "")
+  if [ -z "$iface" ] || [ "$iface" = "lo" ]; then
+    echo "android-ue-route: uu address has no non-loopback interface" >&2
+    exit 1
+  fi
+  if ! "$bin" -N "$chain" 2>/dev/null; then
+    "$bin" -F "$chain"
+  fi
+  # Append. ANDROID_UE_IN4 was inserted at INPUT 1, so this jump stays after it.
+  # Do not set the INPUT policy.
+  if ! "$bin" -C INPUT -j "$chain" 2>/dev/null; then
+    "$bin" -A INPUT -j "$chain"
+  fi
+  "$bin" -A "$chain" -i "$iface" -p tcp -m multiport --dports 5554,5555 -j ACCEPT
+  "$bin" -A "$chain" -p tcp -m multiport --dports 5554,5555 -j DROP
+  echo "android-ue-route: $(android_ue_render_adb_allow "$iface" | tr '\n' ' ')"
+}
+android_ue_route_install_adb
 # disable_ipv6=0 on all, default, lo, and dummy0. Docker may leave eth0 at 1.
 # accept_ra, autoconf, and forwarding are 0 on each non-lo interface,
 # because all/default do not apply to interfaces that already exist.
@@ -258,6 +411,10 @@ case "$enb_probe" in
     exit 1
     ;;
 esac
+
+if screen_rules_active; then
+  android_ue_route_install_screen
+fi
 
 ue_addr=$(ip -4 -o addr show dev "$tun" | awk '{ print $4; exit }')
 echo "android-ue-route: ${tun} ${ue_addr}; default via ${tun}; eNB ${enb} via ${dev}"

@@ -3,16 +3,19 @@ import type { ReactNode } from "react";
 const LINKS = [
   { href: "/", label: "Eksperimen", hint: "Overview / intended vs observed" },
   { href: "/profil", label: "Profil PCRF", hint: "Editor intent + apply" },
+  { href: "/emulator", label: "Emulator", hint: "Layar UE, bukan kontrol core" },
   { href: "/audit", label: "Audit", hint: "Status apply, bukan bukti sesi" },
 ];
 
 export function Shell({
   active,
   mode,
+  account,
   children,
 }: {
   active: string;
   mode: "demo" | "api";
+  account?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -24,7 +27,7 @@ export function Shell({
         <div className="brand">Dashboard lab 5G · Open5GS EPC CUPS</div>
         <div className="meta">
           <span className="role-badge">Mode: {mode === "demo" ? "Demo" : "API"}</span>
-          <span className="pill warn">{mode === "demo" ? "Bukan sesi" : "Sesi mengikuti cookie API"}</span>
+          {account ?? <span className="pill warn">{mode === "demo" ? "Bukan sesi" : "Sesi mengikuti cookie API"}</span>}
         </div>
       </header>
       <nav className="nav" aria-label="Navigasi utama">

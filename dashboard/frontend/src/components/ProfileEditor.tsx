@@ -10,6 +10,7 @@ import type { ApplyResult, DashboardClient, Draft } from "@/lib/types";
 export function ProfileEditor({ client = demoClient }: { client?: DashboardClient }) {
   const [draft, setDraft] = useState<Draft>(DEMO_DRAFT);
   const [error, setError] = useState<string | null>(null);
+  const [provisionNote, setProvisionNote] = useState<string | null>(null);
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -24,6 +25,12 @@ export function ProfileEditor({ client = demoClient }: { client?: DashboardClien
     if (!response.error) {
       setDraft(response.draft);
     }
+  }
+
+  async function onProvision() {
+    const response = await client.provision();
+    setProvisionNote(response.written ? "Dokumen subscriber ditulis untuk attach berikutnya. Bukan sesi aktif." : null);
+    setError(response.error);
   }
 
   async function onApply() {
@@ -139,7 +146,13 @@ export function ProfileEditor({ client = demoClient }: { client?: DashboardClien
               Apply…
             </button>
             <p className="apply-note">
-              Simpan draft tidak membuat status active. Apply pada scaffold ini menolak operasi yang belum terverifikasi.
+              Simpan draft tidak menulis Mongo dan tidak membuat status active. Apply tetap menolak Gx RAR.
+            </p>
+            <button className="btn secondary" type="button" onClick={() => void onProvision()}>
+              Tulis subscriber
+            </button>
+            <p className="apply-note" data-testid="provision-result">
+              {provisionNote ?? "Tombol tulis subscriber memanggil POST /provision. Mode demo tidak menulis Mongo."}
             </p>
           </div>
         </form>

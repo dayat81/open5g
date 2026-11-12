@@ -30,4 +30,29 @@ describe("ProfileEditor", () => {
     await user.click(screen.getByRole("button", { name: "Ajukan apply" }));
     expect(screen.getByTestId("apply-result").textContent).toContain("modify_qci_existing_bearer");
   });
+
+  it("does not write Mongo in demo mode and shows the refusal", async () => {
+    const user = userEvent.setup();
+    render(<ProfileEditor client={demoClient} />);
+    await user.click(screen.getByRole("button", { name: "Tulis subscriber" }));
+    expect(screen.getByRole("alert").textContent).toMatch(/tidak menulis ke MongoDB/i);
+    expect(screen.getByTestId("provision-result").textContent).not.toMatch(/ditulis untuk attach/);
+  });
+
+  it("shows a provision error returned by the API client", async () => {
+    const user = userEvent.setup();
+    render(
+      <ProfileEditor
+        client={{
+          ...demoClient,
+          mode: "api",
+          async provision() {
+            return { error: "MongoDB timed out", written: false };
+          },
+        }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Tulis subscriber" }));
+    expect(screen.getByRole("alert").textContent).toContain("MongoDB timed out");
+  });
 });

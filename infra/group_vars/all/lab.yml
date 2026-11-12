@@ -82,3 +82,18 @@ socks_proxy_port: 1080
 oai_profile_enabled: false
 iac_dry_run: false
 iac_render_dir: /tmp/iac-lab5g-dev-rendered
+# Optional dashboard. False leaves the lab stack unchanged.
+dashboard_enabled: false
+dashboard_enable_gx_rar: false
+dashboard_mongo_database: open5gs
+dashboard_mongo_collection: subscribers
+dashboard_mongo_timeout_ms: 2000
+dashboard_metrics_timeout_s: 2
+dashboard_metrics_endpoints: ''
+dashboard_health_endpoints: ''
+dashboard_apn_allowlist: ''
+dashboard_cors_origins: ''
+dashboard_bind_host: 127.0.0.1
+dashboard_bind_port: 8000
+# Host port for dashboard-web. Port 3000 is Grafana in this lab.
+dashboard_web_port: 3300
