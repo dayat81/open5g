@@ -64,7 +64,50 @@ magen_radio_gate() {
   return 1
 }
 
-radio_dir=${MAGEN_RADIO_DIR:-"$(magen_root)/lab/scripts/fixtures/magen/radio-ok"}
+magen_radio_collect_live() {
+  local dest=$1
+  local name=${MAGEN_RADIO_CONTAINER:-o5g-android1}
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "magen: radio gate FAIL. docker is not available, so emulator evidence could not be read." >&2
+    echo "magen: the radio-ok fixture is not used unless --fixture is set." >&2
+    return 1
+  fi
+  if ! docker exec "$name" adb shell getprop sys.boot_completed >"$dest/boot" 2>>"$dest/err"; then
+    echo "magen: radio gate FAIL. adb getprop sys.boot_completed could not be read from ${name}." >&2
+    echo "magen: the radio-ok fixture is not used unless --fixture is set." >&2
+    return 1
+  fi
+  if ! docker exec "$name" adb shell getprop gsm.sim.state >"$dest/sim" 2>>"$dest/err"; then
+    echo "magen: radio gate FAIL. adb getprop gsm.sim.state could not be read from ${name}." >&2
+    echo "magen: the radio-ok fixture is not used unless --fixture is set." >&2
+    return 1
+  fi
+  if ! docker exec "$name" adb shell dumpsys telephony.registry >"$dest/registry" 2>>"$dest/err"; then
+    echo "magen: radio gate FAIL. dumpsys telephony.registry could not be read from ${name}." >&2
+    echo "magen: the radio-ok fixture is not used unless --fixture is set." >&2
+    return 1
+  fi
+  if ! docker exec "$name" adb shell logcat -d >"$dest/logcat" 2>>"$dest/err"; then
+    echo "magen: radio gate FAIL. ModemSimulator logcat could not be read from ${name}." >&2
+    echo "magen: the radio-ok fixture is not used unless --fixture is set." >&2
+    return 1
+  fi
+  sed -i 's/\r$//' "$dest/boot" "$dest/sim"
+  if [ ! -s "$dest/boot" ] || [ ! -s "$dest/sim" ] || [ ! -s "$dest/registry" ]; then
+    echo "magen: radio gate FAIL. emulator evidence is empty." >&2
+    echo "magen: the radio-ok fixture is not used unless --fixture is set." >&2
+    return 1
+  fi
+}
+
+if [ "$fixture" -eq 1 ]; then
+  radio_dir=${MAGEN_RADIO_DIR:-"$(magen_root)/lab/scripts/fixtures/magen/radio-ok"}
+else
+  radio_dir=$(mktemp -d)
+  if ! magen_radio_collect_live "$radio_dir"; then
+    exit 1
+  fi
+fi
 if ! magen_radio_gate "$(cat "$radio_dir/boot")" "$(cat "$radio_dir/sim")" "$radio_dir/logcat"; then
   exit 1
 fi

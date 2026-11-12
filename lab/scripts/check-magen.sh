@@ -241,6 +241,13 @@ test "$(magen_compose_changed "$work/compose-same.log")" = 0
 printf 'Container o5g-mongo Started\n' > "$work/compose-new.log"
 test "$(magen_compose_changed "$work/compose-new.log")" = 1
 
+echo "live radio has no fixture fallback"
+expect_fail liveradio lab/scripts/magen-smoke.sh --env-file "$env_file"
+grep -q 'could not be read' /tmp/magen-liveradio.err
+grep -q 'not used unless --fixture' /tmp/magen-liveradio.err
+expect_fail liveradioenv env MAGEN_RADIO_DIR="$root/lab/scripts/fixtures/magen/radio-ok" lab/scripts/magen-smoke.sh --env-file "$env_file"
+grep -q 'could not be read' /tmp/magen-liveradioenv.err
+
 echo "radio fail stays a report"
 bad=$(mktemp -d)
 printf '1\n' > "$bad/boot"
