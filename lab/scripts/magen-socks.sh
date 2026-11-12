@@ -65,12 +65,46 @@ if [ "${BASH_SOURCE[0]}" != "$0" ]; then
   return 0
 fi
 
+magen_sgi_render() {
+  local src=$1
+  echo "magen: needs Netdrive approval: egress via host" >&2
+  python3 - "$src" <<'PY'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines(True)
+out = []
+in_upf = False
+in_networks = False
+inserted = False
+for line in lines:
+    if line.startswith("  upf:"):
+        in_upf = True
+        in_networks = False
+    elif in_upf and line.startswith("  ") and not line.startswith("   "):
+        if in_networks and not inserted:
+            out.append("      egress:\n")
+            out.append("        ipv4_address: ${O5G_UPF_EGRESS:?O5G_UPF_EGRESS}\n")
+            inserted = True
+        in_upf = False
+        in_networks = False
+    if in_upf and line.startswith("    networks:"):
+        in_networks = True
+    out.append(line)
+if not inserted:
+    sys.stderr.write("magen: could not attach egress to the UPF\n")
+    sys.exit(1)
+sys.stdout.write("".join(out))
+PY
+}
+
 case "${1:-}" in
   --render)
     magen_socks_render "${2:?compose file}"
     ;;
+  --sgi-render)
+    magen_sgi_render "${2:?compose file}"
+    ;;
   *)
-    echo "usage: magen-socks.sh --render COMPOSE" >&2
+    echo "usage: magen-socks.sh --render COMPOSE | --sgi-render COMPOSE" >&2
     exit 2
     ;;
 esac

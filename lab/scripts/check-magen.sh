@@ -11,6 +11,8 @@ pass="$fix/pass"
 echo "shellcheck"
 shellcheck -x -P SCRIPTDIR \
   lab/scripts/gen-magen.sh \
+  lab/scripts/magen-android-wait.sh \
+  lab/scripts/magen-build-images.sh \
   lab/scripts/magen-lib.sh \
   lab/scripts/magen-preflight.sh \
   lab/scripts/magen-screen-chain.sh \
@@ -40,10 +42,17 @@ if "name: open5g" not in text:
     raise SystemExit("project name is not open5g")
 if "ANDROID_UE_UU" in text:
     raise SystemExit("compose still requires ANDROID_UE_UU")
-if "network_mode:" in text:
-    raise SystemExit("compose uses network_mode")
+if "ANDROID_UE_ADB_MODE: standalone" not in text:
+    raise SystemExit("o5g android is missing ANDROID_UE_ADB_MODE=standalone")
+if "ANDROID_UE_IPV6_MODE" in Path("lab/scripts/gen-android-ue.sh").read_text(encoding="utf-8").split("return 0", 1)[0]:
+    raise SystemExit("IPV6_MODE leaked into the lab emit branch")
+for raw in text.splitlines():
+    if "network_mode:" in raw and "container:o5g-android" not in raw:
+        raise SystemExit("unexpected network_mode: %s" % raw.strip())
 if "privileged:" in text:
     raise SystemExit("compose uses privileged")
+if 'net.ipv6.conf.eth1.disable_ipv6: "1"' not in text:
+    raise SystemExit("android is missing eth1 disable_ipv6")
 if "b0-agen-emu" in text.split("services:", 1)[-1].split("networks:", 1)[0]:
     raise SystemExit("compose names the manual emulator")
 if 'net.ipv6.conf.all.disable_ipv6: "1"' in text:
@@ -92,6 +101,15 @@ if "ogstun" not in text or "gtp5g" in text.split("does not load", 1)[-1]:
     pass
 if "ip tuntap add name ogstun" not in text:
     raise SystemExit("UPF does not create ogstun")
+in_upf = False
+for raw in text.splitlines():
+    if raw.startswith("  upf:"):
+        in_upf = True
+        continue
+    if in_upf and raw.startswith("  ") and not raw.startswith("   "):
+        break
+    if in_upf and raw.strip() == "egress:":
+        raise SystemExit("default UPF joins egress")
 print("compose shape ok")
 PY
 
@@ -191,15 +209,52 @@ if printf '%s\n' "$socks" | grep -q 'ip rule'; then
 fi
 
 echo "down"
+lab/scripts/magen-down.sh --env-file "$env_file" --dry-run | grep -q 'changed=0'
 printf 'o5g-mongo\n' > "$work/ok-names"
 lab/scripts/magen-down.sh --names-file "$work/ok-names"
 printf 'b0-agen-emu\n' > "$work/bad-names"
 expect_fail down lab/scripts/magen-down.sh --names-file "$work/bad-names"
 grep -q 'b0-agen-emu' "/tmp/magen-down.err"
 
+echo "sgi flag and image sha"
+sgi=$(lab/scripts/magen-socks.sh --sgi-render lab/compose/compose.magen.yml 2>/tmp/magen-sgi.err)
+grep -q 'needs Netdrive approval: egress via host' /tmp/magen-sgi.err
+printf '%s\n' "$sgi" | awk '
+  $0 == "  upf:" { s = 1 }
+  s && $0 ~ /^  [^ ]/ && $0 != "  upf:" { s = 0 }
+  s && $1 == "egress:" { found = 1 }
+  END { exit(found ? 0 : 1) }
+'
+lab/scripts/magen-build-images.sh --check-sha 7fe7e85
+expect_fail sha lab/scripts/magen-build-images.sh --check-sha 3a6498c3b89ce990222d1b284e20caaee2372339
+grep -q 'refusing SHA' /tmp/magen-sha.err
+: > "$work/empty-images.env"
+expect_fail images lab/scripts/magen-up.sh --env-file "$env_file" --images-env "$work/empty-images.env" --with-dashboard --dry-run
+# shellcheck source=magen-lib.sh
+. lab/scripts/magen-lib.sh
+if magen_pid_matches o5g-android1 10 10 && magen_pid_matches b0-agen-emu 10 10; then
+  echo "pid guard accepted b0-agen-emu" >&2
+  exit 1
+fi
+printf 'Container o5g-mongo Running\n' > "$work/compose-same.log"
+test "$(magen_compose_changed "$work/compose-same.log")" = 0
+printf 'Container o5g-mongo Started\n' > "$work/compose-new.log"
+test "$(magen_compose_changed "$work/compose-new.log")" = 1
+
+echo "radio fail stays a report"
+bad=$(mktemp -d)
+printf '1\n' > "$bad/boot"
+printf 'ABSENT\n' > "$bad/sim"
+printf 'E ModemSimulator: failed\n' > "$bad/logcat"
+expect_fail radio env MAGEN_RADIO_DIR="$bad" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture
+grep -q 'no automatic fallback' /tmp/magen-radio.err
+grep -q 'dummy0 ULA' /tmp/magen-radio.err
+grep -q 'ModemSimulator' /tmp/magen-radio.err
+
 echo "backup and restore"
 src=$(mktemp -d)
-printf 'archive-bytes\n' > "$src/mongo.archive"
+printf 'archive-bytes\n' | gzip -c > "$src/mongo.archive.gz"
+printf 'PGDMP\n' > "$src/postgres.dump"
 export O5G_STATE_DIR="$work/state"
 out=$(lab/scripts/magen-backup.sh --from-dir "$src")
 printf '%s\n' "$out" | grep -q 'changed=1'
@@ -207,7 +262,7 @@ if printf '%s\n' "$out" | grep -q 'archive-bytes'; then
   echo "backup printed dump contents" >&2
   exit 1
 fi
-found=$(find "$work/state/backup" -name mongo.archive.sha256 | head -n 1)
+found=$(find "$work/state/backup" -name 'mongo.archive.gz.sha256' | head -n 1)
 [ -n "$found" ]
 mode=$(stat -c %a "$(dirname "$found")")
 [ "$mode" = "700" ]
@@ -233,6 +288,7 @@ import json
 body = json.load(open("/tmp/o5g-magen-fixture/smoke.json", encoding="utf-8"))
 assert body["listener_bind"] == "127.0.0.1:3301"
 assert body["ue_chains"] == "N/A"
+assert body["sgi_curl"] == "SKIPPED"
 assert body["core_up"] == "skipped"
 assert "8000" in body["screen_port_8000"]
 PY

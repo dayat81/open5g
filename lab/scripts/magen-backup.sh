@@ -77,10 +77,11 @@ if [ -n "$from_dir" ]; then
     exit 1
   fi
 else
-  ssh -i "$key" -o BatchMode=yes "$guest" 'mongodump --archive && pg_dump --format=custom open5g' > "${dest}/guest.archive"
-  chmod 0600 "${dest}/guest.archive"
-  (cd -- "$dest" && sha256sum guest.archive > guest.archive.sha256)
-  chmod 0600 "${dest}/guest.archive.sha256"
+  ssh -i "$key" -o BatchMode=yes "$guest" 'mongodump --archive --gzip' > "${dest}/mongo.archive.gz"
+  ssh -i "$key" -o BatchMode=yes "$guest" 'pg_dump -Fc --no-owner --no-acl open5g' > "${dest}/postgres.dump"
+  chmod 0600 "${dest}/mongo.archive.gz" "${dest}/postgres.dump"
+  (cd -- "$dest" && sha256sum mongo.archive.gz postgres.dump > SHA256SUMS)
+  chmod 0600 "${dest}/SHA256SUMS"
 fi
 
 echo "magen: backup stored ${dest}"

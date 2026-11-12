@@ -12,15 +12,31 @@ Copy `infra/inventory/magen.example` to the gitignored `infra/inventory/magen.ym
 
 ## What the profile starts
 
-`gen-android-ue.sh --target magen` writes `lab/compose/compose.magen.yml`. The project name is `open5g`. Container, network, and volume names start with `o5g-`. `androidN` is the same `emit_android` body as the lab, with the magen arguments: no published adb port, no `NET_ADMIN`, and `ANDROID_UE_IPV6_MODE=off`.
+`gen-android-ue.sh --target magen` writes `lab/compose/compose.magen.yml`. The project name is `open5g`. Container, network, and volume names start with `o5g-`. `androidN` is the same `emit_android` body as the lab, with the magen arguments only: `ANDROID_UE_ADB_MODE=standalone`, `ANDROID_UE_IPV6_MODE=off`, no published adb port, and no `NET_ADMIN`. The lab branch does not set those two variables.
 
 `lo` keeps `::1`. `default` and each non-lo interface get `disable_ipv6=1`. `all` is not set to 1. When the host itself has IPv6 off, preflight skips the `unshare -n ip6tables` probe instead of failing it. The emulator netns still has to show `::1` on `lo` before a boot is accepted.
 
-The UPF creates a userspace TUN named `ogstun`. It does not use `gtp` or `gtp5g`. Preflight requires `/dev/net/tun`.
+The UPF creates a userspace TUN named `ogstun`. It does not use `gtp` or `gtp5g`. Preflight requires `/dev/net/tun`. By default the UPF is not attached to `o5g-egress` or any other non-internal network, so SGi curl is `SKIPPED`. `--with-sgi-egress` (Ansible `magen_sgi_egress`, default false) is the only way to attach it, and that command prints `needs Netdrive approval: egress via host`.
+
+Before QEMU, `magen-up` enters the emulator netns from the host with `nsenter -t <pid> -n`. The pid has to belong to `o5g-androidN`. It sets `disable_ipv6=1` on every non-lo interface, including the `o5g-screen` interface, and never writes `all`. It then installs `ANDROID_UE_SCREEN`, which accepts TCP 8000 only from the listener address and drops every other source, including `o5g-uemuN`. The same IPv6 lock and an `ip6tables` DROP policy are applied in `ueN` when the host IPv6 stack is on. The emulator has no `NET_ADMIN`.
+
+The radio gate reads `sys.boot_completed`, `gsm.sim.state`, and logcat. A failure is reported with the evidence and stops. There is no automatic fallback. The preferred later option, only if Architect picks it, is a `dummy0` ULA anchor installed by the host with `nsenter -n` and a pid guard before QEMU, still without `NET_ADMIN` and never with `all=1`. `-feature -ModemSimulator` is only the last resort.
 
 SCTP is not loaded for you. Preflight prints `sudo modprobe sctp` and stops until someone approves that command. The same pattern is used when host `ip_forward` is not 1: the script prints `sudo sysctl net.ipv4.ip_forward=1` and does not change the sysctl.
 
 Postgres is not published. Host port 5432 stays with the Postgres that is already on the machine. The only published ports are `127.0.0.1:3300` (dashboard) and `127.0.0.1:3301` (screen listener). Preflight reads `ss -ltn` and refuses the run when 3300 or 3301 is already taken. It does not bind 5555 or 5900. `b0-agen-emu` is left alone, including its listener on `127.0.0.1:5900`. `down` deletes only names that start with `o5g-` inside project `open5g`.
+
+## Images from PR #13
+
+Lab Ops builds the emulator, the screen sidecar, and the dashboard/listener image from commit `7fe7e85cdae36f0615b115627e36c73412a4644c`. CI does not build or push them. `magen-build-images.sh` refuses every other SHA, including the #12 local tag `open5g-android-emulator:local`. It can `docker save` an archive for a host that has no internet, and it writes `lab/compose/magen.images.env` with `sha256:` image ids. That file is gitignored.
+
+```bash
+bash lab/scripts/magen-build-images.sh --save "$HOME/o5g-state"
+# on MAGEN_HOST, after copying the archive:
+docker load < o5g-images-7fe7e85.tar.gz
+```
+
+The dashboard profile stays closed while any of those digests is empty, and also while `--with-sgi-egress` is set.
 
 ## Screen
 

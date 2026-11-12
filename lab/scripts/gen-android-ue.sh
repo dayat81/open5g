@@ -227,7 +227,8 @@ EOF
     echo "android-ue: emit_android target is not the lab default or magen" >&2
     exit 2
   fi
-  # lo stays IPv6-on. default and eth0 are off. all is not set.
+  # lo stays IPv6-on. Every non-lo iface is off. all is not set.
+  # The lab branch above does not set ANDROID_UE_IPV6_MODE or ANDROID_UE_ADB_MODE.
   cat <<EOF
   android${n}:
     image: \${O5G_ANDROID_IMAGE:?O5G_ANDROID_IMAGE}
@@ -240,9 +241,11 @@ EOF
       - "/dev/kvm:/dev/kvm"
     group_add:
       - "\${ANDROID_UE_KVM_GID:?ANDROID_UE_KVM_GID}"
+    entrypoint: ["/bin/bash", "/opt/android-ue/magen-android-wait.sh"]
     sysctls:
       net.ipv6.conf.default.disable_ipv6: "1"
       net.ipv6.conf.eth0.disable_ipv6: "1"
+      net.ipv6.conf.eth1.disable_ipv6: "1"
     environment:
       MEMORY: \${ANDROID_UE_MEMORY:?ANDROID_UE_MEMORY}
       CORES: \${ANDROID_UE_CORES:?ANDROID_UE_CORES}
@@ -251,10 +254,12 @@ EOF
       EXTRA_FLAGS: "\${ANDROID_UE_EXTRA_FLAGS:?ANDROID_UE_EXTRA_FLAGS}"
       BOOT_TIMEOUT: \${ANDROID_UE_BOOT_TIMEOUT:-600}
       ANDROID_UE_IPV6_MODE: "off"
+      ANDROID_UE_ADB_MODE: standalone
       ANDROID_UE_SCREEN_BIND: \${O5G_SCREEN_ANDROID${n}:?O5G_SCREEN_ANDROID${n}}
       ANDROID_UE_SCREEN_PORT: "8000"
     volumes:
       - ../images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro
+      - ../scripts/magen-android-wait.sh:/opt/android-ue/magen-android-wait.sh:ro
     networks:
       uemu${n}:
         ipv4_address: \${ANDROID_UE_UEMU${n}_ANDROID:?ANDROID_UE_UEMU${n}_ANDROID}

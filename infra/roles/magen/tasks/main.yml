@@ -25,18 +25,6 @@
   when: magen_fixture_root | length == 0
   tags: [preflight]
 
-- name: Record a read-only guest backup plan
-  ansible.builtin.command:
-    argv:
-      - bash
-      - "{{ magen_repo }}/lab/scripts/magen-backup.sh"
-      - --dry-run
-  changed_when: false
-  environment:
-    MAGEN_GUEST_HOST: "{{ magen_guest_host }}"
-    MAGEN_GUEST_KEY: "{{ magen_guest_key }}"
-  tags: [backup]
-
 - name: Check the generated magen compose
   ansible.builtin.command:
     argv:
@@ -51,11 +39,14 @@
 
 - name: Bring the profile up
   ansible.builtin.command:
-    argv:
-      - bash
-      - "{{ magen_repo }}/lab/scripts/magen-up.sh"
-      - --env-file
-      - "{{ magen_env_file }}"
+    argv: "{{ magen_up_argv }}"
+  vars:
+    magen_up_argv: >-
+      {{
+        ['bash', magen_repo + '/lab/scripts/magen-up.sh', '--env-file', magen_env_file]
+        + (['--with-sgi-egress'] if magen_sgi_egress | bool else [])
+        + (['--with-dashboard'] if magen_with_dashboard | bool else [])
+      }}
   environment:
     MAGEN_CHECK_MODE: "{{ '1' if ansible_check_mode else '0' }}"
   register: magen_up_result
@@ -63,48 +54,67 @@
   check_mode: false
   tags: [up]
 
+- name: Back up the guest read-only
+  ansible.builtin.command:
+    argv: "{{ magen_backup_argv }}"
+  vars:
+    magen_backup_argv: >-
+      {{
+        ['bash', magen_repo + '/lab/scripts/magen-backup.sh']
+        + (['--dry-run'] if ansible_check_mode else [])
+      }}
+  environment:
+    MAGEN_GUEST_HOST: "{{ magen_guest_host }}"
+    MAGEN_GUEST_KEY: "{{ magen_guest_key }}"
+  changed_when: false
+  check_mode: false
+  tags: [never, backup]
+
 - name: Restore dumps when requested
   ansible.builtin.command:
     argv:
       - bash
       - "{{ magen_repo }}/lab/scripts/magen-restore.sh"
       - --mongo-dump
-      - "{{ magen_mongo_dump | default('/tmp/o5g-unset-mongo') }}"
+      - "{{ magen_mongo_dump }}"
       - --pg-dump
-      - "{{ magen_pg_dump | default('/tmp/o5g-unset-pg') }}"
-  environment:
-    MAGEN_CHECK_MODE: "{{ '1' if ansible_check_mode else '0' }}"
+      - "{{ magen_pg_dump }}"
   changed_when: false
-  when: magen_mongo_dump is defined and not ansible_check_mode
-  tags: [restore]
+  when: magen_mongo_dump is defined
+  tags: [never, restore]
 
 - name: Write the smoke report
   ansible.builtin.command:
-    argv:
-      - bash
-      - "{{ magen_repo }}/lab/scripts/magen-smoke.sh"
-      - --env-file
-      - "{{ magen_env_file }}"
-      - --fixture
+    argv: "{{ magen_smoke_argv }}"
+  vars:
+    magen_smoke_argv: >-
+      {{
+        ['bash', magen_repo + '/lab/scripts/magen-smoke.sh', '--env-file', magen_env_file]
+        + ([] if magen_smoke_live | bool else ['--fixture'])
+      }}
   changed_when: false
-  tags: [smoke]
+  tags: [never, smoke]
 
 - name: Remove only o5g resources
   ansible.builtin.command:
     argv:
       - bash
       - "{{ magen_repo }}/lab/scripts/magen-down.sh"
+      - --env-file
+      - "{{ magen_env_file }}"
       - --dry-run
   changed_when: false
   when: ansible_check_mode
-  tags: [down]
+  tags: [never, down]
 
 - name: Remove only o5g resources for real
   ansible.builtin.command:
     argv:
       - bash
       - "{{ magen_repo }}/lab/scripts/magen-down.sh"
+      - --env-file
+      - "{{ magen_env_file }}"
   register: magen_down_result
   changed_when: "'changed=1' in magen_down_result.stdout"
   when: not ansible_check_mode
-  tags: [down]
+  tags: [never, down]

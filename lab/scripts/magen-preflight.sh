@@ -10,9 +10,10 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 env_file=""
 fixture=""
 with_dashboard=0
+with_sgi=0
 
 usage() {
-  echo "usage: magen-preflight.sh --env-file FILE [--fixture-root DIR] [--with-dashboard]" >&2
+  echo "usage: magen-preflight.sh --env-file FILE [--fixture-root DIR] [--with-dashboard] [--with-sgi-egress]" >&2
   exit 2
 }
 
@@ -29,6 +30,7 @@ while [ "$#" -gt 0 ]; do
       fixture=$1
       ;;
     --with-dashboard) with_dashboard=1 ;;
+    --with-sgi-egress) with_sgi=1 ;;
     *) usage ;;
   esac
   shift
@@ -145,7 +147,8 @@ magen_check_ip_forward() {
     value=$(cat /proc/sys/net/ipv4/ip_forward)
   fi
   if [ "$value" != "1" ]; then
-    echo "magen: net.ipv4.ip_forward is ${value}. Docker egress NAT needs it to be 1." >&2
+    echo "magen: needs Netdrive approval: egress via host" >&2
+    echo "magen: net.ipv4.ip_forward is ${value}." >&2
     echo "magen: ask for approval, then run: sudo sysctl net.ipv4.ip_forward=1" >&2
     echo "magen: this script does not change host sysctl." >&2
     return 1
@@ -400,12 +403,59 @@ magen_check_images() {
   fi
 }
 
+magen_backend_name() {
+  local text=$1
+  case "$text" in
+    *nf_tables*) echo nft ;;
+    *legacy*) echo legacy ;;
+    *) echo unknown ;;
+  esac
+}
+
+magen_check_iptables_backend() {
+  local iptables_v docker_v ip6_v left right
+  if [ -n "$fixture" ]; then
+    iptables_v=$(cat "$fixture/iptables-version")
+    docker_v=$(cat "$fixture/docker-iptables")
+  else
+    iptables_v=$(iptables -V 2>&1 || true)
+    docker_v=$(docker info 2>/dev/null | awk -F: '/iptables/ { print $2; exit }')
+  fi
+  left=$(magen_backend_name "$iptables_v")
+  right=$(magen_backend_name "$docker_v")
+  if [ "$left" = "unknown" ] || [ "$right" = "unknown" ] || [ "$left" != "$right" ]; then
+    echo "magen: iptables backend is ${left} (${iptables_v}) but Docker reports ${right} (${docker_v})." >&2
+    echo "magen: refusing to mix legacy and nft. This script does not change alternatives." >&2
+    return 1
+  fi
+  if [ "$left" = "nft" ] && ! command -v nft >/dev/null 2>&1 && [ -z "$fixture" ]; then
+    echo "magen: iptables is the nft backend but the nft binary is missing." >&2
+    return 1
+  fi
+  if magen_host_ipv6_off; then
+    return 0
+  fi
+  if [ -n "$fixture" ]; then
+    ip6_v=$(cat "$fixture/ip6tables-version")
+  else
+    ip6_v=$(ip6tables -V 2>&1 || true)
+  fi
+  if [ "$(magen_backend_name "$ip6_v")" != "$left" ]; then
+    echo "magen: ip6tables backend does not match iptables (${left})." >&2
+    return 1
+  fi
+}
+
 magen_check_docker_group
 magen_check_kvm
 magen_check_tun
 magen_check_sctp
 magen_check_docker_version
-magen_check_ip_forward
+magen_check_iptables_backend
+if [ "$with_sgi" -eq 1 ]; then
+  echo "magen: needs Netdrive approval: egress via host"
+  magen_check_ip_forward
+fi
 magen_check_ip6tables
 magen_check_conntrack
 magen_check_disk

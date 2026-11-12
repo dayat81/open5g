@@ -3,5 +3,7 @@ magen_repo: "{{ playbook_dir }}/../.."
 magen_env_file: "{{ magen_repo }}/lab/compose/magen.env"
 magen_fixture_root: ""
 magen_with_dashboard: false
+magen_sgi_egress: false
+magen_smoke_live: false
 magen_guest_host: ""
 magen_guest_key: ""

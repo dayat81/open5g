@@ -42,6 +42,7 @@ lab/**/*.local.yaml
 lab/**/override.env
 lab/compose/android-ue.env
 lab/compose/magen.env
+lab/compose/magen.images.env
 
 # Editor and OS
 .DS_Store

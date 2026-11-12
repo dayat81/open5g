@@ -10,6 +10,7 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 volumes=0
 dry=0
 names_file=""
+env_file=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -19,8 +20,12 @@ while [ "$#" -gt 0 ]; do
       shift
       names_file=$1
       ;;
+    --env-file)
+      shift
+      env_file=$1
+      ;;
     *)
-      echo "usage: magen-down.sh [--volumes] [--dry-run] [--names-file FILE]" >&2
+      echo "usage: magen-down.sh --env-file FILE [--volumes] [--dry-run] [--names-file FILE]" >&2
       exit 2
       ;;
   esac
@@ -48,8 +53,12 @@ if [ "$dry" -eq 1 ]; then
   exit 0
 fi
 
+if [ -z "$env_file" ] || [ ! -f "$env_file" ]; then
+  echo "magen: down requires --env-file so compose can interpolate addresses" >&2
+  exit 2
+fi
 root=$(magen_root)
-args=(compose -p open5g -f "$root/lab/compose/compose.magen.yml" down --remove-orphans)
+args=(compose -p open5g -f "$root/lab/compose/compose.magen.yml" --env-file "$env_file" down --remove-orphans)
 if [ "$volumes" -eq 1 ]; then
   args+=(--volumes)
 fi

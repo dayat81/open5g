@@ -129,6 +129,7 @@ emit_magen() {
 # listener join it. ws-scrcpy binds the emulator address on that network.
 # The listener publishes 127.0.0.1:3301 and nothing else. Postgres is not published.
 # The UPF uses a userspace TUN named ogstun. It does not load gtp or gtp5g.
+# Default UPF stays on internal networks. o5g-egress is off until --with-sgi-egress.
 # ueN is not on uemuN or o5g-screen. Phase B owns the gateway chains.
 # This file does not set host ip_forward and does not name b0-agen-emu.
 
@@ -229,8 +230,6 @@ services:
     networks:
       core:
         ipv4_address: ${O5G_UPF_CORE:?O5G_UPF_CORE}
-      egress:
-        ipv4_address: ${O5G_UPF_EGRESS:?O5G_UPF_EGRESS}
 
 EOF
   local n
@@ -328,6 +327,44 @@ EOF
       screen:
         ipv4_address: ${O5G_SCREEN_LISTENER:?O5G_SCREEN_LISTENER}
     depends_on: [dashboard-postgres, android1]
+
+  screen1:
+    profiles: ["dashboard"]
+    image: ${O5G_SCREEN_IMAGE:?O5G_SCREEN_IMAGE}
+    container_name: o5g-screen1
+    restart: "no"
+    cpus: ${O5G_DASH_CPUS}
+    mem_limit: ${O5G_DASH_MEM}
+    network_mode: "container:o5g-android1"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_MODE: standalone
+      ANDROID_UE_SCREEN_BIND: ${O5G_SCREEN_ANDROID1:?O5G_SCREEN_ANDROID1}
+      ANDROID_UE_SCREEN_PORT: "8000"
+      ANDROID_UE_SCREEN_PATH: /emulator/ue1
+      ANDROID_ADB_SERVER_PORT: "5038"
+    depends_on:
+      android1:
+        condition: service_started
+
+  screen2:
+    profiles: ["dashboard"]
+    image: ${O5G_SCREEN_IMAGE}
+    container_name: o5g-screen2
+    restart: "no"
+    cpus: ${O5G_DASH_CPUS}
+    mem_limit: ${O5G_DASH_MEM}
+    network_mode: "container:o5g-android2"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_MODE: standalone
+      ANDROID_UE_SCREEN_BIND: ${O5G_SCREEN_ANDROID2:?O5G_SCREEN_ANDROID2}
+      ANDROID_UE_SCREEN_PORT: "8000"
+      ANDROID_UE_SCREEN_PATH: /emulator/ue2
+      ANDROID_ADB_SERVER_PORT: "5038"
+    depends_on:
+      android2:
+        condition: service_started
 
 EOF
   cat <<'EOF'

@@ -92,6 +92,6 @@ if [ "${pg_count:-0}" != "0" ] && [ "$force" -ne 1 ]; then
   echo "magen: target is not empty. Refusing restore without --force-nonempty." >&2
   exit 1
 fi
-docker exec -i o5g-mongo mongorestore --archive < "$mongo_dump"
+docker exec -i o5g-mongo mongorestore --archive --gzip < "$mongo_dump"
 docker exec -i o5g-dashboard-postgres pg_restore -U "${O5G_POSTGRES_USER}" -d "${O5G_POSTGRES_DB}" < "$pg_dump"
 echo "changed=1"
