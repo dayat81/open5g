@@ -393,7 +393,7 @@ for sysctl_key in \
   net.ipv6.conf.default.forwarding \
   net.ipv6.conf.default.disable_ipv6
 do
-  if ! printf '%s\n' "$gen_out" | grep -q "$sysctl_key"; then
+  if ! grep -q -F -- "$sysctl_key" <<< "$gen_out"; then
     echo "generator output is missing ${sysctl_key}" >&2
     exit 1
   fi
