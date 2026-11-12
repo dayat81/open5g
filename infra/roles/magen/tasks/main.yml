@@ -6,6 +6,7 @@
       - "{{ magen_repo }}/lab/scripts/magen-preflight.sh"
       - --env-file
       - "{{ magen_env_file }}"
+      - "{{ '--gui-only' if magen_gui_only | bool else '--with-epc' }}"
       - --fixture-root
       - "{{ magen_fixture_root }}"
   changed_when: false
@@ -20,6 +21,7 @@
       - "{{ magen_repo }}/lab/scripts/magen-preflight.sh"
       - --env-file
       - "{{ magen_env_file }}"
+      - "{{ '--gui-only' if magen_gui_only | bool else '--with-epc' }}"
   changed_when: false
   check_mode: false
   when: magen_fixture_root | length == 0
@@ -44,8 +46,8 @@
     magen_up_argv: >-
       {{
         ['bash', magen_repo + '/lab/scripts/magen-up.sh', '--env-file', magen_env_file]
+        + (['--gui-only'] if magen_gui_only | bool else ['--with-epc'])
         + (['--with-sgi-egress'] if magen_sgi_egress | bool else [])
-        + (['--with-dashboard'] if magen_with_dashboard | bool else [])
       }}
   environment:
     MAGEN_CHECK_MODE: "{{ '1' if ansible_check_mode else '0' }}"
@@ -90,6 +92,7 @@
     magen_smoke_argv: >-
       {{
         ['bash', magen_repo + '/lab/scripts/magen-smoke.sh', '--env-file', magen_env_file]
+        + (['--gui-only'] if magen_gui_only | bool else ['--with-epc'])
         + ([] if magen_smoke_live | bool else ['--fixture'])
       }}
   changed_when: false

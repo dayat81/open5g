@@ -12,6 +12,7 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 env_file=""
 fixture=0
 with_sgi=0
+gui_only=1
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -20,9 +21,11 @@ while [ "$#" -gt 0 ]; do
       env_file=$1
       ;;
     --fixture) fixture=1 ;;
+    --gui-only) gui_only=1 ;;
+    --with-epc) gui_only=0 ;;
     --with-sgi-egress) with_sgi=1 ;;
     *)
-      echo "usage: magen-smoke.sh --env-file FILE [--fixture] [--with-sgi-egress]" >&2
+      echo "usage: magen-smoke.sh --env-file FILE [--fixture] [--gui-only | --with-epc] [--with-sgi-egress]" >&2
       exit 2
       ;;
   esac
@@ -107,16 +110,34 @@ magen_radio_collect_live() {
   fi
 }
 
-if [ "$fixture" -eq 1 ]; then
-  radio_dir=${MAGEN_RADIO_DIR:-"$(magen_root)/lab/scripts/fixtures/magen/radio-ok"}
-else
-  radio_dir=$(mktemp -d)
-  if ! magen_radio_collect_live "$radio_dir"; then
+boot_value=""
+if [ "$gui_only" -eq 1 ]; then
+  echo "magen: radio gate SKIPPED (gui-only)"
+  echo "magen: attach SKIPPED (gui-only)"
+  if [ "$fixture" -eq 1 ]; then
+    boot_value=$(cat "${MAGEN_GUI_DIR:-"$(magen_root)/lab/scripts/fixtures/magen/gui-ok"}/boot" 2>/dev/null || true)
+  else
+    boot_value=$(docker exec o5g-android1 adb shell getprop sys.boot_completed 2>/dev/null || true)
+  fi
+  boot_value=$(printf '%s' "$boot_value" | tr -d '\r')
+  if [ "$boot_value" != "1" ]; then
+    echo "magen: emulator boot FAIL. boot_completed is ${boot_value:-empty}, expected 1." >&2
     exit 1
   fi
-fi
-if ! magen_radio_gate "$(cat "$radio_dir/boot" 2>/dev/null || true)" "$(cat "$radio_dir/sim" 2>/dev/null || true)" "$radio_dir/logcat" "$radio_dir/registry"; then
-  exit 1
+  echo "magen: emulator boot_completed=1"
+else
+  if [ "$fixture" -eq 1 ]; then
+    radio_dir=${MAGEN_RADIO_DIR:-"$(magen_root)/lab/scripts/fixtures/magen/radio-ok"}
+  else
+    radio_dir=$(mktemp -d)
+    if ! magen_radio_collect_live "$radio_dir"; then
+      exit 1
+    fi
+  fi
+  if ! magen_radio_gate "$(cat "$radio_dir/boot" 2>/dev/null || true)" "$(cat "$radio_dir/sim" 2>/dev/null || true)" "$radio_dir/logcat" "$radio_dir/registry"; then
+    exit 1
+  fi
+  boot_value=1
 fi
 magen_screen_evidence_ok() {
   local ws=$1 host8000=$2
@@ -174,6 +195,34 @@ fi
 if ! magen_screen_evidence_ok "$(cat "$screen_dir/ws" 2>/dev/null || true)" "$(cat "$screen_dir/host8000" 2>/dev/null || true)"; then
   exit 1
 fi
+if [ "$gui_only" -eq 1 ]; then
+  gui_dir=${MAGEN_GUI_DIR:-"$(magen_root)/lab/scripts/fixtures/magen/gui-ok"}
+  if [ "$fixture" -eq 1 ]; then
+    listener_curl=$(cat "$gui_dir/curl" 2>/dev/null || true)
+    web_curl=$(cat "$gui_dir/web" 2>/dev/null || true)
+  else
+    listener_curl=closed
+    web_curl=closed
+    if curl -sS -o /dev/null --max-time 2 http://127.0.0.1:3301/emulator/ue1/; then
+      listener_curl=ok
+    fi
+    if curl -sS -o /dev/null --max-time 2 http://127.0.0.1:3300/; then
+      web_curl=ok
+    fi
+  fi
+  listener_curl=$(printf '%s' "$listener_curl" | tr -d '\r')
+  web_curl=$(printf '%s' "$web_curl" | tr -d '\r')
+  if [ "$listener_curl" != "ok" ]; then
+    echo "magen: listener curl FAIL. host 127.0.0.1:3301 did not answer." >&2
+    exit 1
+  fi
+  if [ "$web_curl" != "ok" ]; then
+    echo "magen: web curl FAIL. host 127.0.0.1:3300 did not answer." >&2
+    exit 1
+  fi
+  echo "magen: listener curl 127.0.0.1:3301 succeeded"
+  echo "magen: web curl 127.0.0.1:3300 succeeded"
+fi
 python3 - "$(magen_root)/lab/compose/compose.magen.yml" <<'PY'
 import sys
 text = open(sys.argv[1], encoding="utf-8").read()
@@ -216,28 +265,38 @@ if [ "$fixture" -eq 0 ]; then
   reason="pass --fixture in CI; run without it only on MAGEN_HOST during Lab Ops"
 fi
 
-python3 - "$report" "$md" "$listener" "$live" "$reason" "$with_sgi" <<'PY'
+python3 - "$report" "$md" "$listener" "$live" "$reason" "$with_sgi" "$gui_only" "$boot_value" <<'PY'
 import json, sys
-report, md, listener, live, reason, sgi = sys.argv[1:]
+report, md, listener, live, reason, sgi, gui, boot = sys.argv[1:]
+skipped = "SKIPPED (gui-only)"
+if gui == "1":
+    core = attach = s1 = skipped
+    evidence = skipped
+    boot_report = boot
+else:
+    core = attach = s1 = live
+    evidence = live
+    boot_report = live
 body = {
     "listener_bind": "127.0.0.1:3301",
+    "web_bind": "127.0.0.1:3300",
     "screen_port_8000": "tcp 8000 is accepted only from the listener address and dropped for every other source",
     "listener": listener,
-    "core_up": live,
-    "s1_setup": live,
-    "ue_attach": live,
+    "core_up": core,
+    "s1_setup": s1,
+    "ue_attach": attach,
     "sgi_curl": "SKIPPED" if sgi == "0" else "pending-approval",
     "bind_0_0_0_0": "absent",
     "v6_guard": "lo keeps ::1; all is not set to 1",
-    "emulator_boot_completed": live,
+    "emulator_boot_completed": boot_report,
     "adb_stable_seconds": 120,
     "lo_has_loopback": "mandatory",
     "eth_global_v6": "absent",
-    "dashboard_w1_w4_w7_w8": live,
-    "screen_s1_s2": live,
-    "screen_v5_s1_s8": live,
+    "dashboard_w1_w4_w7_w8": evidence,
+    "screen_s1_s2": evidence,
+    "screen_v5_s1_s8": evidence,
     "ue_chains": "N/A",
-    "reason": reason,
+    "reason": reason if gui != "1" else "gui-only; radio and attach are not S1-S8 evidence",
 }
 open(report, "w", encoding="utf-8").write(json.dumps(body, indent=2) + "\n")
 lines = ["# magen smoke", ""]

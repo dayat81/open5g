@@ -99,24 +99,21 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 magen_ipv6_apply_netns() {
   local name=$1 pid=$2 have=$3 ip6=$4
   magen_pid_matches "$name" "$pid" "$have"
-  local iface
-  nsenter -t "$pid" -n sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null
-  while IFS= read -r iface; do
-    [ -n "$iface" ] || continue
-    case "$iface" in
-      lo|all|default) continue ;;
-    esac
-    nsenter -t "$pid" -n sysctl -w "net.ipv6.conf.${iface}.disable_ipv6=1" >/dev/null
-  done < <(nsenter -t "$pid" -n ip -o link show | awk -F': ' '{ print $2 }' | cut -d@ -f1)
-  local all_v6 lo_v6
-  all_v6=$(nsenter -t "$pid" -n sysctl -n net.ipv6.conf.all.disable_ipv6)
-  lo_v6=$(nsenter -t "$pid" -n sysctl -n net.ipv6.conf.lo.disable_ipv6)
+  local iface val all_v6 lo_v6 def_v6
+  # Compose sets disable_ipv6. This path only reads /proc/sys.
+  all_v6=$(nsenter -t "$pid" -n cat /proc/sys/net/ipv6/conf/all/disable_ipv6)
+  lo_v6=$(nsenter -t "$pid" -n cat /proc/sys/net/ipv6/conf/lo/disable_ipv6)
+  def_v6=$(nsenter -t "$pid" -n cat /proc/sys/net/ipv6/conf/default/disable_ipv6)
   if [ "$all_v6" = "1" ]; then
     echo "magen: disable_ipv6 on all is 1 in ${name}. all was not changed by this script." >&2
     return 1
   fi
   if [ "$lo_v6" != "0" ]; then
     echo "magen: disable_ipv6 on lo is ${lo_v6} in ${name}" >&2
+    return 1
+  fi
+  if [ "$def_v6" != "1" ]; then
+    echo "magen: disable_ipv6 on default is ${def_v6} in ${name}, expected 1 from compose" >&2
     return 1
   fi
   if ! nsenter -t "$pid" -n ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
@@ -128,7 +125,7 @@ magen_ipv6_apply_netns() {
     case "$iface" in
       lo|all|default) continue ;;
     esac
-    val=$(nsenter -t "$pid" -n sysctl -n "net.ipv6.conf.${iface}.disable_ipv6")
+    val=$(nsenter -t "$pid" -n cat "/proc/sys/net/ipv6/conf/${iface}/disable_ipv6")
     if [ "$val" != "1" ]; then
       echo "magen: disable_ipv6 on ${iface} is ${val} in ${name}" >&2
       return 1

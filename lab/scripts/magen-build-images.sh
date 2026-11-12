@@ -101,6 +101,16 @@ docker build -t "o5g-dashboard:${tag}" -f "$work/dashboard/backend/Dockerfile" "
 dashboard_id=$(docker image inspect -f '{{.Id}}' "o5g-dashboard:${tag}")
 docker build -t "o5g-dashboard-web:${tag}" -f "$work/dashboard/frontend/Dockerfile" "$work/dashboard/frontend"
 web_id=$(docker image inspect -f '{{.Id}}' "o5g-dashboard-web:${tag}")
+docker pull postgres:16
+# postgres:16 is the upstream tag. It is not built from beded744.
+postgres_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' postgres:16)
+case "$postgres_ref" in
+  postgres@sha256:*) ;;
+  *)
+    echo "magen: postgres:16 has no registry digest. Pull it outside magen before pinning." >&2
+    exit 1
+    ;;
+esac
 
 pin() {
   local id=$1
@@ -114,6 +124,7 @@ O5G_ANDROID_IMAGE=$(pin "$android_id")
 O5G_SCREEN_IMAGE=$(pin "$screen_id")
 O5G_DASHBOARD_API_IMAGE=$(pin "$dashboard_id")
 O5G_DASHBOARD_WEB_IMAGE=$(pin "$web_id")
+O5G_POSTGRES_IMAGE=${postgres_ref}
 EOF
 chmod 0600 "$out"
 echo "magen: pinned image ids in ${out}"
@@ -122,4 +133,7 @@ if [ -n "$save_dir" ]; then
   mkdir -p -- "$save_dir"
   docker save "o5g-emulator:${tag}" "o5g-screen:${tag}" "o5g-dashboard:${tag}" "o5g-dashboard-web:${tag}" | gzip > "${save_dir}/o5g-images-${tag}.tar.gz"
   echo "magen: saved ${save_dir}/o5g-images-${tag}.tar.gz"
+  # Separate archive so the four-image tar Lab Ops already built stays valid.
+  docker save postgres:16 | gzip > "${save_dir}/o5g-postgres.tar.gz"
+  echo "magen: saved ${save_dir}/o5g-postgres.tar.gz"
 fi

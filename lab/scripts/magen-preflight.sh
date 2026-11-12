@@ -11,9 +11,10 @@ env_file=""
 fixture=""
 with_dashboard=0
 with_sgi=0
+gui_only=1
 
 usage() {
-  echo "usage: magen-preflight.sh --env-file FILE [--fixture-root DIR] [--with-dashboard] [--with-sgi-egress]" >&2
+  echo "usage: magen-preflight.sh --env-file FILE [--fixture-root DIR] [--gui-only | --with-epc] [--with-dashboard] [--with-sgi-egress]" >&2
   exit 2
 }
 
@@ -30,6 +31,8 @@ while [ "$#" -gt 0 ]; do
       fixture=$1
       ;;
     --with-dashboard) with_dashboard=1 ;;
+    --gui-only) gui_only=1 ;;
+    --with-epc) gui_only=0 ;;
     --with-sgi-egress) with_sgi=1 ;;
     *) usage ;;
   esac
@@ -381,26 +384,19 @@ PY
 
 magen_check_images() {
   local key value
-  for key in O5G_OPEN5GS_IMAGE O5G_MONGO_IMAGE O5G_SRS_IMAGE O5G_ANDROID_IMAGE; do
+  local -a keys
+  if [ "$gui_only" -eq 1 ]; then
+    keys=(O5G_ANDROID_IMAGE O5G_SCREEN_IMAGE O5G_DASHBOARD_API_IMAGE O5G_DASHBOARD_WEB_IMAGE O5G_POSTGRES_IMAGE)
+  else
+    keys=(O5G_OPEN5GS_IMAGE O5G_MONGO_IMAGE O5G_SRS_IMAGE O5G_ANDROID_IMAGE O5G_SCREEN_IMAGE O5G_DASHBOARD_API_IMAGE O5G_DASHBOARD_WEB_IMAGE O5G_POSTGRES_IMAGE)
+  fi
+  for key in "${keys[@]}"; do
     value=$(get "$key")
     if magen_is_placeholder "$value" || ! magen_digest_ok "$value"; then
       echo "magen: ${key} must be an image pinned with @sha256" >&2
       return 1
     fi
   done
-  local closed=0
-  for key in O5G_DASHBOARD_API_IMAGE O5G_DASHBOARD_WEB_IMAGE O5G_POSTGRES_IMAGE; do
-    value=$(get "$key")
-    if magen_is_placeholder "$value" || ! magen_digest_ok "$value"; then
-      closed=1
-    fi
-  done
-  if [ "$closed" -eq 1 ]; then
-    echo "magen: dashboard profile is closed until a digest built from the PR #13 tree is pinned. See docs/deploy/magen.md." >&2
-    if [ "$with_dashboard" -eq 1 ]; then
-      return 1
-    fi
-  fi
 }
 
 magen_backend_name() {
@@ -446,10 +442,23 @@ magen_check_iptables_backend() {
   fi
 }
 
+if [ "$gui_only" -eq 1 ] && [ "$with_sgi" -eq 1 ]; then
+  echo "magen: gui profile stays closed while SGi egress is open." >&2
+  exit 1
+fi
+if [ "$with_dashboard" -eq 1 ] && [ "$gui_only" -eq 0 ] && [ "$with_sgi" -eq 1 ]; then
+  echo "magen: dashboard profile stays closed while SGi egress is open." >&2
+  exit 1
+fi
+
 magen_check_docker_group
 magen_check_kvm
-magen_check_tun
-magen_check_sctp
+if [ "$gui_only" -eq 1 ]; then
+  echo "magen: gui profile does not require sctp, gtp, or ogstun"
+else
+  magen_check_tun
+  magen_check_sctp
+fi
 magen_check_docker_version
 magen_check_iptables_backend
 if [ "$with_sgi" -eq 1 ]; then

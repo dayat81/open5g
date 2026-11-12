@@ -18,11 +18,33 @@ Copy `infra/inventory/magen.example` to the gitignored `infra/inventory/magen.ym
 
 The UPF creates a userspace TUN named `ogstun`. It does not use `gtp` or `gtp5g`. Preflight requires `/dev/net/tun`. By default the UPF is not attached to `o5g-egress` or any other non-internal network, so SGi curl is `SKIPPED`. `--with-sgi-egress` (Ansible `magen_sgi_egress`, default false) is the only way to attach it, and that command prints `needs Netdrive approval: egress via host`.
 
-Before QEMU, `magen-up` enters the emulator netns. When the operator is root and `nsenter` is present, it uses `nsenter -t <pid> -n`. A docker-group user, which is the Ansible path, has no `CAP_SYS_ADMIN`, so that call would fail closed and QEMU would never start. The fallback is a short-lived helper: `docker run --rm --network container:o5g-androidN --cap-add NET_ADMIN --cap-add NET_RAW --pull never`. `NET_ADMIN` is the capability that writes a per-interface IPv6 sysctl and the iptables chain inside the shared netns. `NET_RAW` is there for the raw table. `--privileged` is not used, because it would also grant `SYS_ADMIN` and host devices. The helper image is the already pinned emulator image (`O5G_ANDROID_IMAGE`, or `O5G_NETNS_HELPER_IMAGE` when set). That digest is required for every `up`, including a boot that has not opened the dashboard. The build adds `iptables`, `iproute2`, and `procps` to it, and the helper calls `iptables-legacy` because this host kernel has no nft. `--pull never` means a missing image fails closed instead of downloading. The emulator process itself still has no `NET_ADMIN`; only the helper container does. The container id from `docker inspect` must match the name `o5g-androidN` or `o5g-ueN`, and the pid must match the same way the old pid guard did. The emulator process still has no `NET_ADMIN`. The script sets `disable_ipv6=1` on every non-lo interface, including the `o5g-screen` interface, and never writes `all`. It then installs `ANDROID_UE_SCREEN`, which accepts TCP 8000 only from the listener address and drops every other source, including `o5g-uemuN`. The same IPv6 lock and an `ip6tables` DROP policy are applied in `ueN` when the host IPv6 stack is on. A failed check stops the run.
+Before QEMU, `magen-up` enters the emulator netns. Root with `nsenter` uses `nsenter -t <pid> -n`. A docker-group user uses `docker run --rm --network container:o5g-android1 --cap-add NET_ADMIN --pull never`. `NET_ADMIN` is enough for `iptables-legacy`. `NET_RAW` is not added. The helper does not write sysctl: `/proc/sys` is read-only in that container, so a write would fail closed before the chain exists. Compose already sets `disable_ipv6=1` on `default`, `eth0`, and `eth1`. The helper only reads those values and stops if one is wrong, and only then installs `ANDROID_UE_SCREEN`. Host iptables are not changed. The emulator process has no `NET_ADMIN`. `all` is never written. The inspect id and pid must match `o5g-android1` or `o5g-ue1`/`o5g-ue2` when the EPC flag is on. A failed check stops the run.
+
+## GUI profile
+
+The default on magen is `gui` (`--gui-only`, Ansible `magen_gui_only=true`). It starts only `o5g-android1`, `o5g-screen1`, `o5g-dashboard-listener`, `o5g-dashboard-api`, `o5g-dashboard-web`, and `o5g-dashboard-postgres`. Mongo, the EPC, and srsRAN stay behind `--with-epc` for phase 2. Preflight does not ask for `sctp`, `gtp`, or `ogstun` in gui mode. `o5g-egress` is not attached. `--gui-only` together with `--with-sgi-egress` is rejected.
+
+Postgres is the upstream `postgres:16` image, pinned by digest in `magen.images.env` and loaded from `o5g-postgres.tar.gz`. That archive is separate from `o5g-images-beded744.tar.gz`, so the four-image tar does not change. The container name starts with `o5g-` and it publishes no port, so host `5432` is left alone.
+
+The API does not receive `OPEN5G_MONGO_URI`. At `beded744`, an empty URI selects `DisabledSubscriberPort` in `build_subscriber_port`, which reports `not_configured` and does not write. `OPEN5G_ENABLE_GX_RAR=0` keeps PCC writes off. Metrics and health endpoint lists stay unset, so the UI shows the lab as not configured. The process still starts. `OPEN5G_EMULATOR_ENABLED=1` is the default; set it to `0` to roll the screen back without removing the emulator.
+
+Reach the UI with `ssh -L 3300:127.0.0.1:3300 -L 3301:127.0.0.1:3301`. The only host publishes are `127.0.0.1:3300` and `127.0.0.1:3301`.
+
+The listener cannot bind `127.0.0.1` inside the container: Docker DNAT delivers the published port to the container's dash address, and `beded744` refuses a bind of `0.0.0.0`. It therefore binds `O5G_LISTENER_DASH` and belongs only to `o5g-dash` and `o5g-screen`. The web proxy binds `0.0.0.0` inside its own container and is only on `o5g-dash`, so host `127.0.0.1:3300` reaches it. Next itself stays on `127.0.0.1:3001` inside that container and is not published. The browser loads `http://127.0.0.1:3300`, the page asks the API for a screen session, and the frame uses `http://localhost:3301/emulator/ue1/`, which the tunnel delivers to the listener. The listener then dials the sidecar on the screen network at port 8000. Host port 8000 stays closed.
+
+Smoke in gui mode records the radio gate and attach as `SKIPPED (gui-only)`. Those lines are not S1–S8 evidence. It still requires `boot_completed=1`, websocket status 101, a closed host path to port 8000, and a successful curl of both `127.0.0.1:3300` and `127.0.0.1:3301`.
+
+## Phase 2
+
+Not built. `--with-epc` keeps the current core services for later.
+
+- The API will read the guest read-only through `LAB_GUEST_ADDR` (a placeholder). Egress is allowlisted only to that guest address and port.
+- srsUE stays on the guest. `androidN` would reach the guest `ueN` through an L3 tunnel. The mechanism is not chosen: WireGuard is not available on this 3.10 kernel, and GRE or a host route needs Netdrive approval.
+- SGi, socks, and S1–S8 stay off until that approval.
 
 Live smoke reads `adb getprop sys.boot_completed`, `gsm.sim.state`, `dumpsys telephony.registry`, and logcat from the emulator. It does not use the radio-ok fixture unless `--fixture` is set. Missing evidence is a failure. The radio gate passes only when `boot_completed` is 1, `gsm.sim.state` is READY or LOADED, `telephony.registry` is non-empty, and logcat contains a ModemSimulator line. An empty logcat or empty adb output fails. A failure is reported with the evidence and stops. There is no automatic fallback. The preferred later option, only if Architect picks it, is a `dummy0` ULA anchor installed by the host with `nsenter -n` and a pid guard before QEMU, still without `NET_ADMIN` and never with `all=1`. `-feature -ModemSimulator` is only the last resort.
 
-SCTP is not loaded for you. Preflight prints `sudo modprobe sctp` and stops until someone approves that command. The same pattern is used when host `ip_forward` is not 1: the script prints `sudo sysctl net.ipv4.ip_forward=1` and does not change the sysctl.
+The gui profile does not load `sctp`. `--with-epc` still prints `sudo modprobe sctp` and stops until someone approves that command. It does not load the module. The same pattern is used when host `ip_forward` is not 1 and SGi was requested: the script prints `sudo sysctl net.ipv4.ip_forward=1` and does not change the sysctl.
 
 Postgres is not published. Host port 5432 stays with the Postgres that is already on the machine. The only published ports are `127.0.0.1:3300` (dashboard) and `127.0.0.1:3301` (screen listener). Preflight reads `ss -ltn` and refuses the run when 3300 or 3301 is already taken. It does not bind 5555 or 5900. `b0-agen-emu` is left alone, including its listener on `127.0.0.1:5900`. `down` deletes only names that start with `o5g-` inside project `open5g`.
 
@@ -34,9 +56,12 @@ The emulator image at that SHA runs `/opt/open5g-preflight.sh` before QEMU. The 
 
 ```bash
 bash lab/scripts/magen-build-images.sh --save "$HOME/o5g-state"
-# on MAGEN_HOST, after copying the archive:
+# on MAGEN_HOST, after copying both archives:
 docker load < o5g-images-beded744.tar.gz
+docker load < o5g-postgres.tar.gz
 ```
+
+`o5g-postgres.tar.gz` is only the upstream `postgres:16` image. It is not part of the four-image archive.
 
 The dashboard profile stays closed while any of those digests is empty, and also while `--with-sgi-egress` is set.
 

@@ -134,7 +134,9 @@ expect_fail() {
 work=$(mktemp -d)
 cp -a "$pass" "$work/no-sctp"
 printf 'ip_tables 0 - Live 0x0\n' > "$work/no-sctp/modules"
-expect_fail sctp lab/scripts/magen-preflight.sh --env-file "$env_file" --fixture-root "$work/no-sctp"
+lab/scripts/magen-preflight.sh --env-file "$env_file" --fixture-root "$work/no-sctp" --gui-only > /tmp/magen-gui-nosctp.out
+grep -q 'does not require sctp' /tmp/magen-gui-nosctp.out
+expect_fail sctp lab/scripts/magen-preflight.sh --env-file "$env_file" --fixture-root "$work/no-sctp" --with-epc
 grep -q 'sudo modprobe sctp' "/tmp/magen-sctp.err"
 grep -q 'does not load kernel modules' "/tmp/magen-sctp.err"
 
@@ -157,15 +159,17 @@ expect_fail group lab/scripts/magen-preflight.sh --env-file "$env_file" --fixtur
 
 cp -a "$pass" "$work/tun"
 rm -f "$work/tun/tun-ok"
-expect_fail tun lab/scripts/magen-preflight.sh --env-file "$env_file" --fixture-root "$work/tun"
+expect_fail tun lab/scripts/magen-preflight.sh --env-file "$env_file" --fixture-root "$work/tun" --with-epc
 
 cp -a "$pass" "$work/v6"
 printf 'on\n' > "$work/v6/host-ipv6"
 printf '1\n' > "$work/v6/unshare-result"
 expect_fail v6 lab/scripts/magen-preflight.sh --env-file "$env_file" --fixture-root "$work/v6"
 
-expect_fail dash lab/scripts/magen-preflight.sh --env-file "$env_file" --fixture-root "$pass" --with-dashboard
-grep -q 'dashboard profile is closed' "/tmp/magen-dash.err"
+cp "$env_file" "$work/closed-pre.env"
+sed -i 's|^O5G_POSTGRES_IMAGE=.*|O5G_POSTGRES_IMAGE=REPLACE_O5G_POSTGRES_IMAGE|' "$work/closed-pre.env"
+expect_fail dash lab/scripts/magen-preflight.sh --env-file "$work/closed-pre.env" --fixture-root "$pass" --gui-only
+grep -q 'O5G_POSTGRES_IMAGE must be an image pinned' "/tmp/magen-dash.err"
 
 echo "screen chain"
 rules=$(lab/scripts/magen-screen-chain.sh --render 192.0.2.36)
@@ -236,12 +240,20 @@ expect_fail oldsha lab/scripts/magen-build-images.sh --check-sha 7fe7e85
 grep -q 'refusing SHA' /tmp/magen-oldsha.err
 expect_fail sha lab/scripts/magen-build-images.sh --check-sha 3a6498c3b89ce990222d1b284e20caaee2372339
 grep -q 'refusing SHA' /tmp/magen-sha.err
+grep -q 'postgres:16' lab/scripts/magen-build-images.sh
+grep -q 'o5g-postgres.tar.gz' lab/scripts/magen-build-images.sh
+if grep -q 'docker save "o5g-emulator:' lab/scripts/magen-build-images.sh && grep 'docker save "o5g-emulator:' lab/scripts/magen-build-images.sh | grep -q postgres; then
+  echo "postgres was added to the four-image archive" >&2
+  exit 1
+fi
 if grep -q 7fe7e85 lab/scripts/magen-build-images.sh docs/deploy/magen.md lab/compose/env.example.magen; then
   echo "old image SHA remains in the pin, docs, or example" >&2
   exit 1
 fi
 : > "$work/empty-images.env"
-expect_fail images lab/scripts/magen-up.sh --env-file "$env_file" --images-env "$work/empty-images.env" --with-dashboard --dry-run
+cp "$env_file" "$work/closed.env"
+sed -i 's|^O5G_DASHBOARD_WEB_IMAGE=.*|O5G_DASHBOARD_WEB_IMAGE=REPLACE_O5G_DASHBOARD_WEB_IMAGE|' "$work/closed.env"
+expect_fail images lab/scripts/magen-up.sh --env-file "$work/closed.env" --dry-run
 # shellcheck source=magen-lib.sh
 . lab/scripts/magen-lib.sh
 if magen_pid_matches o5g-android1 10 10 && magen_pid_matches b0-agen-emu 10 10; then
@@ -254,10 +266,10 @@ printf 'Container o5g-mongo Started\n' > "$work/compose-new.log"
 test "$(magen_compose_changed "$work/compose-new.log")" = 1
 
 echo "live radio has no fixture fallback"
-expect_fail liveradio lab/scripts/magen-smoke.sh --env-file "$env_file"
+expect_fail liveradio lab/scripts/magen-smoke.sh --env-file "$env_file" --with-epc
 grep -q 'could not be read' /tmp/magen-liveradio.err
 grep -q 'not used unless --fixture' /tmp/magen-liveradio.err
-expect_fail liveradioenv env MAGEN_RADIO_DIR="$root/lab/scripts/fixtures/magen/radio-ok" lab/scripts/magen-smoke.sh --env-file "$env_file"
+expect_fail liveradioenv env MAGEN_RADIO_DIR="$root/lab/scripts/fixtures/magen/radio-ok" lab/scripts/magen-smoke.sh --env-file "$env_file" --with-epc
 grep -q 'could not be read' /tmp/magen-liveradioenv.err
 
 echo "empty logcat fails"
@@ -266,7 +278,7 @@ printf '1\n' > "$empty/boot"
 printf 'READY\n' > "$empty/sim"
 : > "$empty/logcat"
 printf 'mServiceState=IN_SERVICE\n' > "$empty/registry"
-expect_fail emptylog env MAGEN_RADIO_DIR="$empty" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture
+expect_fail emptylog env MAGEN_RADIO_DIR="$empty" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture --with-epc
 grep -q 'ModemSimulator=missing' /tmp/magen-emptylog.err
 
 echo "ModemSimulator plus READY passes"
@@ -275,7 +287,7 @@ printf '1\n' > "$good/boot"
 printf 'READY\n' > "$good/sim"
 printf 'I ModemSimulator: radio up\n' > "$good/logcat"
 printf 'mServiceState=IN_SERVICE\n' > "$good/registry"
-env MAGEN_RADIO_DIR="$good" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture > /tmp/magen-radio-pass.out
+env MAGEN_RADIO_DIR="$good" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture --with-epc > /tmp/magen-radio-pass.out
 grep -q 'radio gate passed' /tmp/magen-radio-pass.out
 
 echo "radio fail stays a report"
@@ -284,7 +296,7 @@ printf '1\n' > "$bad/boot"
 printf 'ABSENT\n' > "$bad/sim"
 printf 'I ModemSimulator: radio up\n' > "$bad/logcat"
 printf 'mServiceState=IN_SERVICE\n' > "$bad/registry"
-expect_fail radio env MAGEN_RADIO_DIR="$bad" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture
+expect_fail radio env MAGEN_RADIO_DIR="$bad" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture --with-epc
 grep -q 'no automatic fallback' /tmp/magen-radio.err
 grep -q 'dummy0 ULA' /tmp/magen-radio.err
 
@@ -324,15 +336,27 @@ python3 - <<'PY'
 import json
 body = json.load(open("/tmp/o5g-magen-fixture/smoke.json", encoding="utf-8"))
 assert body["listener_bind"] == "127.0.0.1:3301"
+assert body["web_bind"] == "127.0.0.1:3300"
 assert body["ue_chains"] == "N/A"
 assert body["sgi_curl"] == "SKIPPED"
-assert body["core_up"] == "skipped"
+assert body["core_up"] == "SKIPPED (gui-only)"
+assert body["ue_attach"] == "SKIPPED (gui-only)"
+assert body["emulator_boot_completed"] == "1"
+assert body["screen_s1_s2"] == "SKIPPED (gui-only)"
 assert "8000" in body["screen_port_8000"]
 PY
 
 echo "netns plans"
 lab/scripts/magen-netns.sh --plan nsenter --container o5g-android1 | grep -q 'nsenter -t <pid> -n # o5g-android1'
-lab/scripts/magen-netns.sh --plan helper --container o5g-android1 | grep -q 'docker run --rm --network container:o5g-android1 --cap-add NET_ADMIN --cap-add NET_RAW --pull never # iptables-legacy from the pinned emulator image'
+lab/scripts/magen-netns.sh --plan helper --container o5g-android1 | grep -q 'docker run --rm --network container:o5g-android1 --cap-add NET_ADMIN --pull never # iptables-legacy from the pinned emulator image'
+if grep -q -- '--cap-add NET_RAW' lab/scripts/magen-netns.sh; then
+  echo "helper still requests NET_RAW" >&2
+  exit 1
+fi
+if grep -q 'sysctl -w' lab/scripts/magen-netns.sh lab/scripts/magen-ipv6.sh; then
+  echo "netns path still writes sysctl" >&2
+  exit 1
+fi
 expect_fail netnsname lab/scripts/magen-netns.sh --plan helper --container b0-agen-emu
 grep -q 'open5g-preflight.sh:/opt/open5g-preflight.sh' lab/compose/compose.magen.yml
 grep -q 'O5G_DASHBOARD_WEB_IMAGE' lab/scripts/magen-build-images.sh
@@ -342,7 +366,76 @@ printf 'open\n' > "$bad_screen/host8000"
 expect_fail screenbad env MAGEN_SCREEN_DIR="$bad_screen" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture
 
 echo "up dry-run"
-lab/scripts/magen-up.sh --env-file "$env_file" --dry-run | grep -q 'changed=0'
+gui_dry=$(lab/scripts/magen-up.sh --env-file "$env_file" --dry-run)
+printf '%s\n' "$gui_dry" | grep -q 'changed=0'
+printf '%s\n' "$gui_dry" | grep -q 'mode=gui services=android1,screen1,dashboard-listener,dashboard-api,dashboard-web,dashboard-postgres'
+printf '%s\n' "$gui_dry" | grep -q 'omits O5G_MONGO_URI'
+printf '%s\n' "$gui_dry" | grep -q 'ports 127.0.0.1:3300:3300 127.0.0.1:3301:3301'
+if printf '%s\n' "$gui_dry" | grep -Eq 'services=.*\b(mongo|mme|hss|pcrf|sgwc|sgwu|smf|upf|enb|ue)[, ]'; then
+  echo "gui dry-run lists an EPC service" >&2
+  exit 1
+fi
+expect_fail guisgi lab/scripts/magen-up.sh --env-file "$env_file" --gui-only --with-sgi-egress --dry-run
+grep -q 'stays closed while SGi' /tmp/magen-guisgi.err
+python3 - <<'PY'
+from pathlib import Path
+text = Path("lab/compose/compose.magen.yml").read_text(encoding="utf-8")
+services = {}
+name = None
+buf = []
+for raw in text.splitlines():
+    if raw.startswith("  ") and raw.endswith(":") and not raw.startswith("   "):
+        if name:
+            services[name] = "\n".join(buf)
+        name = raw.strip().rstrip(":")
+        buf = [raw]
+    elif name:
+        buf.append(raw)
+if name:
+    services[name] = "\n".join(buf)
+gui = [n for n, body in services.items() if 'profiles: ["epc"]' not in body]
+epc_names = {"mongo", "hss", "pcrf", "mme", "sgwc", "sgwu", "smf", "upf", "enb1", "enb2", "ue1", "ue2", "android2", "screen2"}
+if epc_names & set(gui):
+    raise SystemExit("gui services include %s" % sorted(epc_names & set(gui)))
+wanted = {"android1", "screen1", "dashboard-listener", "dashboard-api", "dashboard-web", "dashboard-postgres"}
+if not wanted <= set(gui):
+    raise SystemExit("gui services missing %s" % sorted(wanted - set(gui)))
+api = services["dashboard-api"]
+if "O5G_MONGO_URI" in api or "OPEN5G_MONGO_URI" in api:
+    raise SystemExit("gui API still has a mongo URI")
+if 'OPEN5G_ENABLE_GX_RAR: "0"' not in api:
+    raise SystemExit("gui API does not disable PCC writes")
+listener = services["dashboard-listener"]
+if "127.0.0.1:3301:3301" not in listener:
+    raise SystemExit("listener publish is not loopback")
+if "0.0.0.0" in listener.split("ports:", 1)[-1].split("networks:", 1)[0]:
+    raise SystemExit("listener publish is not limited to loopback")
+if "O5G_LISTENER_DASH" not in listener:
+    raise SystemExit("listener does not bind its dash address")
+nets = []
+in_nets = False
+for raw in listener.splitlines():
+    if raw.strip() == "networks:":
+        in_nets = True
+        continue
+    if in_nets and raw.startswith("    ") and not raw.startswith("      "):
+        break
+    if in_nets and raw.startswith("      ") and raw.strip().endswith(":") and not raw.startswith("        "):
+        nets.append(raw.strip().rstrip(":"))
+if nets != ["dash", "screen"]:
+    raise SystemExit("listener networks are %s" % nets)
+web = services["dashboard-web"]
+if "127.0.0.1:3300:3300" not in web:
+    raise SystemExit("web publish is not loopback")
+if 'OPEN5G_WEB_HOST: "0.0.0.0"' not in web:
+    raise SystemExit("web proxy does not listen inside the container")
+if "mgmt:" in web or "screen:" in web:
+    raise SystemExit("web is on more than the dash network")
+pg = services["dashboard-postgres"]
+if "ports:" in pg:
+    raise SystemExit("postgres is published")
+print("gui compose ok")
+PY
 printf '\nANDROID_UE_UU=192.0.2.50\n' >> "$work/with-uu.env"
 cat "$env_file" > "$work/with-uu.env"
 printf '\nANDROID_UE_UU=192.0.2.50\n' >> "$work/with-uu.env"

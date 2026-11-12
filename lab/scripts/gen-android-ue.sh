@@ -229,8 +229,13 @@ EOF
   fi
   # lo stays IPv6-on. Every non-lo iface is off. all is not set.
   # The lab branch above does not set ANDROID_UE_IPV6_MODE or ANDROID_UE_ADB_MODE.
+  local profile_line=""
+  if [ "$n" != 1 ]; then
+    profile_line='    profiles: ["epc"]'
+  fi
   cat <<EOF
   android${n}:
+${profile_line}
     image: \${O5G_ANDROID_IMAGE:?O5G_ANDROID_IMAGE}
     container_name: o5g-android${n}
     restart: "no"

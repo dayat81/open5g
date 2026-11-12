@@ -1,9 +1,11 @@
 #!/bin/bash
 # Enter an o5g emulator or UE netns from the host.
 # Root uses nsenter. A docker-group user uses a short-lived helper that
-# joins that netns. The helper gets NET_ADMIN so it can write per-iface
-# IPv6 sysctl and iptables. Privileged is not used: it is broader than those
-# two operations. The emulator process itself has no NET_ADMIN. all is never written.
+# joins that netns. The helper gets NET_ADMIN only, for iptables-legacy.
+# It does not write sysctl. Compose already sets disable_ipv6, and this
+# script only reads those values. Privileged is not used, and no raw capability is added.
+# The emulator process itself has no NET_ADMIN. all is never written.
+# Host iptables are not changed.
 set -euo pipefail
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -41,7 +43,7 @@ magen_netns_plan() {
     return 0
   fi
   if [ "$mode" = "helper" ]; then
-    printf 'docker run --rm --network container:%s --cap-add NET_ADMIN --cap-add NET_RAW --pull never # iptables-legacy from the pinned emulator image\n' "$name"
+    printf 'docker run --rm --network container:%s --cap-add NET_ADMIN --pull never # iptables-legacy from the pinned emulator image\n' "$name"
     return 0
   fi
   echo "magen: unknown netns mode ${mode}" >&2
@@ -77,7 +79,7 @@ magen_netns_sh() {
     return 1
   fi
   docker run --rm --network "container:${name}" \
-    --cap-add NET_ADMIN --cap-add NET_RAW --pull never \
+    --cap-add NET_ADMIN --pull never \
     --entrypoint bash "$helper" -c "$script"
 }
 
@@ -85,13 +87,9 @@ magen_ipv6_script() {
   local ip6=$1 ip6t=$2
   cat <<EOF
 set -e
-sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null
-for iface in \$(ip -o link show | awk -F': ' '{ print \$2 }' | cut -d@ -f1); do
-  case "\$iface" in lo|all|default) continue ;; esac
-  sysctl -w "net.ipv6.conf.\${iface}.disable_ipv6=1" >/dev/null
-done
-all_v6=\$(sysctl -n net.ipv6.conf.all.disable_ipv6)
-lo_v6=\$(sysctl -n net.ipv6.conf.lo.disable_ipv6)
+read_v6() { cat "/proc/sys/net/ipv6/conf/\$1/disable_ipv6"; }
+all_v6=\$(read_v6 all)
+lo_v6=\$(read_v6 lo)
 if [ "\$all_v6" = 1 ]; then
   echo "magen: disable_ipv6 on all is 1. all was not changed." >&2
   exit 1
@@ -101,11 +99,16 @@ if [ "\$lo_v6" != 0 ]; then
   exit 1
 fi
 ip -6 addr show dev lo | grep -q 'inet6 ::1'
+def_v6=\$(read_v6 default)
+if [ "\$def_v6" != 1 ]; then
+  echo "magen: disable_ipv6 on default is \$def_v6, expected 1 from compose" >&2
+  exit 1
+fi
 for iface in \$(ip -o link show | awk -F': ' '{ print \$2 }' | cut -d@ -f1); do
   case "\$iface" in lo|all|default) continue ;; esac
-  val=\$(sysctl -n "net.ipv6.conf.\${iface}.disable_ipv6")
+  val=\$(read_v6 "\$iface")
   if [ "\$val" != 1 ]; then
-    echo "magen: disable_ipv6 on \$iface is \$val" >&2
+    echo "magen: disable_ipv6 on \$iface is \$val, expected 1 from compose" >&2
     exit 1
   fi
 done
