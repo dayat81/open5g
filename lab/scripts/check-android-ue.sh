@@ -30,6 +30,7 @@ sh_scripts=(
   lab/scripts/render-corefile.sh
   lab/scripts/android-ue-screen.sh
   lab/scripts/android-ue-screen-bind.sh
+  lab/scripts/android-ue-screen-chain.sh
   lab/scripts/android-ue-screen-publish.sh
   lab/scripts/android-ue-screen-tunnel.sh
   lab/scripts/android-ue-screen-mode.sh
@@ -98,6 +99,7 @@ scan_paths=(
   lab/compose/screen-standalone.env.example
   lab/scripts/android-ue-screen.sh
   lab/scripts/android-ue-screen-bind.sh
+  lab/scripts/android-ue-screen-chain.sh
   lab/scripts/android-ue-screen-publish.sh
   lab/scripts/android-ue-screen-tunnel.sh
   lab/scripts/android-ue-screen-mode.sh
@@ -1175,34 +1177,75 @@ if SCREEN_STANDALONE_ENV=lab/compose/screen-standalone.env.example \
 fi
 pin=$(python3 -c 'print("b"*64)')
 good_bind=192.0.2.32
-if ANDROID_UE_SCREEN_IMAGE="sha256:${pin}" ANDROID_EMULATOR_NETWORK=emulator-net \
+if ANDROID_UE_SCREEN_IMAGE="sha256:${pin}" \
+  SCREEN_PUBLISH_ADDR=192.0.2.33 \
   ANDROID_UE_SCREEN_BIND="$good_bind" \
   lab/scripts/android-ue-screen-standalone.sh --print; then
   echo "standalone print accepted an image id without @sha256" >&2
   exit 1
 fi
-if ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy:local" ANDROID_EMULATOR_NETWORK=emulator-net \
+if ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy:local" \
+  SCREEN_PUBLISH_ADDR=192.0.2.33 \
   ANDROID_UE_SCREEN_BIND="$good_bind" \
   lab/scripts/android-ue-screen-standalone.sh --print; then
   echo "standalone print accepted an unpinned tag" >&2
   exit 1
 fi
-if ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy@sha256:${pin}" ANDROID_EMULATOR_NETWORK=emulator-net \
+if ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy@sha256:${pin}" \
+  SCREEN_PUBLISH_ADDR=192.0.2.33 \
   ANDROID_UE_SCREEN_BIND=127.0.0.1 \
   lab/scripts/android-ue-screen-standalone.sh --print; then
   echo "standalone print accepted a loopback screen bind" >&2
   exit 1
 fi
 digest_print=$(ANDROID_UE_SCREEN_IMAGE="example.invalid/ws-scrcpy@sha256:${pin}" \
-  ANDROID_EMULATOR_NETWORK=emulator-net \
+  SCREEN_PUBLISH_ADDR=192.0.2.33 \
   ANDROID_UE_SCREEN_BIND="$good_bind" \
   lab/scripts/android-ue-screen-standalone.sh --print)
 printf '%s\n' "$digest_print" | grep -q 'compose.screen-standalone.yml'
 printf '%s\n' "$digest_print" | grep -q ' up -d'
+printf '%s\n' "$digest_print" | grep -q 'nsenter -t <pid> -n'
+printf '%s\n' "$digest_print" | grep -q 'docker network connect'
 if printf '%s\n' "$digest_print" | grep -q 'sha256:'; then
   echo "standalone print leaked the image digest" >&2
   exit 1
 fi
+down_print=$(lab/scripts/android-ue-screen-standalone.sh --print-down)
+printf '%s\n' "$down_print" | grep -q 'network disconnect b0-screen b0-agen-emu'
+printf '%s\n' "$down_print" | grep -q 'network rm b0-screen'
+if printf '%s\n' "$down_print" | grep -E 'docker (stop|rm).*b0-agen-emu'; then
+  echo "standalone down stops or removes the emulator" >&2
+  exit 1
+fi
+chain=$(lab/scripts/android-ue-screen-chain.sh --render 192.0.2.33)
+printf '%s\n' "$chain" | grep -q -- '-s 192.0.2.33 --dport 8000 -j ACCEPT'
+printf '%s\n' "$chain" | grep -q -- '--dport 8000 -j DROP'
+if lab/scripts/android-ue-screen-chain.sh --render 127.0.0.1; then
+  echo "screen chain accepted a loopback publisher" >&2
+  exit 1
+fi
+if lab/scripts/android-ue-screen-chain.sh --pid-ok other 12 12; then
+  echo "screen chain entered a container other than b0-agen-emu" >&2
+  exit 1
+fi
+if lab/scripts/android-ue-screen-chain.sh --pid-ok b0-agen-emu 12 13; then
+  echo "screen chain accepted a pid that does not belong to b0-agen-emu" >&2
+  exit 1
+fi
+lab/scripts/android-ue-screen-chain.sh --pid-ok b0-agen-emu 12 12
+if lab/scripts/android-ue-screen-chain.sh --bind-match 192.0.2.32 192.0.2.33; then
+  echo "screen bind matched a different inspect address" >&2
+  exit 1
+fi
+lab/scripts/android-ue-screen-chain.sh --bind-match 192.0.2.32 192.0.2.32
+if lab/scripts/android-ue-screen-chain.sh --smoke-judge 0 0; then
+  echo "smoke accepted a host path to port 8000" >&2
+  exit 1
+fi
+lab/scripts/android-ue-screen-chain.sh --smoke-judge 7 0
+grep -q 'Netdrive-only' docs/deploy/android-emulator-host-screen.md
+grep -q 'no RBAC/409/revoke/audit on 3301' docs/deploy/android-emulator-host-screen.md
+grep -q 'docker inspect' docs/deploy/android-emulator-host-screen.md
 grep -q 'android-ue-screen.sh' lab/compose/compose.screen-standalone.yml
 grep -q '/emulator/ue1' lab/compose/compose.screen-standalone.yml
 grep -q 'ANDROID_UE_SCREEN_MAX_SIZE' lab/compose/compose.screen-standalone.yml
@@ -1258,8 +1301,12 @@ if printf '%s\n' "$ready" | grep -q '3302'; then
   exit 1
 fi
 grep -q 'ANDROID_EMULATOR_CONTAINER=b0-agen-emu' lab/compose/screen-standalone.env.example
-grep -q 'REPLACE_ANDROID_EMULATOR_NETWORK' lab/compose/screen-standalone.env.example
+grep -q 'B0_SCREEN_SUBNET=192.0.2.0/24' lab/compose/screen-standalone.env.example
 grep -q 'REPLACE_ANDROID_UE_SCREEN_IMAGE' lab/compose/screen-standalone.env.example
+if grep -q 'ANDROID_EMULATOR_NETWORK' lab/compose/screen-standalone.env.example lab/compose/compose.screen-standalone.yml; then
+  echo "standalone screen still attaches the emulator bridge" >&2
+  exit 1
+fi
 if grep -q 'group_add:' lab/compose/compose.screen-standalone.yml || grep -q '/dev/kvm' lab/compose/compose.screen-standalone.yml; then
   echo "standalone screen compose claims kvm" >&2
   exit 1
@@ -1344,6 +1391,12 @@ screen = services["screen"]
 publish = services["screen-publish"]
 if screen.get("network_mode") != "container:b0-agen-emu":
     sys.exit(f"screen network mode is {screen.get('network_mode')}")
+nets = publish.get("networks") or {}
+if set(nets) != {"b0-screen"}:
+    sys.exit(f"screen-publish networks are {sorted(nets)}")
+b0 = (rendered.get("networks") or {}).get("b0-screen") or {}
+if b0.get("internal") is not True or b0.get("enable_ipv6") not in (False,):
+    sys.exit(f"b0-screen is not an internal IPv4 network: {b0}")
 if screen.get("ports") or screen.get("build") or publish.get("build"):
     sys.exit("screen publishes a port or the file builds an image")
 ports = publish.get("ports") or []

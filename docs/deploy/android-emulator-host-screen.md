@@ -4,11 +4,17 @@ Demo kecil. Emulator sudah jalan di host Docker, di container `b0-agen-emu`, pad
 
 Jalur tamu di [`android-emulator-dashboard.md`](android-emulator-dashboard.md) tetap default. Mode `host-agen` mati sampai dihidupkan dengan sengaja.
 
+Ini demo khusus Netdrive-only, no RBAC/409/revoke/audit on 3301. Tidak ada login pada streamer.
+
 ## Pilihan
 
-Image emulator tidak memuat scrcpy, gRPC 8554, atau VNC. Layar memakai entrypoint sidecar yang sama, `lab/scripts/android-ue-screen.sh`, dengan `ANDROID_UE_SCREEN_MODE=standalone`. Service `screen` memakai `network_mode: container:b0-agen-emu` supaya adb di dalam netns tercapai. Pathname-nya `/emulator/ue1`. Batas default adalah 800, 2 Mbit/s, dan 15 fps.
+Image emulator tidak memuat scrcpy, gRPC 8554, atau VNC. Layar memakai entrypoint sidecar yang sama, `lab/scripts/android-ue-screen.sh`, dengan `ANDROID_UE_SCREEN_MODE=standalone`. Pathname-nya `/emulator/ue1`. Batas default adalah 800, 2 Mbit/s, dan 15 fps.
 
-Sidecar hanya mendengar di `ANDROID_UE_SCREEN_BIND`, yaitu alamat emulator pada bridge-nya. Loopback ditolak: DNAT Docker tidak mencapai bind `127.0.0.1` di dalam netns. Satu-satunya port host adalah `127.0.0.1:3301` pada `screen-publish`. Docker menolak `ports` pada `network_mode: container`, jadi publish tidak menempel pada sidecar. Compose ini tidak menambah publish 5037, 5554, 5555, 8554, atau VNC, dan tidak menyalin jaringan `o5g-screen`.
+Jaringan `b0-screen` internal, IPv4 saja, `enable_ipv6: false`. Anggotanya hanya `b0-agen-emu` (disambung dengan `docker network connect`, tanpa restart) dan `screen-publish`. Sidecar memakai `network_mode: container:b0-agen-emu` dan hanya mendengar di alamat emulator pada `b0-screen`. Loopback ditolak: DNAT Docker tidak mencapai bind `127.0.0.1` di dalam netns.
+
+Chain `ANDROID_UE_SCREEN` dipasang di netns emulator dari host lewat `nsenter -t <pid> -n`. Pid harus milik `b0-agen-emu`. TCP 8000 diterima hanya dari alamat `screen-publish`, sumber lain di-drop. Kontainer emulator tidak mendapat `NET_ADMIN`. Pemasangan yang tidak terverifikasi dibatalkan.
+
+Satu-satunya port host adalah `127.0.0.1:3301`. Compose tidak menambah publish 5037, 5554, 5555, 8554, atau VNC.
 
 Container screen tidak memasang `/dev/kvm` dan tidak mengatur group id. GID kvm milik emulator dideteksi di host dengan `stat -c %g /dev/kvm`. Jangan salin angkanya ke git.
 
@@ -28,15 +34,13 @@ docker save open5g-ws-scrcpy:local | ssh <SSH_TARGET> docker load
 ## Aktifkan
 
 1. Pastikan `b0-agen-emu` sudah jalan. Compose ini tidak membuatnya dan tidak menghentikannya.
-2. Salin nama bridge ke env lokal. Jangan commit hasilnya:
+2. Salin contoh env. Isi `ANDROID_UE_SCREEN_IMAGE` dengan `nama@sha256:`. Alamat di contoh adalah dokumentasi RFC 5737 untuk `b0-screen`, bukan subnet lab. `ANDROID_EMULATOR_CONTAINER` tetap `b0-agen-emu`.
 
    ```bash
-   docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' b0-agen-emu
-   docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' b0-agen-emu
    cp lab/compose/screen-standalone.env.example lab/compose/screen-standalone.env
    ```
 
-   Isi `ANDROID_EMULATOR_NETWORK`, `ANDROID_UE_SCREEN_IMAGE` (`nama@sha256:`), dan `ANDROID_UE_SCREEN_BIND` dari alamat bridge container itu. `ANDROID_EMULATOR_CONTAINER` pada contoh adalah `b0-agen-emu`.
+   Skrip `up` menyambungkan emulator ke `b0-screen`, lalu mencocokkan `ANDROID_UE_SCREEN_BIND` dengan `docker inspect`. Kalau tidak sama, skrip berhenti dan emulator tidak dihentikan.
 
 3. Periksa, lalu naikkan:
 
@@ -78,9 +82,11 @@ curl -sS -D- -o /dev/null --max-time 5 \
   http://127.0.0.1:3301/emulator/ue1/
 ```
 
-Respons pertama dari UI di `/emulator/ue1/`. Respons kedua memuat `101 Switching Protocols`. Browser di alamat itu menampilkan frame. `ss -ltn` di host harus menunjukkan `127.0.0.1:3301`, bukan setiap interface.
+Respons pertama dari UI di `/emulator/ue1/`. Respons kedua memuat `101 Switching Protocols`. `ss -ltn` di host harus menunjukkan `127.0.0.1:3301`, bukan setiap interface.
 
-Demo langsung tidak lewat dashboard, jadi tidak ada login pada streamer. Pagarnya adalah publish loopback dan SSH.
+Smoke yang dijalankan `up`: `curl` dari host ke alamat emulator di `b0-screen` port 8000 harus gagal, dan `curl` ke `127.0.0.1:3301` harus berhasil. Kalau 8000 terjangkau, sidecar dimatikan dan chain dilepas. Emulator tetap jalan.
+
+`127.0.0.1:3301` adalah demo khusus Netdrive: no RBAC/409/revoke/audit on 3301. Pagarnya SSH `-L` ke loopback.
 
 ## Dashboard, default mati
 
@@ -108,4 +114,4 @@ Skrip itu hanya mencetak `mode=host-agen upstream=loopback`. URL kosong membuat 
 lab/scripts/android-ue-screen-standalone.sh down
 ```
 
-Itu `docker compose -f lab/compose/compose.screen-standalone.yml --env-file lab/compose/screen-standalone.env down`. Container emulator tidak ikut berhenti. Hentikan proses `ssh -L`. Kembalikan env dashboard: hapus `OPEN5G_EMULATOR_SCREEN_MODE` dan `SCREEN_UPSTREAM_URL`, lalu restart API hanya kalau keduanya sempat di-set. Core tidak diubah.
+Itu melepas chain, memutus `b0-screen` dari `b0-agen-emu`, menghapus jaringan itu, dan menghapus hanya `open5g-screen` serta `open5g-screen-publish`. Perintah itu tidak menjalankan stop atau rm pada `b0-agen-emu`. Hentikan proses `ssh -L`. Kembalikan env dashboard: hapus `OPEN5G_EMULATOR_SCREEN_MODE` dan `SCREEN_UPSTREAM_URL`, lalu restart API hanya kalau keduanya sempat di-set. Core tidak diubah.

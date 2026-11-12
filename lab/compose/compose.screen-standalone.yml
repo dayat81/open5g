@@ -1,10 +1,9 @@
-# Screen beside an emulator that is already running. This file does not start
-# that emulator, the core, or the dashboard, and it has no build key.
-# The sidecar is lab/scripts/android-ue-screen.sh. It listens only on
-# ANDROID_UE_SCREEN_BIND, which is the emulator address on its bridge.
-# Loopback is refused here: Docker DNAT cannot reach a 127.0.0.1 bind
-# inside the emulator netns. screen-publish is the only host port, on 127.0.0.1.
-# down does not stop the emulator container.
+# Screen beside the emulator that is already running.
+# Do not start or recreate that container. There is no build key.
+# b0-screen is internal. Its compose member is screen-publish only.
+# The emulator is attached later with docker network connect.
+# The sidecar joins the emulator netns and binds its address on b0-screen.
+# The only host publish is 127.0.0.1:3301.
 name: open5g-screen-standalone
 services:
   screen:
@@ -32,25 +31,30 @@ services:
     image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
     container_name: open5g-screen-publish
     restart: "no"
-    depends_on:
-      screen:
-        condition: service_started
     entrypoint: ["/bin/sh", "/opt/open5g/android-ue-screen-publish.sh"]
     environment:
       ANDROID_EMULATOR_CONTAINER: ${ANDROID_EMULATOR_CONTAINER:-b0-agen-emu}
       SCREEN_UPSTREAM_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
       SCREEN_PUBLISH_PORT: "3301"
+      SCREEN_PUBLISH_BIND: ${SCREEN_PUBLISH_ADDR:?SCREEN_PUBLISH_ADDR}
     ports:
       - "127.0.0.1:${SCREEN_HOST_PORT:-3301}:3301"
     volumes:
       - ../scripts/android-ue-screen-bind.sh:/opt/open5g/android-ue-screen-bind.sh:ro
       - ../scripts/android-ue-screen-publish.sh:/opt/open5g/android-ue-screen-publish.sh:ro
-    networks: [emulator]
+    networks:
+      b0-screen:
+        ipv4_address: ${SCREEN_PUBLISH_ADDR:?SCREEN_PUBLISH_ADDR}
     cpus: 0.25
     mem_limit: 128m
     security_opt:
       - no-new-privileges:true
 networks:
-  emulator:
-    external: true
-    name: ${ANDROID_EMULATOR_NETWORK:?ANDROID_EMULATOR_NETWORK}
+  b0-screen:
+    name: b0-screen
+    internal: true
+    enable_ipv6: false
+    ipam:
+      config:
+        - subnet: ${B0_SCREEN_SUBNET:?B0_SCREEN_SUBNET}
+          gateway: ${B0_SCREEN_GATEWAY:?B0_SCREEN_GATEWAY}
