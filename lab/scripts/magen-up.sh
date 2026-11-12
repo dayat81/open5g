@@ -92,7 +92,7 @@ if [ "$gui_only" -eq 1 ] || [ "$with_dashboard" -eq 1 ]; then
   for key in O5G_DASHBOARD_API_IMAGE O5G_DASHBOARD_WEB_IMAGE O5G_SCREEN_IMAGE O5G_POSTGRES_IMAGE; do
     value=$(get_pin "$key")
     if magen_is_placeholder "$value" || ! magen_digest_ok "$value"; then
-      echo "magen: dashboard profile is closed until a digest built from PR #13 at beded744 is pinned. See docs/deploy/magen.md." >&2
+      echo "magen: dashboard profile is closed until a digest built from PR #13 at a680f8b is pinned. See docs/deploy/magen.md." >&2
       exit 1
     fi
   done

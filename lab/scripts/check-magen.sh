@@ -234,8 +234,12 @@ printf '%s\n' "$sgi" | awk '
   s && $1 == "egress:" { found = 1 }
   END { exit(found ? 0 : 1) }
 '
-lab/scripts/magen-build-images.sh --check-sha beded744 | grep -q beded744f315fa270573adda558167e83eeafb10
-lab/scripts/magen-build-images.sh --check-sha beded744f315fa270573adda558167e83eeafb10 >/dev/null
+lab/scripts/magen-build-images.sh --check-sha a680f8b | grep -q a680f8b469d51e4c1d95d433f4b97c84d153a622
+lab/scripts/magen-build-images.sh --check-sha a680f8b469d51e4c1d95d433f4b97c84d153a622 >/dev/null
+expect_fail oldpin lab/scripts/magen-build-images.sh --check-sha beded744
+grep -q 'refusing SHA' /tmp/magen-oldpin.err
+expect_fail oldpinfull lab/scripts/magen-build-images.sh --check-sha beded744f315fa270573adda558167e83eeafb10
+grep -q 'refusing SHA' /tmp/magen-oldpinfull.err
 expect_fail oldsha lab/scripts/magen-build-images.sh --check-sha 7fe7e85
 grep -q 'refusing SHA' /tmp/magen-oldsha.err
 expect_fail sha lab/scripts/magen-build-images.sh --check-sha 3a6498c3b89ce990222d1b284e20caaee2372339

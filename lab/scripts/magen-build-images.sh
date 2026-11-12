@@ -7,8 +7,8 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=magen-lib.sh
 . "$script_dir/magen-lib.sh"
 
-expected=beded744f315fa270573adda558167e83eeafb10
-tag=beded744
+expected=a680f8b469d51e4c1d95d433f4b97c84d153a622
+tag=a680f8b
 sha=$expected
 do_build=1
 save_dir=""
@@ -49,7 +49,7 @@ if [ -z "$out" ]; then
 fi
 
 case "$sha" in
-  beded744|beded744f315fa270573adda558167e83eeafb10) ;;
+  a680f8b|a680f8b469d51e4c1d95d433f4b97c84d153a622) ;;
   *)
     echo "magen: refusing SHA ${sha}. Images must be built from ${expected} (PR #13). B0/B2 images from #12 are rejected." >&2
     exit 1
@@ -102,7 +102,7 @@ dashboard_id=$(docker image inspect -f '{{.Id}}' "o5g-dashboard:${tag}")
 docker build -t "o5g-dashboard-web:${tag}" -f "$work/dashboard/frontend/Dockerfile" "$work/dashboard/frontend"
 web_id=$(docker image inspect -f '{{.Id}}' "o5g-dashboard-web:${tag}")
 docker pull postgres:16
-# postgres:16 is the upstream tag. It is not built from beded744.
+# postgres:16 is the upstream tag. It is not built from the #13 SHA.
 postgres_ref=$(docker image inspect --format '{{index .RepoDigests 0}}' postgres:16)
 case "$postgres_ref" in
   postgres@sha256:*) ;;
