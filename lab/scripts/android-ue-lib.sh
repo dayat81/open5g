@@ -227,6 +227,24 @@ android_ue_android_image_ok() {
   printf '%s\n' "$image" | grep -Eq '@sha256:[0-9A-Fa-f]{64}$'
 }
 
+# Both sides are sha256 digests. A placeholder or a different id fails closed.
+# The local tag is not accepted by this function.
+android_ue_image_id_ok() {
+  local want=$1
+  local have=$2
+  case "$want" in
+    sha256:*) ;;
+    *) want="sha256:${want}" ;;
+  esac
+  case "$have" in
+    sha256:*) ;;
+    *) have="sha256:${have}" ;;
+  esac
+  printf '%s\n' "$want" | grep -Eq '^sha256:[0-9A-Fa-f]{64}$' || return 1
+  printf '%s\n' "$have" | grep -Eq '^sha256:[0-9A-Fa-f]{64}$' || return 1
+  [ "$want" = "$have" ]
+}
+
 # Host nft rules for the UE netns. lo is accepted, so ::1 on lo stays open.
 # policy drop covers every other interface. No extra ::1 match.
 android_ue_render_ip6_nft() {
@@ -294,10 +312,11 @@ android_ue_container_pid() {
   printf '%s\n' "$pid"
 }
 
-# Fail closed unless the UEMU prefix is canonical IPv4 and misses the UE/PDN
-# pool, uu addresses, PDN addresses, and cgnat addresses. OTHER_SUBNET is the
-# other user's UEMU prefix. Later args are kind=value with kind pool, uu, pdn,
-# or cgnat.
+# Fail closed unless the UEMU prefix is canonical IPv4 and misses every
+# canonical UE/PDN pool, uu address, PDN address, and cgnat address.
+# Empty values and REPLACE_/CHANGEME placeholders are not overlap inputs.
+# OTHER_SUBNET is the other user's UEMU prefix. Later args are kind=value
+# with kind pool, uu, pdn, or cgnat.
 android_ue_uemu_check() {
   python3 - "$@" <<'PY'
 import ipaddress
@@ -312,8 +331,16 @@ def fail(msg):
     sys.stderr.write(msg + "\n")
     sys.exit(1)
 
+def skipped(text):
+    if text is None:
+        return True
+    stripped = text.strip()
+    if not stripped:
+        return True
+    return "REPLACE_" in stripped or "CHANGEME" in stripped
+
 def network(text, label):
-    if not text or "REPLACE_" in text or "CHANGEME" in text:
+    if skipped(text):
         fail("android-ue: %s is empty or still a placeholder" % label)
     try:
         net = ipaddress.ip_network(text, strict=True)
@@ -324,7 +351,7 @@ def network(text, label):
     return net
 
 def address(text, label):
-    if not text or "REPLACE_" in text or "CHANGEME" in text:
+    if skipped(text):
         fail("android-ue: %s is empty or still a placeholder" % label)
     try:
         ip = ipaddress.ip_address(text)
@@ -355,6 +382,8 @@ for item in args[4:]:
     kind, value = item.split("=", 1)
     if kind not in {"pool", "uu", "pdn", "cgnat"}:
         fail("android-ue: unknown UEMU overlap kind %s" % kind)
+    if skipped(value):
+        continue
     if kind == "pool":
         pool = network(value, "UE pool")
         if subnet.overlaps(pool):
