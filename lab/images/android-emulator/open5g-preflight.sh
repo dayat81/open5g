@@ -15,6 +15,57 @@ if ! [ -c /dev/kvm ]; then
   exit 1
 fi
 
+android_emulator_avd_guard() {
+  local avd_home=${ANDROID_AVD_HOME:-/data}
+  local leftover
+  case "$avd_home" in
+    /data|/data/)
+      return 0
+      ;;
+    /root/.android|/root/.android/*)
+      echo "android-emulator: ANDROID_AVD_HOME must not be /root/.android. adb keys stay in the container layer." >&2
+      return 1
+      ;;
+  esac
+  if [ ! -d "$avd_home" ]; then
+    echo "android-emulator: ANDROID_AVD_HOME ${avd_home} is not a directory" >&2
+    return 1
+  fi
+  find "$avd_home" -type d -name snapshots -print0 | while IFS= read -r -d '' snap; do
+    rm -rf -- "$snap"
+  done
+  find "$avd_home" \( \
+    -name adbkey -o -name adbkey.pub -o -name userdata-qemu.img \
+    -o -name userdata-qemu.img.qcow2 -o -name cache.img -o -name accounts.db \
+  \) -print0 | while IFS= read -r -d '' junk; do
+    rm -f -- "$junk"
+  done
+  leftover=$(find "$avd_home" \( -name adbkey -o -name adbkey.pub -o -name userdata-qemu.img -o -name accounts.db \) -print)
+  if [ -n "$leftover" ]; then
+    echo "android-emulator: AVD directory still has an adb key, account database, or userdata image" >&2
+    printf '%s\n' "$leftover" >&2
+    return 1
+  fi
+}
+
+if [ "${ANDROID_UE_ISOLATED:-}" = "1" ]; then
+  echo "android-emulator: ANDROID_UE_ISOLATED=1, skipping dummy0, ULA, and AI_ADDRCONFIG"
+  if ! ip -6 addr show dev lo | grep -q 'inet6 ::1'; then
+    echo "android-emulator: ::1 is missing on lo" >&2
+    exit 1
+  fi
+  all_v6=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo missing)
+  if [ "$all_v6" = "1" ]; then
+    echo "android-emulator: disable_ipv6 on all is 1. This preflight does not set it." >&2
+    exit 1
+  fi
+  if ip -6 addr show scope global | grep -q 'inet6 '; then
+    echo "android-emulator: a global IPv6 address is present. eth must not have one in isolated mode." >&2
+    ip -6 addr show scope global >&2 || true
+    exit 1
+  fi
+  echo "android-emulator: ::1 is on lo and eth has no global IPv6 address"
+else
 ula=${ANDROID_UE_IPV6_ULA:-fdc2:fd97:24a4::1/128}
 python3 - "$ula" <<'PY'
 import ipaddress
@@ -103,6 +154,9 @@ except socket.gaierror as exc:
     sys.exit("android-emulator: getaddrinfo ::1 with AI_ADDRCONFIG failed: %s" % exc)
 print("android-emulator: ULA %s on dummy0; getaddrinfo ::1 with AI_ADDRCONFIG succeeded" % want)
 PY
+fi
+
+android_emulator_avd_guard
 
 echo "android-emulator: accel-check"
 emulator -accel-check

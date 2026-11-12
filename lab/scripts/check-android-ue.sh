@@ -10,6 +10,7 @@ scripts=(
   lab/scripts/android-ue-lib.sh
   lab/scripts/android-ue-up.sh
   lab/scripts/android-ue-down.sh
+  lab/scripts/android-emulator-standalone.sh
   lab/scripts/android-ue-enb.sh
   lab/scripts/android-ue-route.sh
   lab/scripts/android-ue-seed.sh
@@ -45,7 +46,8 @@ for key in UE1_IMSI UE1_KI UE1_OPC UE1_IMEI UE2_IMSI UE2_KI UE2_OPC UE2_IMEI \
   ANDROID_UE_DNS_IMAGE ANDROID_UE_SOCKS_ADDR ANDROID_UE_LAB_SUBNET \
   ANDROID_UE_PGW_DNS UE1_ADDR UE2_ADDR CGNAT_EGRESS_ADDR \
   ANDROID_UE_TUNNEL_USER ANDROID_UE_TUNNEL_PUBKEY \
-  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE ANDROID_UE_KVM_GID; do
+  ANDROID_UE_SGWU_GTPU_ROUTE ANDROID_UE_SGI_PROBE ANDROID_UE_KVM_GID \
+  ANDROID_UE_ANDROID_IMAGE_ID; do
   value=$(awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' "$example")
   case "$value" in
     REPLACE_*) ;;
@@ -59,6 +61,8 @@ done
 echo "secret scan"
 scan_paths=(
   lab/compose/docker-compose.android-ue.optional.yml
+  lab/compose/android-ue-android.fragment.yml
+  lab/compose/docker-compose.android-emulator.standalone.yml
   lab/compose/android-ue.env.example
   lab/config/ran/android-ue.conf.template
   lab/config/cgnat
@@ -74,6 +78,7 @@ scan_paths=(
   lab/scripts/android-ue-lib.sh
   lab/scripts/android-ue-up.sh
   lab/scripts/android-ue-down.sh
+  lab/scripts/android-emulator-standalone.sh
   lab/scripts/android-ue-seed.sh
   lab/scripts/android-ue-set-addr.sh
   lab/scripts/android-ue-tunnel.sh
@@ -218,10 +223,14 @@ if grep -q '127.0.0.11' lab/scripts/android-ue-route.sh; then
   echo "UE guard still matches 127.0.0.11 after Docker rewrites the DNS port" >&2
   exit 1
 fi
-if ! grep -q -- '-dns-server' lab/compose/docker-compose.android-ue.optional.yml; then
-  echo "emulator is missing -dns-server" >&2
+if grep -q -- '-dns-server' lab/compose/docker-compose.android-ue.optional.yml \
+  lab/compose/android-ue-android.fragment.yml \
+  lab/scripts/gen-android-ue.sh; then
+  echo "compose bakes -dns-server; up applies ANDROID_UE_DNS" >&2
   exit 1
 fi
+grep -q 'android_ue_apply_dns_flag' lab/scripts/android-ue-lib.sh
+grep -q 'android_ue_apply_dns_flag' lab/scripts/android-ue-up.sh
 
 echo "seed is insert-only"
 js=$(lab/scripts/android-ue-seed.sh --print-js)
@@ -384,7 +393,7 @@ for sysctl_key in \
   net.ipv6.conf.default.forwarding \
   net.ipv6.conf.default.disable_ipv6
 do
-  if ! printf '%s\n' "$gen_out" | grep -q "$sysctl_key"; then
+  if ! grep -q -F -- "$sysctl_key" <<< "$gen_out"; then
     echo "generator output is missing ${sysctl_key}" >&2
     exit 1
   fi
@@ -512,18 +521,67 @@ grep -q 'sys.boot_completed' lab/scripts/android-ue-up.sh
 grep -q 'emulator -accel-check' lab/scripts/android-ue-up.sh
 grep -q 'getent ahosts ::1' lab/scripts/android-ue-up.sh
 grep -q 'ANDROID_UE_KVM_GID' lab/scripts/gen-android-ue.sh
-grep -q 'group_add:' lab/compose/docker-compose.android-ue.optional.yml
+grep -q 'group_add:' lab/compose/android-ue-android.fragment.yml
 grep -q 'upf-enb-s1u' lab/scripts/android-ue-down.sh
 if grep -q 'ANDROID_UE_UPF_S1U_SUBNET' docs/deploy/android-ue-lab5g-dev.md docs/integration/android-ue-per-user.md; then
   echo "ANDROID_UE_UPF_S1U_SUBNET is still documented" >&2
   exit 1
 fi
-if grep -n -E '^[[:space:]]*ports:' lab/compose/docker-compose.android-ue.optional.yml lab/scripts/gen-android-ue.sh; then
-  echo "android-ue still publishes a port; uu is an internal network" >&2
+if grep -n -E '0\.0\.0\.0:|"[0-9]+:(5554|5555|5900|6080)"' \
+  lab/compose/android-ue-android.fragment.yml \
+  lab/compose/docker-compose.android-ue.optional.yml \
+  lab/scripts/gen-android-ue.sh; then
+  echo "android publishes a port that is not bound to 127.0.0.1" >&2
   exit 1
 fi
-if grep -n -E 'ADB_HOST_PORT|:[0-9]*:(5554|5555|5900|6080)' lab/compose/docker-compose.android-ue.optional.yml lab/scripts/gen-android-ue.sh; then
-  echo "android-ue still publishes ADB or VNC to the host" >&2
+for port in '127.0.0.1:15554:5554' '127.0.0.1:15555:5555' '127.0.0.1:16554:5554' '127.0.0.1:16555:5555'; do
+  if ! grep -q "$port" lab/compose/android-ue-android.fragment.yml; then
+    echo "android fragment is missing ${port}" >&2
+    exit 1
+  fi
+done
+if grep -n -E 'network_mode:|cap_add:|privileged:|depends_on:' lab/compose/android-ue-android.fragment.yml; then
+  echo "android fragment shares a netns, adds a cap, or depends on the route sidecar" >&2
+  exit 1
+fi
+grep -q 'internal: true' lab/compose/android-ue-android.fragment.yml
+grep -q 'enable_ipv6: false' lab/compose/android-ue-android.fragment.yml
+grep -q 'name: open5g-uemu1' lab/compose/android-ue-android.fragment.yml
+grep -q 'path: android-ue-android.fragment.yml' lab/compose/docker-compose.android-emulator.standalone.yml
+if grep -n -E '^[[:space:]]*android[0-9]+:' lab/compose/docker-compose.android-emulator.standalone.yml; then
+  echo "standalone wrapper defines its own android service" >&2
+  exit 1
+fi
+if grep -q 'ANDROID_UE_ISOLATED' \
+  lab/compose/docker-compose.android-ue.optional.yml \
+  lab/compose/android-ue-android.fragment.yml \
+  lab/compose/docker-compose.android-emulator.standalone.yml \
+  lab/scripts/gen-android-ue.sh \
+  lab/compose/android-ue.env.example; then
+  echo "dummy0 preflight skip leaked into production compose or the generator" >&2
+  exit 1
+fi
+grep -q 'ANDROID_UE_ISOLATED:-}' lab/images/android-emulator/open5g-preflight.sh
+grep -q 'inet6 ::1' lab/images/android-emulator/open5g-preflight.sh
+grep -q 'scope global' lab/images/android-emulator/open5g-preflight.sh
+if grep -E -q 'sysctl|[[:space:]]ip link (add|set)|disable_ipv6=1' lab/images/android-emulator/open5g-preflight.sh; then
+  echo "preflight writes sysctls or changes interfaces" >&2
+  exit 1
+fi
+if grep -q '0 skips the boot wait' lab/compose/android-ue.env.example; then
+  echo "BOOT_GATE comment still says 0 skips the wait" >&2
+  exit 1
+fi
+grep -q 'does not inject the preflight skip' docs/deploy/android-ue-lab5g-dev.md
+grep -q 'android_ue_uemu_network_name' lab/scripts/android-ue-down.sh
+phase_b=$(awk '/^android_ue_phase_b_attach\(\)/,/^}/' lab/scripts/android-ue-up.sh)
+if printf '%s\n' "$phase_b" | grep -E -q 'MASQUERADE|ip_forward|nsenter|iptables'; then
+  echo "phase B attach is already implemented" >&2
+  exit 1
+fi
+phase_b_down=$(awk '/^android_ue_phase_b_detach\(\)/,/^}/' lab/scripts/android-ue-down.sh)
+if printf '%s\n' "$phase_b_down" | grep -E -q 'MASQUERADE|ip_forward|nsenter|iptables'; then
+  echo "phase B detach is already implemented" >&2
   exit 1
 fi
 extra_flags=$(awk -F= '$1 == "ANDROID_UE_EXTRA_FLAGS" { sub(/^[^=]*=/, ""); print; exit }' lab/compose/android-ue.env.example)
@@ -875,11 +933,137 @@ if android_ue_android_image_ok 'example.invalid/android@sha256:0123456789abcdef'
   exit 1
 fi
 android_ue_android_image_ok 'example.invalid/android@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+image_pin=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+android_ue_image_id_ok "$image_pin" "$image_pin"
+android_ue_image_id_ok "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" "$image_pin"
+if android_ue_image_id_ok "$image_pin" "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"; then
+  echo "a different local image id was accepted" >&2
+  exit 1
+fi
+if android_ue_image_id_ok "REPLACE_ANDROID_UE_ANDROID_IMAGE_ID" "$image_pin"; then
+  echo "a placeholder image id was accepted" >&2
+  exit 1
+fi
+grep -q 'docker image inspect' lab/scripts/android-ue-up.sh
+grep -q 'ANDROID_UE_ANDROID_IMAGE_ID' lab/scripts/android-ue-up.sh
 if android_ue_kvm_gid_ok 0 0 || android_ue_kvm_gid_ok abc 44; then
   echo "KVM gid check accepted a bad value" >&2
   exit 1
 fi
 android_ue_kvm_gid_ok 44 44
+
+echo "UEMU prefix, DNS flag, metrics flag, and AVD sanitize"
+if [ "$(android_ue_adb_host_port 1)" != "15555" ] || [ "$(android_ue_adb_host_port 2)" != "16555" ]; then
+  echo "adb host port does not match the fragment" >&2
+  exit 1
+fi
+if [ "$(android_ue_console_host_port 1)" != "15554" ] || [ "$(android_ue_console_host_port 2)" != "16554" ]; then
+  echo "console host port does not match the fragment" >&2
+  exit 1
+fi
+android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.8/29 \
+  pool=10.45.0.0/16 \
+  uu=10.99.11.31 uu=10.99.11.32 uu=10.99.11.33 uu=10.99.11.34 \
+  pdn=10.45.0.10 pdn=10.45.0.11 \
+  cgnat=10.99.9.30 cgnat=198.51.100.40 cgnat=100.64.0.1
+if android_ue_uemu_check 10.45.0.0/29 10.45.0.1 10.45.0.2 203.0.113.8/29 pool=10.45.0.0/16 >/dev/null 2>&1; then
+  echo "UEMU subnet overlapping the UE pool was accepted" >&2
+  exit 1
+fi
+if android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.8/29 uu=203.0.113.2 >/dev/null 2>&1; then
+  echo "UEMU subnet containing a uu address was accepted" >&2
+  exit 1
+fi
+if android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.0/29 cgnat=198.51.100.40 >/dev/null 2>&1; then
+  echo "overlapping per-user UEMU subnets were accepted" >&2
+  exit 1
+fi
+android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.8/29 \
+  cgnat=REPLACE_CGNAT_EGRESS_ADDR pdn=REPLACE_UE1_ADDR uu=
+android_ue_uemu_check \
+  "$(env_get ANDROID_UE_UEMU1_SUBNET)" \
+  "$(env_get ANDROID_UE_UEMU1_GW)" \
+  "$(env_get ANDROID_UE_UEMU1_ANDROID)" \
+  "$(env_get ANDROID_UE_UEMU2_SUBNET)" \
+  "pool=$(env_get UE_POOL)" \
+  "uu=$(env_get UE1_UU)" \
+  "uu=$(env_get UE1_ENB_UU)" \
+  "uu=$(env_get UE2_UU)" \
+  "uu=$(env_get UE2_ENB_UU)" \
+  "pdn=$(env_get UE1_ADDR)" \
+  "pdn=$(env_get UE2_ADDR)" \
+  "cgnat=$(env_get CGNAT_SGI_ADDR)" \
+  "cgnat=$(env_get CGNAT_EGRESS_ADDR)" \
+  "cgnat=$(env_get CGNAT_SNAT_ADDR)"
+case "$(env_get UE1_ADDR)" in
+  REPLACE_*) ;;
+  *)
+    echo "example UE1_ADDR must stay a placeholder for the boot-only overlap test" >&2
+    exit 1
+    ;;
+esac
+case "$(env_get CGNAT_EGRESS_ADDR)" in
+  REPLACE_*) ;;
+  *)
+    echo "example CGNAT_EGRESS_ADDR must stay a placeholder for the boot-only overlap test" >&2
+    exit 1
+    ;;
+esac
+dns_plain=$(android_ue_apply_dns_flag "-no-audio" "")
+if [ "$dns_plain" != "-no-audio" ]; then
+  echo "empty ANDROID_UE_DNS changed EXTRA_FLAGS" >&2
+  exit 1
+fi
+dns_set=$(android_ue_apply_dns_flag "-no-audio" "192.0.2.53")
+if [ "$dns_set" != "-no-audio -dns-server 192.0.2.53" ]; then
+  echo "ANDROID_UE_DNS was not appended as -dns-server" >&2
+  exit 1
+fi
+if android_ue_apply_dns_flag "-no-audio" "127.0.0.11" >/dev/null 2>&1; then
+  echo "ANDROID_UE_DNS accepted 127.0.0.11" >&2
+  exit 1
+fi
+if ! android_ue_help_has_metrics $'usage\n    -no-metrics\n'; then
+  echo "metrics probe missed -no-metrics" >&2
+  exit 1
+fi
+if android_ue_help_has_metrics "usage without that flag"; then
+  echo "metrics probe accepted a help text that lacks -no-metrics" >&2
+  exit 1
+fi
+dropped=$(android_ue_drop_metrics_flag "-no-metrics -no-audio -partition-size 2048")
+if [ "$dropped" != "-no-audio -partition-size 2048" ]; then
+  echo "metrics flag was not removed: ${dropped}" >&2
+  exit 1
+fi
+avd_dir=$(mktemp -d)
+printf 'key' >"$avd_dir/adbkey"
+printf 'pub' >"$avd_dir/adbkey.pub"
+printf 'img' >"$avd_dir/userdata-qemu.img"
+printf 'db' >"$avd_dir/accounts.db"
+mkdir -p "$avd_dir/snapshots"
+printf 'snap' >"$avd_dir/snapshots/default_boot"
+printf 'ini' >"$avd_dir/config.ini"
+android_ue_avd_sanitize "$avd_dir"
+if [ -e "$avd_dir/adbkey" ] || [ -e "$avd_dir/adbkey.pub" ] || [ -e "$avd_dir/userdata-qemu.img" ] || [ -e "$avd_dir/accounts.db" ] || [ -d "$avd_dir/snapshots" ]; then
+  echo "AVD sanitize left an adb key, account, or userdata" >&2
+  exit 1
+fi
+if [ ! -f "$avd_dir/config.ini" ]; then
+  echo "AVD sanitize removed the AVD skeleton" >&2
+  exit 1
+fi
+android_ue_avd_wipe "$avd_dir"
+if [ -e "$avd_dir/config.ini" ]; then
+  echo "AVD wipe left config.ini" >&2
+  exit 1
+fi
+rmdir "$avd_dir"
+mkdir -p "$tmp/not-avd/.android"
+if android_ue_avd_sanitize "$tmp/not-avd/.android" >/dev/null 2>&1; then
+  echo "AVD sanitize accepted a .android directory" >&2
+  exit 1
+fi
 
 echo "resolver is TCP-only"
 default_core=$(lab/scripts/render-corefile.sh)
@@ -903,8 +1087,18 @@ fi
 echo "up-script service list"
 without=$(lab/scripts/android-ue-up.sh --env-file "$example" --print-services)
 printf '%s\n' "$without" | grep -qx 'ue1'
+if printf '%s\n' "$without" | grep -qx 'android1'; then
+  echo "integrated up starts android before phase B" >&2
+  exit 1
+fi
 if printf '%s\n' "$without" | grep -qx 'egress'; then
   echo "egress is in the default service list" >&2
+  exit 1
+fi
+boot_only_services=$(lab/scripts/android-ue-up.sh --env-file "$example" --boot-only --print-services)
+printf '%s\n' "$boot_only_services" | grep -qx 'android1'
+if printf '%s\n' "$boot_only_services" | grep -Eq '^(ue1|enb1|cgnat)$'; then
+  echo "--boot-only starts more than android" >&2
   exit 1
 fi
 with_socks=$(lab/scripts/android-ue-up.sh --env-file "$example" --with-socks-egress --print-services)
@@ -939,9 +1133,63 @@ grep -q 'service:ue1' "$rendered"
 grep -q 'service:ue2' "$rendered"
 grep -q 'container_name: l5gd-android1' "$rendered"
 grep -q 'container_name: l5gd-cgnat' "$rendered"
+python3 - "$rendered" <<'PY'
+import sys
+path = sys.argv[1]
+lines = open(path, encoding="utf-8").read().splitlines()
+blocks = {}
+current = None
+in_services = False
+for line in lines:
+    if line.startswith("services:"):
+        in_services = True
+        current = None
+        continue
+    if in_services and line and not line.startswith(" "):
+        in_services = False
+        current = None
+    if not in_services:
+        continue
+    if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":"):
+        current = line.strip()[:-1]
+        blocks[current] = []
+        continue
+    if current is not None:
+        blocks[current].append(line)
+for name in ("android1", "android2"):
+    body = "\n".join(blocks.get(name, []))
+    if not body:
+        sys.exit("rendered compose is missing %s" % name)
+    for bad in ("network_mode:", "cap_add:", "privileged:", "depends_on:", "ANDROID_UE_ISOLATED"):
+        if bad in body:
+            sys.exit("%s still has %s" % (name, bad))
+    if "/dev/kvm" not in body or "127.0.0.1" not in body:
+        sys.exit("%s is missing kvm or a loopback port" % name)
+text = "\n".join(lines)
+if "open5g-uemu1" not in text or "enable_ipv6: false" not in text:
+    sys.exit("rendered uemu network is not IPv4-only internal")
+PY
+standalone_rendered=$tmp/standalone.yml
+"${compose[@]}" \
+  -f lab/compose/docker-compose.android-emulator.standalone.yml \
+  --env-file "$example" \
+  --profile android-standalone \
+  config >"$standalone_rendered"
+grep -q 'container_name: l5gd-android1' "$standalone_rendered"
+if grep -q 'container_name: l5gd-ue1' "$standalone_rendered"; then
+  echo "standalone wrapper includes the UE" >&2
+  exit 1
+fi
+if grep -q 'ANDROID_UE_ISOLATED' "$rendered" "$standalone_rendered"; then
+  echo "rendered compose leaks the dummy0 preflight skip" >&2
+  exit 1
+fi
 grep -q 'android-ue' "$rendered"
 grep -q 'REPLACE_ANDROID_UE_PGW_DNS' "$rendered"
-grep -q -- '-dns-server' "$rendered"
+if grep -q -- '-dns-server' "$rendered" "$standalone_rendered"; then
+  echo "rendered compose bakes -dns-server without ANDROID_UE_DNS" >&2
+  exit 1
+fi
 if grep -q '127.0.0.11' "$rendered"; then
   echo "compose config sends DNS to 127.0.0.11" >&2
   exit 1
@@ -1079,6 +1327,128 @@ if ! "${docker_cmd[@]}" run --rm --network container:android-ue-preflight-ns --c
 fi
 "${docker_cmd[@]}" rm -f android-ue-preflight-ns >/dev/null
 echo "preflight passed without NET_ADMIN"
+if "${docker_cmd[@]}" run --rm --network none --cap-drop ALL \
+  -v "$PWD/lab/images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro" \
+  -v /dev/zero:/dev/kvm:ro \
+  "$preflight_image" bash /opt/open5g-preflight.sh >/tmp/android-ue-preflight-closed.out 2>&1; then
+  cat /tmp/android-ue-preflight-closed.out >&2
+  echo "preflight passed without dummy0" >&2
+  exit 1
+fi
+if "${docker_cmd[@]}" run --rm --network none --cap-drop ALL \
+  -v "$PWD/lab/images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro" \
+  -v /dev/zero:/dev/kvm:ro \
+  -e ANDROID_UE_ISOLATED=true \
+  "$preflight_image" bash /opt/open5g-preflight.sh >/tmp/android-ue-preflight-true.out 2>&1; then
+  echo "ANDROID_UE_ISOLATED=true skipped the dummy0 preflight" >&2
+  exit 1
+fi
+if ! "${docker_cmd[@]}" run --rm --network none --cap-drop ALL \
+  -v "$PWD/lab/images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro" \
+  -v /dev/zero:/dev/kvm:ro \
+  -e ANDROID_UE_ISOLATED=1 \
+  "$preflight_image" bash /opt/open5g-preflight.sh >/tmp/android-ue-preflight-isolated.out 2>&1; then
+  cat /tmp/android-ue-preflight-isolated.out >&2
+  echo "ANDROID_UE_ISOLATED=1 did not skip the dummy0 preflight" >&2
+  exit 1
+fi
+if ! grep -q '::1 is on lo and eth has no global IPv6 address' /tmp/android-ue-preflight-isolated.out; then
+  cat /tmp/android-ue-preflight-isolated.out >&2
+  echo "isolated preflight did not record the ::1 check" >&2
+  exit 1
+fi
+"${docker_cmd[@]}" rm -f android-ue-iso-hold >/dev/null 2>&1 || true
+"${docker_cmd[@]}" network rm android-ue-iso-v4 >/dev/null 2>&1 || true
+if ! "${docker_cmd[@]}" network create android-ue-iso-v4 >/dev/null; then
+  echo "could not create the IPv4 isolated test network" >&2
+  exit 1
+fi
+# The holder is privileged only so this fixture can write eth0's sysctl.
+# The preflight container below drops every capability.
+if ! "${docker_cmd[@]}" run -d --name android-ue-iso-hold --network android-ue-iso-v4 --privileged \
+  "$preflight_image" sleep 60 >/dev/null; then
+  echo "isolated eth holder did not start" >&2
+  exit 1
+fi
+if "${docker_cmd[@]}" exec android-ue-iso-hold ip -6 addr show dev eth0 scope global | grep -q inet6; then
+  "${docker_cmd[@]}" exec android-ue-iso-hold ip -6 addr >&2 || true
+  echo "eth0 already has a global IPv6 address" >&2
+  exit 1
+fi
+if ! "${docker_cmd[@]}" run --rm --network container:android-ue-iso-hold --cap-drop ALL \
+  -v "$PWD/lab/images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro" \
+  -v /dev/zero:/dev/kvm:ro \
+  -e ANDROID_UE_ISOLATED=1 \
+  "$preflight_image" bash /opt/open5g-preflight.sh >/tmp/android-ue-preflight-eth.out 2>&1; then
+  cat /tmp/android-ue-preflight-eth.out >&2
+  echo "isolated preflight failed while ::1 was present and eth had no global IPv6" >&2
+  exit 1
+fi
+if ! "${docker_cmd[@]}" exec android-ue-iso-hold ip -6 addr del ::1/128 dev lo; then
+  echo "could not remove ::1 for the isolated preflight" >&2
+  exit 1
+fi
+if "${docker_cmd[@]}" run --rm --network container:android-ue-iso-hold --cap-drop ALL \
+  -v "$PWD/lab/images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro" \
+  -v /dev/zero:/dev/kvm:ro \
+  -e ANDROID_UE_ISOLATED=1 \
+  "$preflight_image" bash /opt/open5g-preflight.sh >/tmp/android-ue-preflight-no-lo.out 2>&1; then
+  echo "isolated preflight passed without ::1 on lo" >&2
+  exit 1
+fi
+if ! "${docker_cmd[@]}" exec android-ue-iso-hold ip -6 addr add ::1/128 dev lo; then
+  echo "could not restore ::1" >&2
+  exit 1
+fi
+# Enable IPv6 on eth0 only. all.disable_ipv6 stays untouched.
+if ! "${docker_cmd[@]}" exec android-ue-iso-hold sh -c 'printf 0 > /proc/sys/net/ipv6/conf/eth0/disable_ipv6'; then
+  echo "could not enable IPv6 on eth0 without touching all" >&2
+  exit 1
+fi
+if ! "${docker_cmd[@]}" exec android-ue-iso-hold ip -6 addr add 2001:db8::1/64 dev eth0; then
+  "${docker_cmd[@]}" exec android-ue-iso-hold ip -6 addr >&2 || true
+  echo "could not add a documentation global IPv6 address on eth0" >&2
+  exit 1
+fi
+if "${docker_cmd[@]}" run --rm --network container:android-ue-iso-hold --cap-drop ALL \
+  -v "$PWD/lab/images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro" \
+  -v /dev/zero:/dev/kvm:ro \
+  -e ANDROID_UE_ISOLATED=1 \
+  "$preflight_image" bash /opt/open5g-preflight.sh >/tmp/android-ue-preflight-global.out 2>&1; then
+  echo "isolated preflight passed with a global IPv6 address on eth0" >&2
+  exit 1
+fi
+"${docker_cmd[@]}" rm -f android-ue-iso-hold >/dev/null
+"${docker_cmd[@]}" network rm android-ue-iso-v4 >/dev/null
+avd_mount=$tmp/avd-guard
+mkdir -p "$avd_mount/snapshots"
+printf 'key' >"$avd_mount/adbkey"
+printf 'img' >"$avd_mount/userdata-qemu.img"
+printf 'db' >"$avd_mount/accounts.db"
+printf 'snap' >"$avd_mount/snapshots/default_boot"
+printf 'ini' >"$avd_mount/config.ini"
+# The preflight container deletes these files. The directory has to be writable
+# by that container, including when the daemon remaps root.
+chmod -R a+rwx "$avd_mount"
+if ! "${docker_cmd[@]}" run --rm --network none --cap-drop ALL \
+  -v "$PWD/lab/images/android-emulator/open5g-preflight.sh:/opt/open5g-preflight.sh:ro" \
+  -v /dev/zero:/dev/kvm:ro \
+  -v "$avd_mount:/opt/open5g-avd" \
+  -e ANDROID_UE_ISOLATED=1 \
+  -e ANDROID_AVD_HOME=/opt/open5g-avd \
+  "$preflight_image" bash /opt/open5g-preflight.sh >/tmp/android-ue-preflight-avd.out 2>&1; then
+  cat /tmp/android-ue-preflight-avd.out >&2
+  echo "AVD guard failed inside the preflight" >&2
+  exit 1
+fi
+if [ -e "$avd_mount/adbkey" ] || [ -e "$avd_mount/userdata-qemu.img" ] || [ -e "$avd_mount/accounts.db" ] || [ -d "$avd_mount/snapshots" ]; then
+  echo "preflight left an adb key, account, or userdata on the AVD volume" >&2
+  exit 1
+fi
+if [ ! -f "$avd_mount/config.ini" ]; then
+  echo "preflight removed the AVD skeleton" >&2
+  exit 1
+fi
 mount_env=$(mktemp)
 mount_override=$(mktemp)
 if [ "${docker_cmd[0]}" = sudo ]; then
@@ -1091,7 +1461,8 @@ cleanup_mount() {
     -f "$mount_override" --env-file "$mount_env" --profile android-ue --profile socks-egress \
     rm -sf cgnat egress >/dev/null 2>&1 || true
   "${docker_cmd[@]}" rm -f android-ue-egress-proc >/dev/null 2>&1 || true
-  "${docker_cmd[@]}" network rm android-ue-mount-sgi android-ue-mount-egress >/dev/null 2>&1 || true
+  "${docker_cmd[@]}" rm -f android-ue-iso-hold >/dev/null 2>&1 || true
+  "${docker_cmd[@]}" network rm android-ue-mount-sgi android-ue-mount-egress open5g-uemu1 open5g-uemu2 android-ue-iso-v4 >/dev/null 2>&1 || true
   rm -f "$mount_env" "$mount_override"
   rm -rf "$tmp"
 }
