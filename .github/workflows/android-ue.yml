@@ -38,3 +38,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the Open5G Android emulator image
         run: bash lab/images/android-emulator/build.sh
+
+  screen-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the ws-scrcpy image
+        run: docker build -f lab/images/ws-scrcpy/Dockerfile -t open5g-ws-scrcpy:local lab/images/ws-scrcpy
