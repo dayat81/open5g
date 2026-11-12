@@ -211,7 +211,7 @@ emit_uemu() {
     ipam:
       config:
         - subnet: \${ANDROID_UE_UEMU${n}_SUBNET:?ANDROID_UE_UEMU${n}_SUBNET}
-          gateway: \${ANDROID_UE_UEMU${n}_GW:?ANDROID_UE_UEMU${n}_GW}
+          gateway: \${ANDROID_UE_UEMU${n}_BRIDGE:?ANDROID_UE_UEMU${n}_BRIDGE}
 EOF
 }
 

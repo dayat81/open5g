@@ -295,7 +295,7 @@ android_ue_wait_boot() {
 
 android_ue_enable_ip_forward() {
   local n=$1
-  local pid subnet chain
+  local pid subnet chain nat_rules fwd_rules in4_rules policy_rules
   pid=$(android_ue_ue_pid "$n")
   subnet=$(get "ANDROID_UE_UEMU${n}_SUBNET")
   for chain in ANDROID_UE_FWD ANDROID_UE_IN4 ANDROID_UE_GUARD; do
@@ -304,19 +304,26 @@ android_ue_enable_ip_forward() {
       exit 1
     fi
   done
-  if ! nsenter -t "$pid" -n iptables -t nat -S ANDROID_UE_NAT | grep -q MASQUERADE; then
+  if ! nat_rules=$(nsenter -t "$pid" -n iptables -t nat -S ANDROID_UE_NAT); then
     echo "android-ue: nat chain ANDROID_UE_NAT is missing; not enabling ip_forward" >&2
     exit 1
   fi
-  if ! nsenter -t "$pid" -n iptables -S ANDROID_UE_FWD | grep -q -- '--clamp-mss-to-pmtu'; then
+  fwd_rules=$(nsenter -t "$pid" -n iptables -S ANDROID_UE_FWD)
+  in4_rules=$(nsenter -t "$pid" -n iptables -S ANDROID_UE_IN4)
+  policy_rules=$(nsenter -t "$pid" -n iptables -S)
+  if ! grep -F -q -- 'MASQUERADE' <<< "$nat_rules"; then
+    echo "android-ue: nat chain ANDROID_UE_NAT is missing MASQUERADE; not enabling ip_forward" >&2
+    exit 1
+  fi
+  if ! grep -F -q -- '--clamp-mss-to-pmtu' <<< "$fwd_rules"; then
     echo "android-ue: ANDROID_UE_FWD is missing TCPMSS; not enabling ip_forward" >&2
     exit 1
   fi
-  if ! nsenter -t "$pid" -n iptables -S ANDROID_UE_IN4 | grep -q -- "-d ${subnet} "; then
+  if ! grep -F -q -- "-d ${subnet} " <<< "$in4_rules"; then
     echo "android-ue: ANDROID_UE_IN4 does not drop new packets toward ${subnet}; not enabling ip_forward" >&2
     exit 1
   fi
-  if ! nsenter -t "$pid" -n iptables -S | grep -q '^-P FORWARD DROP'; then
+  if ! grep -F -q -- '-P FORWARD DROP' <<< "$policy_rules"; then
     echo "android-ue: FORWARD policy is not DROP; not enabling ip_forward" >&2
     exit 1
   fi
@@ -440,7 +447,7 @@ android_ue_measure_boot() {
 android_ue_boot_only() {
   local n=$1
   local allow image kvm_gid host_kvm_gid mem_raw limit_raw mem_mib limit_mib flags dns
-  local subnet gw android other_subnet persist avd_dir boot_tmp isolated_file persist_file
+  local subnet gw android bridge other_subnet persist avd_dir boot_tmp isolated_file persist_file
   local -a overlap
   if [ "$user" = "ue2" ]; then
     allow=$(get ANDROID_UE_ALLOW_SECOND)
@@ -506,9 +513,15 @@ android_ue_boot_only() {
       ;;
   esac
   dns=$(get ANDROID_UE_DNS)
+  if [ "$boot_only" -eq 1 ]; then
+    android_ue_dns_ok boot-only "$dns"
+  else
+    android_ue_dns_ok integrated "$dns"
+  fi
   subnet=$(get "ANDROID_UE_UEMU${n}_SUBNET")
   gw=$(get "ANDROID_UE_UEMU${n}_GW")
   android=$(get "ANDROID_UE_UEMU${n}_ANDROID")
+  bridge=$(get "ANDROID_UE_UEMU${n}_BRIDGE")
   if [ "$n" = 1 ]; then
     other_subnet=$(get ANDROID_UE_UEMU2_SUBNET)
   else
@@ -519,7 +532,7 @@ android_ue_boot_only() {
   overlap+=("uu=$(get UE1_UU)" "uu=$(get UE1_ENB_UU)" "uu=$(get UE2_UU)" "uu=$(get UE2_ENB_UU)")
   overlap+=("pdn=$(get UE1_ADDR)" "pdn=$(get UE2_ADDR)")
   overlap+=("cgnat=$(get CGNAT_SGI_ADDR)" "cgnat=$(get CGNAT_EGRESS_ADDR)" "cgnat=$(get CGNAT_SNAT_ADDR)")
-  android_ue_uemu_check "$subnet" "$gw" "$android" "$other_subnet" "${overlap[@]}"
+  android_ue_uemu_check "$subnet" "$gw" "$android" "$bridge" "$other_subnet" "${overlap[@]}"
   flags=$(android_ue_prepare_extra_flags "$image" "$flags" "$dns")
   export ANDROID_UE_EXTRA_FLAGS="$flags"
   export ANDROID_UE_KVM_GID="$kvm_gid"

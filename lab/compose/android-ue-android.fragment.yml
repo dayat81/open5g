@@ -65,7 +65,7 @@ networks:
     ipam:
       config:
         - subnet: ${ANDROID_UE_UEMU1_SUBNET:?ANDROID_UE_UEMU1_SUBNET}
-          gateway: ${ANDROID_UE_UEMU1_GW:?ANDROID_UE_UEMU1_GW}
+          gateway: ${ANDROID_UE_UEMU1_BRIDGE:?ANDROID_UE_UEMU1_BRIDGE}
 
   uemu2:
     name: open5g-uemu2
@@ -74,5 +74,5 @@ networks:
     ipam:
       config:
         - subnet: ${ANDROID_UE_UEMU2_SUBNET:?ANDROID_UE_UEMU2_SUBNET}
-          gateway: ${ANDROID_UE_UEMU2_GW:?ANDROID_UE_UEMU2_GW}
+          gateway: ${ANDROID_UE_UEMU2_BRIDGE:?ANDROID_UE_UEMU2_BRIDGE}
 

@@ -313,31 +313,35 @@ if ! iptables -t nat -C POSTROUTING -j ANDROID_UE_NAT 2>/dev/null; then
   iptables -t nat -A POSTROUTING -j ANDROID_UE_NAT
 fi
 iptables -t nat -A ANDROID_UE_NAT -o "$tun" -j MASQUERADE
-if ! iptables -S ANDROID_UE_FWD | grep -q -- '--clamp-mss-to-pmtu'; then
+fwd_rules=$(iptables -S ANDROID_UE_FWD)
+in4_rules=$(iptables -S ANDROID_UE_IN4)
+nat_rules=$(iptables -t nat -S ANDROID_UE_NAT)
+policy_rules=$(iptables -S)
+if ! grep -F -q -- '--clamp-mss-to-pmtu' <<< "$fwd_rules"; then
   echo "android-ue-route: ANDROID_UE_FWD is missing TCPMSS" >&2
   exit 1
 fi
-if ! iptables -S ANDROID_UE_FWD | grep -q -- "-i ${uemu_if} -o ${tun} -j ACCEPT"; then
+if ! grep -F -q -- "-i ${uemu_if} -o ${tun} -j ACCEPT" <<< "$fwd_rules"; then
   echo "android-ue-route: ANDROID_UE_FWD does not accept ${uemu_if} to ${tun}" >&2
   exit 1
 fi
-if ! iptables -S ANDROID_UE_FWD | grep -q -- "-i ${uu_if} -o ${uemu_if} -j DROP"; then
+if ! grep -F -q -- "-i ${uu_if} -o ${uemu_if} -j DROP" <<< "$fwd_rules"; then
   echo "android-ue-route: ANDROID_UE_FWD does not drop ${uu_if} to ${uemu_if}" >&2
   exit 1
 fi
-if ! iptables -S ANDROID_UE_FWD | grep -q -- "-i ${uemu_if} -o ${uu_if} -j DROP"; then
+if ! grep -F -q -- "-i ${uemu_if} -o ${uu_if} -j DROP" <<< "$fwd_rules"; then
   echo "android-ue-route: ANDROID_UE_FWD does not drop ${uemu_if} to ${uu_if}" >&2
   exit 1
 fi
-if ! iptables -S ANDROID_UE_IN4 | grep -q -- "-i ${tun} -d ${ANDROID_UE_UEMU_SUBNET} -m conntrack --ctstate NEW -j DROP"; then
+if ! grep -F -q -- "-i ${tun} -d ${ANDROID_UE_UEMU_SUBNET} -m conntrack --ctstate NEW -j DROP" <<< "$in4_rules"; then
   echo "android-ue-route: ANDROID_UE_IN4 does not drop new packets from ${tun} to the uemu subnet" >&2
   exit 1
 fi
-if ! iptables -t nat -S ANDROID_UE_NAT | grep -q -- "-o ${tun} -j MASQUERADE"; then
+if ! grep -F -q -- "-o ${tun} -j MASQUERADE" <<< "$nat_rules"; then
   echo "android-ue-route: ANDROID_UE_NAT is missing MASQUERADE" >&2
   exit 1
 fi
-if ! iptables -S | grep -q '^-P FORWARD DROP'; then
+if ! grep -F -q -- '-P FORWARD DROP' <<< "$policy_rules"; then
   echo "android-ue-route: FORWARD policy is not DROP" >&2
   exit 1
 fi

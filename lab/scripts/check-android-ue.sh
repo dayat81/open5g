@@ -1002,29 +1002,38 @@ if [ "$(android_ue_console_host_port 1)" != "15554" ] || [ "$(android_ue_console
   echo "console host port does not match the fragment" >&2
   exit 1
 fi
-android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.8/29 \
+android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.6 203.0.113.8/29 \
   pool=10.45.0.0/16 \
   uu=10.99.11.31 uu=10.99.11.32 uu=10.99.11.33 uu=10.99.11.34 \
   pdn=10.45.0.10 pdn=10.45.0.11 \
   cgnat=10.99.9.30 cgnat=198.51.100.40 cgnat=100.64.0.1
-if android_ue_uemu_check 10.45.0.0/29 10.45.0.1 10.45.0.2 203.0.113.8/29 pool=10.45.0.0/16 >/dev/null 2>&1; then
+if android_ue_uemu_check 10.45.0.0/29 10.45.0.1 10.45.0.2 10.45.0.6 203.0.113.8/29 pool=10.45.0.0/16 >/dev/null 2>&1; then
   echo "UEMU subnet overlapping the UE pool was accepted" >&2
   exit 1
 fi
-if android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.8/29 uu=203.0.113.2 >/dev/null 2>&1; then
+if android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.6 203.0.113.8/29 uu=203.0.113.2 >/dev/null 2>&1; then
   echo "UEMU subnet containing a uu address was accepted" >&2
   exit 1
 fi
-if android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.0/29 cgnat=198.51.100.40 >/dev/null 2>&1; then
+if android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.6 203.0.113.0/29 cgnat=198.51.100.40 >/dev/null 2>&1; then
   echo "overlapping per-user UEMU subnets were accepted" >&2
   exit 1
 fi
-android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.8/29 \
+if android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.1 203.0.113.8/29 >/dev/null 2>&1; then
+  echo "UEMU bridge equal to the UE address was accepted" >&2
+  exit 1
+fi
+if android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.2 203.0.113.8/29 >/dev/null 2>&1; then
+  echo "UEMU bridge equal to the emulator address was accepted" >&2
+  exit 1
+fi
+android_ue_uemu_check 203.0.113.0/29 203.0.113.1 203.0.113.2 203.0.113.6 203.0.113.8/29 \
   cgnat=REPLACE_CGNAT_EGRESS_ADDR pdn=REPLACE_UE1_ADDR uu=
 android_ue_uemu_check \
   "$(env_get ANDROID_UE_UEMU1_SUBNET)" \
   "$(env_get ANDROID_UE_UEMU1_GW)" \
   "$(env_get ANDROID_UE_UEMU1_ANDROID)" \
+  "$(env_get ANDROID_UE_UEMU1_BRIDGE)" \
   "$(env_get ANDROID_UE_UEMU2_SUBNET)" \
   "pool=$(env_get UE_POOL)" \
   "uu=$(env_get UE1_UU)" \
@@ -1067,6 +1076,40 @@ if [ "$dns_set" != "-no-audio -dns-server 192.0.2.53" ]; then
 fi
 if android_ue_apply_dns_flag "-no-audio" "127.0.0.11" >/dev/null 2>&1; then
   echo "ANDROID_UE_DNS accepted 127.0.0.11" >&2
+  exit 1
+fi
+android_ue_dns_ok boot-only ""
+android_ue_dns_ok boot-only "REPLACE_ANDROID_UE_DNS"
+android_ue_dns_ok integrated "192.0.2.53"
+if android_ue_dns_ok integrated "" >/dev/null 2>&1; then
+  echo "integrated path accepted an empty ANDROID_UE_DNS" >&2
+  exit 1
+fi
+if android_ue_dns_ok integrated "REPLACE_ANDROID_UE_DNS" >/dev/null 2>&1; then
+  echo "integrated path accepted a placeholder ANDROID_UE_DNS" >&2
+  exit 1
+fi
+if android_ue_dns_ok integrated "127.0.0.11" >/dev/null 2>&1; then
+  echo "integrated path accepted Docker DNS" >&2
+  exit 1
+fi
+if android_ue_dns_ok boot-only "127.0.0.11" >/dev/null 2>&1; then
+  echo "boot-only accepted Docker DNS" >&2
+  exit 1
+fi
+grep -q 'android_ue_dns_ok integrated' lab/scripts/android-ue-up.sh
+grep -q 'android_ue_dns_ok boot-only' lab/scripts/android-ue-up.sh
+if grep -n -E 'iptables[^|]*\|[[:space:]]*grep' \
+  lab/scripts/android-ue-route.sh \
+  lab/scripts/android-ue-up.sh \
+  lab/scripts/android-ue-down.sh \
+  lab/scripts/android-ue-lib.sh; then
+  echo "iptables output is piped to grep" >&2
+  exit 1
+fi
+sigpipe_rules=$(python3 -c 'print("--clamp-mss-to-pmtu\n" + ("pad\n" * 20000), end="")')
+if ! grep -F -q -- '--clamp-mss-to-pmtu' <<< "$sigpipe_rules"; then
+  echo "here-string grep missed the first iptables rule" >&2
   exit 1
 fi
 if ! android_ue_help_has_metrics $'usage\n    -no-metrics\n'; then
@@ -1167,11 +1210,53 @@ if [ -n "${ANDROID_UE_REQUIRE_COMPOSE_VERSION:-}" ] && [ "$version" != "${ANDROI
   exit 1
 fi
 rendered=$tmp/rendered.yml
+rendered_json=$tmp/rendered.json
 "${compose[@]}" \
   -f lab/compose/docker-compose.android-ue.optional.yml \
   --env-file "$example" \
   --profile android-ue \
   config >"$rendered"
+"${compose[@]}" \
+  -f lab/compose/docker-compose.android-ue.optional.yml \
+  --env-file "$example" \
+  --profile android-ue \
+  config --format json >"$rendered_json"
+python3 - "$rendered_json" <<'PY'
+import json
+import sys
+
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+expected = {
+    "uemu1": {
+        "gateway": "203.0.113.6",
+        "ue1": "203.0.113.1",
+        "android1": "203.0.113.2",
+    },
+    "uemu2": {
+        "gateway": "203.0.113.14",
+        "ue2": "203.0.113.9",
+        "android2": "203.0.113.10",
+    },
+}
+services = doc.get("services") or {}
+for key, want in expected.items():
+    configs = (((doc.get("networks") or {}).get(key) or {}).get("ipam") or {}).get("config") or []
+    if len(configs) != 1 or configs[0].get("gateway") != want["gateway"]:
+        sys.exit("IPAM gateway for %s is not %s" % (key, want["gateway"]))
+    gateway = configs[0]["gateway"]
+    seen = []
+    for name, address in want.items():
+        if name == "gateway":
+            continue
+        got = ((services.get(name) or {}).get("networks") or {}).get(key) or {}
+        if got.get("ipv4_address") != address:
+            sys.exit("%s on %s is %s, expected %s" % (name, key, got.get("ipv4_address"), address))
+        seen.append(address)
+        if address == gateway:
+            sys.exit("IPAM gateway %s is also %s on %s" % (gateway, name, key))
+    if len(seen) != len(set(seen)):
+        sys.exit("container addresses on %s collide" % key)
+PY
 grep -q 'service:ue1' "$rendered"
 grep -q 'service:ue2' "$rendered"
 grep -q 'container_name: l5gd-android1' "$rendered"
