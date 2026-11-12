@@ -12,6 +12,7 @@ echo "shellcheck"
 shellcheck -x -P SCRIPTDIR \
   lab/scripts/gen-magen.sh \
   lab/scripts/magen-android-wait.sh \
+  lab/scripts/magen-netns.sh \
   lab/scripts/magen-build-images.sh \
   lab/scripts/magen-lib.sh \
   lab/scripts/magen-preflight.sh \
@@ -44,6 +45,10 @@ if "ANDROID_UE_UU" in text:
     raise SystemExit("compose still requires ANDROID_UE_UU")
 if "ANDROID_UE_ADB_MODE: standalone" not in text:
     raise SystemExit("o5g android is missing ANDROID_UE_ADB_MODE=standalone")
+if 'ANDROID_UE_IPV6_MODE: "off"' not in text:
+    raise SystemExit("o5g android is missing ANDROID_UE_IPV6_MODE=off")
+if "open5g-preflight.sh:/opt/open5g-preflight.sh:ro" not in text:
+    raise SystemExit("o5g android does not mount the profile preflight")
 if "ANDROID_UE_IPV6_MODE" in Path("lab/scripts/gen-android-ue.sh").read_text(encoding="utf-8").split("return 0", 1)[0]:
     raise SystemExit("IPV6_MODE leaked into the lab emit branch")
 for raw in text.splitlines():
@@ -225,9 +230,16 @@ printf '%s\n' "$sgi" | awk '
   s && $1 == "egress:" { found = 1 }
   END { exit(found ? 0 : 1) }
 '
-lab/scripts/magen-build-images.sh --check-sha 7fe7e85
+lab/scripts/magen-build-images.sh --check-sha beded744 | grep -q beded744f315fa270573adda558167e83eeafb10
+lab/scripts/magen-build-images.sh --check-sha beded744f315fa270573adda558167e83eeafb10 >/dev/null
+expect_fail oldsha lab/scripts/magen-build-images.sh --check-sha 7fe7e85
+grep -q 'refusing SHA' /tmp/magen-oldsha.err
 expect_fail sha lab/scripts/magen-build-images.sh --check-sha 3a6498c3b89ce990222d1b284e20caaee2372339
 grep -q 'refusing SHA' /tmp/magen-sha.err
+if grep -q 7fe7e85 lab/scripts/magen-build-images.sh docs/deploy/magen.md lab/compose/env.example.magen; then
+  echo "old image SHA remains in the pin, docs, or example" >&2
+  exit 1
+fi
 : > "$work/empty-images.env"
 expect_fail images lab/scripts/magen-up.sh --env-file "$env_file" --images-env "$work/empty-images.env" --with-dashboard --dry-run
 # shellcheck source=magen-lib.sh
@@ -318,6 +330,17 @@ assert body["core_up"] == "skipped"
 assert "8000" in body["screen_port_8000"]
 PY
 
+echo "netns plans"
+lab/scripts/magen-netns.sh --plan nsenter --container o5g-android1 | grep -q 'nsenter -t <pid> -n # o5g-android1'
+lab/scripts/magen-netns.sh --plan helper --container o5g-android1 | grep -q 'docker run --rm --network container:o5g-android1 --cap-add NET_ADMIN --cap-add NET_RAW --pull never # iptables-legacy from the pinned emulator image'
+expect_fail netnsname lab/scripts/magen-netns.sh --plan helper --container b0-agen-emu
+grep -q 'open5g-preflight.sh:/opt/open5g-preflight.sh' lab/compose/compose.magen.yml
+grep -q 'O5G_DASHBOARD_WEB_IMAGE' lab/scripts/magen-build-images.sh
+bad_screen=$(mktemp -d)
+printf '200\n' > "$bad_screen/ws"
+printf 'open\n' > "$bad_screen/host8000"
+expect_fail screenbad env MAGEN_SCREEN_DIR="$bad_screen" lab/scripts/magen-smoke.sh --env-file "$env_file" --fixture
+
 echo "up dry-run"
 lab/scripts/magen-up.sh --env-file "$env_file" --dry-run | grep -q 'changed=0'
 printf '\nANDROID_UE_UU=192.0.2.50\n' >> "$work/with-uu.env"
@@ -326,7 +349,7 @@ printf '\nANDROID_UE_UU=192.0.2.50\n' >> "$work/with-uu.env"
 expect_fail uu lab/scripts/magen-up.sh --env-file "$work/with-uu.env" --dry-run
 
 echo "example placeholders"
-for key in O5G_ANDROID_IMAGE UE1_IMSI UE1_KI UE1_OPC UE1_IMEI O5G_SESSION_PEPPER; do
+for key in O5G_ANDROID_IMAGE O5G_SCREEN_IMAGE O5G_DASHBOARD_WEB_IMAGE UE1_IMSI UE1_KI UE1_OPC UE1_IMEI O5G_SESSION_PEPPER; do
   value=$(awk -F= -v k="$key" '$1 == k { print substr($0, index($0, "=") + 1); exit }' lab/compose/env.example.magen)
   case "$value" in
     REPLACE_*) ;;

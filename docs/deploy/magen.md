@@ -18,7 +18,7 @@ Copy `infra/inventory/magen.example` to the gitignored `infra/inventory/magen.ym
 
 The UPF creates a userspace TUN named `ogstun`. It does not use `gtp` or `gtp5g`. Preflight requires `/dev/net/tun`. By default the UPF is not attached to `o5g-egress` or any other non-internal network, so SGi curl is `SKIPPED`. `--with-sgi-egress` (Ansible `magen_sgi_egress`, default false) is the only way to attach it, and that command prints `needs Netdrive approval: egress via host`.
 
-Before QEMU, `magen-up` enters the emulator netns from the host with `nsenter -t <pid> -n`. The pid has to belong to `o5g-androidN`. It sets `disable_ipv6=1` on every non-lo interface, including the `o5g-screen` interface, and never writes `all`. It then installs `ANDROID_UE_SCREEN`, which accepts TCP 8000 only from the listener address and drops every other source, including `o5g-uemuN`. The same IPv6 lock and an `ip6tables` DROP policy are applied in `ueN` when the host IPv6 stack is on. The emulator has no `NET_ADMIN`.
+Before QEMU, `magen-up` enters the emulator netns. When the operator is root and `nsenter` is present, it uses `nsenter -t <pid> -n`. A docker-group user, which is the Ansible path, has no `CAP_SYS_ADMIN`, so that call would fail closed and QEMU would never start. The fallback is a short-lived helper: `docker run --rm --network container:o5g-androidN --cap-add NET_ADMIN --cap-add NET_RAW --pull never`. `NET_ADMIN` is the capability that writes a per-interface IPv6 sysctl and the iptables chain inside the shared netns. `NET_RAW` is there for the raw table. `--privileged` is not used, because it would also grant `SYS_ADMIN` and host devices. The helper image is the already pinned emulator image (`O5G_ANDROID_IMAGE`, or `O5G_NETNS_HELPER_IMAGE` when set). That digest is required for every `up`, including a boot that has not opened the dashboard. The build adds `iptables`, `iproute2`, and `procps` to it, and the helper calls `iptables-legacy` because this host kernel has no nft. `--pull never` means a missing image fails closed instead of downloading. The emulator process itself still has no `NET_ADMIN`; only the helper container does. The container id from `docker inspect` must match the name `o5g-androidN` or `o5g-ueN`, and the pid must match the same way the old pid guard did. The emulator process still has no `NET_ADMIN`. The script sets `disable_ipv6=1` on every non-lo interface, including the `o5g-screen` interface, and never writes `all`. It then installs `ANDROID_UE_SCREEN`, which accepts TCP 8000 only from the listener address and drops every other source, including `o5g-uemuN`. The same IPv6 lock and an `ip6tables` DROP policy are applied in `ueN` when the host IPv6 stack is on. A failed check stops the run.
 
 Live smoke reads `adb getprop sys.boot_completed`, `gsm.sim.state`, `dumpsys telephony.registry`, and logcat from the emulator. It does not use the radio-ok fixture unless `--fixture` is set. Missing evidence is a failure. The radio gate passes only when `boot_completed` is 1, `gsm.sim.state` is READY or LOADED, `telephony.registry` is non-empty, and logcat contains a ModemSimulator line. An empty logcat or empty adb output fails. A failure is reported with the evidence and stops. There is no automatic fallback. The preferred later option, only if Architect picks it, is a `dummy0` ULA anchor installed by the host with `nsenter -n` and a pid guard before QEMU, still without `NET_ADMIN` and never with `all=1`. `-feature -ModemSimulator` is only the last resort.
 
@@ -28,12 +28,14 @@ Postgres is not published. Host port 5432 stays with the Postgres that is alread
 
 ## Images from PR #13
 
-Lab Ops builds the emulator, the screen sidecar, and the dashboard/listener image from commit `7fe7e85cdae36f0615b115627e36c73412a4644c`. CI does not build or push them. `magen-build-images.sh` refuses every other SHA, including the #12 local tag `open5g-android-emulator:local`. It can `docker save` an archive for a host that has no internet, and it writes `lab/compose/magen.images.env` with `sha256:` image ids. That file is gitignored.
+Lab Ops builds the emulator, the screen sidecar, the dashboard/listener image, and the dashboard web image from commit `beded744f315fa270573adda558167e83eeafb10`. That is the PR #13 tree this profile expects. `compose.magen.yml` reads `O5G_DASHBOARD_WEB_IMAGE` for the web service and `O5G_DASHBOARD_API_IMAGE` for both the API and the listener (`python -m open5g_dashboard.screen`). `dashboard/frontend/Dockerfile` and `dashboard/backend/Dockerfile` both exist at that commit, so one pin script builds all four. CI does not build or push them. `magen-build-images.sh` refuses every other SHA, including the previous pin and the #12 local tag `open5g-android-emulator:local`. It can `docker save` an archive for a host that has no internet, and it writes `lab/compose/magen.images.env` with `sha256:` image ids, including `O5G_DASHBOARD_WEB_IMAGE`. That file is gitignored. Copy the four keys into the gitignored env. The example file keeps `REPLACE_` placeholders.
+
+The emulator image at that SHA runs `/opt/open5g-preflight.sh` before QEMU. The copy baked into `beded744` requires `dummy0`, a ULA, and `getaddrinfo(::1, AI_ADDRCONFIG)`, and it has no `ANDROID_UE_IPV6_MODE`. Architect's decision for this profile is no `dummy0` and no ULA by default, with `::1` on `lo` still mandatory. Compose bind-mounts the #20 `open5g-preflight.sh` onto `/opt/open5g-preflight.sh` and sets `ANDROID_UE_IPV6_MODE=off`. That script still requires `::1`, refuses `all=1`, requires `disable_ipv6=1` on every non-lo interface, and does not enter the `dummy0` branch. The #13 branch is not changed. The dashboard profile opens only when the API, web, screen, and Postgres digests are all present and SGi is off.
 
 ```bash
 bash lab/scripts/magen-build-images.sh --save "$HOME/o5g-state"
 # on MAGEN_HOST, after copying the archive:
-docker load < o5g-images-7fe7e85.tar.gz
+docker load < o5g-images-beded744.tar.gz
 ```
 
 The dashboard profile stays closed while any of those digests is empty, and also while `--with-sgi-egress` is set.
@@ -42,17 +44,7 @@ The dashboard profile stays closed while any of those digests is empty, and also
 
 `o5g-screen` is internal and IPv4-only. The emulators and the screen listener are the only members. ws-scrcpy binds the emulator address on that network, not `127.0.0.1`, because Docker DNAT does not reach a loopback socket inside a container netns. The `ANDROID_UE_SCREEN` chain accepts TCP 8000 only from the listener address and drops every other source. The listener publishes `127.0.0.1:3301` and no other host port.
 
-The sidecar and listener programs are built from the PR #13 tree. Do not combine that tree with another commit by hand. After Architect gives a GO for a #13 SHA, build the dashboard API image, the web image, and the screen image from that tree, then pin each digest in `magen.env`. Until those digests replace the `REPLACE_` placeholders, the `dashboard` profile stays off and `--with-dashboard` fails closed.
-
-```bash
-git fetch origin cursor/android-emulator-dashboard-8cae
-git checkout <PR13_SHA_WITH_GO>
-docker build -f dashboard/backend/Dockerfile -t open5g-dashboard-api:build dashboard/backend
-docker build -f dashboard/frontend/Dockerfile -t open5g-dashboard-web:build dashboard/frontend
-docker image inspect --format '{{index .RepoDigests 0}}' open5g-dashboard-api:build
-```
-
-Record the `@sha256:` value in the gitignored env. Do not commit it.
+The sidecar, the listener, and the web image are built by `magen-build-images.sh` from `beded744`. Do not combine that tree with another commit by hand. Until the four digests replace the `REPLACE_` placeholders, the `dashboard` profile stays off and `--with-dashboard` fails closed.
 
 ## State, backup, restore
 
@@ -64,7 +56,7 @@ State lives in `$HOME/o5g-state`, mode `0700`. Guest dumps go to `$HOME/o5g-stat
 2. `--tags backup` reads the guest. It does not change the guest.
 3. `--tags up` starts project `open5g`. The VM lab is still the fallback.
 4. `--tags restore` loads the dumps into `o5g-mongo` and the dashboard Postgres.
-5. `--tags smoke` writes `$HOME/o5g-state/smoke.json` and `smoke.md`. CI runs this with fixtures. The live core, attach, and screen session run in a later Lab Ops window.
+5. `--tags smoke` writes `$HOME/o5g-state/smoke.json` and `smoke.md`. The tag is `never`, so a default play does not run it. CI runs the script with fixtures, including a screen fixture that expects websocket status 101 on `127.0.0.1:3301/emulator/ue1` and a closed host path to emulator port 8000. The live run does the same two checks against the listener and is the S1 evidence when Lab Ops runs it.
 
 Rollback is `--tags down`. That removes `o5g-` resources only. Add `--volumes` on `magen-down.sh` only when the volumes should go too. The VM lab is unchanged, and `b0-agen-emu` is unchanged.
 

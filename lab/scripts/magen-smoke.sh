@@ -118,6 +118,62 @@ fi
 if ! magen_radio_gate "$(cat "$radio_dir/boot" 2>/dev/null || true)" "$(cat "$radio_dir/sim" 2>/dev/null || true)" "$radio_dir/logcat" "$radio_dir/registry"; then
   exit 1
 fi
+magen_screen_evidence_ok() {
+  local ws=$1 host8000=$2
+  ws=$(printf '%s' "$ws" | tr -d '\r')
+  if [ "$ws" != "101" ]; then
+    echo "magen: screen gate FAIL. websocket status is ${ws:-empty}, expected 101 on 127.0.0.1:3301/emulator/ue1." >&2
+    return 1
+  fi
+  if [ "$host8000" != "closed" ]; then
+    echo "magen: screen gate FAIL. emulator port 8000 is reachable from the host." >&2
+    return 1
+  fi
+  echo "magen: screen gate passed"
+}
+magen_screen_collect_live() {
+  local dest=$1 addr=$2
+  python3 - "$dest" "$addr" <<'PY'
+import socket, sys
+dest, addr = sys.argv[1], sys.argv[2]
+req = (
+    "GET /emulator/ue1/ HTTP/1.1\r\n"
+    "Host: 127.0.0.1:3301\r\n"
+    "Upgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+    "Sec-WebSocket-Version: 13\r\n\r\n"
+)
+status = ""
+try:
+    sock = socket.create_connection(("127.0.0.1", 3301), 2)
+    sock.sendall(req.encode())
+    status = sock.recv(64).decode("ascii", "replace").split(" ", 2)[1]
+    sock.close()
+except Exception:
+    status = ""
+open(dest + "/ws", "w", encoding="utf-8").write(status + "\n")
+host = "open"
+try:
+    probe = socket.create_connection((addr, 8000), 1)
+    probe.close()
+except Exception:
+    host = "closed"
+open(dest + "/host8000", "w", encoding="utf-8").write(host + "\n")
+PY
+}
+if [ "$fixture" -eq 1 ]; then
+  screen_dir=${MAGEN_SCREEN_DIR:-"$(magen_root)/lab/scripts/fixtures/magen/screen-ok"}
+else
+  screen_dir=$(mktemp -d)
+  if ! magen_screen_collect_live "$screen_dir" "$(get O5G_SCREEN_ANDROID1)"; then
+    echo "magen: screen gate FAIL. listener evidence could not be read." >&2
+    exit 1
+  fi
+fi
+if ! magen_screen_evidence_ok "$(cat "$screen_dir/ws" 2>/dev/null || true)" "$(cat "$screen_dir/host8000" 2>/dev/null || true)"; then
+  exit 1
+fi
 python3 - "$(magen_root)/lab/compose/compose.magen.yml" <<'PY'
 import sys
 text = open(sys.argv[1], encoding="utf-8").read()

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the three magen images from PR #13 at one SHA.
+# Build the magen images from PR #13 at one SHA, including the web image.
 # Lab Ops runs this. CI only checks the SHA guard. Do not push to a registry.
 set -euo pipefail
 
@@ -7,7 +7,8 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck source=magen-lib.sh
 . "$script_dir/magen-lib.sh"
 
-expected=7fe7e85cdae36f0615b115627e36c73412a4644c
+expected=beded744f315fa270573adda558167e83eeafb10
+tag=beded744
 sha=$expected
 do_build=1
 save_dir=""
@@ -48,7 +49,7 @@ if [ -z "$out" ]; then
 fi
 
 case "$sha" in
-  7fe7e85|7fe7e85cdae36f0615b115627e36c73412a4644c) ;;
+  beded744|beded744f315fa270573adda558167e83eeafb10) ;;
   *)
     echo "magen: refusing SHA ${sha}. Images must be built from ${expected} (PR #13). B0/B2 images from #12 are rejected." >&2
     exit 1
@@ -77,19 +78,29 @@ cleanup() { git -C "$root" worktree remove --force "$work" >/dev/null 2>&1 || rm
 trap cleanup EXIT
 git -C "$root" worktree add --detach "$work" "$expected" >/dev/null
 
-ANDROID_UE_ANDROID_IMAGE=o5g-emulator:7fe7e85 bash "$work/lab/images/android-emulator/build.sh"
-android_id=$(docker image inspect -f '{{.Id}}' o5g-emulator:7fe7e85)
+ANDROID_UE_ANDROID_IMAGE="o5g-emulator:${tag}" bash "$work/lab/images/android-emulator/build.sh"
+# The helper container reuses this image. iptables-legacy is for the 3.10 host.
+docker build -t "o5g-emulator:${tag}" -f - "$work" <<EOF
+FROM o5g-emulator:${tag}
+USER root
+RUN apt-get update \\
+    && apt-get install -y --no-install-recommends iptables iproute2 procps \\
+    && rm -rf /var/lib/apt/lists/*
+EOF
+android_id=$(docker image inspect -f '{{.Id}}' "o5g-emulator:${tag}")
 
-docker build -t o5g-screen:7fe7e85 -f "$work/lab/images/ws-scrcpy/Dockerfile" "$work/lab/images/ws-scrcpy"
-docker build -t o5g-screen:7fe7e85 -f - "$work" <<'EOF'
-FROM o5g-screen:7fe7e85
+docker build -t "o5g-screen:${tag}" -f "$work/lab/images/ws-scrcpy/Dockerfile" "$work/lab/images/ws-scrcpy"
+docker build -t "o5g-screen:${tag}" -f - "$work" <<EOF
+FROM o5g-screen:${tag}
 COPY lab/scripts/android-ue-screen.sh /opt/android-ue/android-ue-screen.sh
 ENTRYPOINT ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
 EOF
-screen_id=$(docker image inspect -f '{{.Id}}' o5g-screen:7fe7e85)
+screen_id=$(docker image inspect -f '{{.Id}}' "o5g-screen:${tag}")
 
-docker build -t o5g-dashboard:7fe7e85 -f "$work/dashboard/backend/Dockerfile" "$work/dashboard/backend"
-dashboard_id=$(docker image inspect -f '{{.Id}}' o5g-dashboard:7fe7e85)
+docker build -t "o5g-dashboard:${tag}" -f "$work/dashboard/backend/Dockerfile" "$work/dashboard/backend"
+dashboard_id=$(docker image inspect -f '{{.Id}}' "o5g-dashboard:${tag}")
+docker build -t "o5g-dashboard-web:${tag}" -f "$work/dashboard/frontend/Dockerfile" "$work/dashboard/frontend"
+web_id=$(docker image inspect -f '{{.Id}}' "o5g-dashboard-web:${tag}")
 
 pin() {
   local id=$1
@@ -102,12 +113,13 @@ cat >"$out" <<EOF
 O5G_ANDROID_IMAGE=$(pin "$android_id")
 O5G_SCREEN_IMAGE=$(pin "$screen_id")
 O5G_DASHBOARD_API_IMAGE=$(pin "$dashboard_id")
+O5G_DASHBOARD_WEB_IMAGE=$(pin "$web_id")
 EOF
 chmod 0600 "$out"
 echo "magen: pinned image ids in ${out}"
 
 if [ -n "$save_dir" ]; then
   mkdir -p -- "$save_dir"
-  docker save o5g-emulator:7fe7e85 o5g-screen:7fe7e85 o5g-dashboard:7fe7e85 | gzip > "${save_dir}/o5g-images-7fe7e85.tar.gz"
-  echo "magen: saved ${save_dir}/o5g-images-7fe7e85.tar.gz"
+  docker save "o5g-emulator:${tag}" "o5g-screen:${tag}" "o5g-dashboard:${tag}" "o5g-dashboard-web:${tag}" | gzip > "${save_dir}/o5g-images-${tag}.tar.gz"
+  echo "magen: saved ${save_dir}/o5g-images-${tag}.tar.gz"
 fi

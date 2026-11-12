@@ -85,7 +85,7 @@ if [ "$with_dashboard" -eq 1 ]; then
   for key in O5G_DASHBOARD_API_IMAGE O5G_DASHBOARD_WEB_IMAGE O5G_SCREEN_IMAGE O5G_POSTGRES_IMAGE; do
     value=$(get_pin "$key")
     if magen_is_placeholder "$value" || ! magen_digest_ok "$value"; then
-      echo "magen: dashboard profile is closed until a digest built from PR #13 at 7fe7e85 is pinned. See docs/deploy/magen.md." >&2
+      echo "magen: dashboard profile is closed until a digest built from PR #13 at beded744 is pinned. See docs/deploy/magen.md." >&2
       exit 1
     fi
   done
@@ -149,15 +149,16 @@ fi
 listener=$(get O5G_SCREEN_LISTENER)
 lock_one() {
   local name=$1 chain=$2
-  local pid
+  local pid ipv6_args
   pid=$(docker inspect -f '{{.State.Pid}}' "$name")
-  ipv6_args=(--apply --container "$name" --pid "$pid")
+  export O5G_ANDROID_IMAGE="$image"
+  ipv6_args=(--apply-ipv6 --container "$name" --pid "$pid")
   if [ "$ip6" -eq 1 ]; then
     ipv6_args+=(--ip6tables)
   fi
-  bash "$script_dir/magen-ipv6.sh" "${ipv6_args[@]}"
+  bash "$script_dir/magen-netns.sh" "${ipv6_args[@]}"
   if [ "$chain" -eq 1 ]; then
-    bash "$script_dir/magen-screen-chain.sh" --apply --container "$name" --pid "$pid" --listener "$listener"
+    bash "$script_dir/magen-netns.sh" --apply-screen --container "$name" --pid "$pid" --listener "$listener"
     docker exec "$name" touch /tmp/o5g-host-ready
   fi
 }
