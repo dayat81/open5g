@@ -138,6 +138,10 @@ This needs the lab guest, KVM, and an attached UE. CI does not run it.
 
 Before `OPEN5G_EMULATOR_ENABLED=1`, the lab window for PR #12 stays on that branch's tree. This overlay adds `l5gd-screen` and an interface-scoped INPUT rule, so it is not the tree for that window.
 
+## Docker host demo
+
+The guest path and the magen profile below stay as they are. A separate compose file attaches the same sidecar to an emulator that is already running, named `b0-agen-emu`. It does not start that emulator. Access is `ssh -L` only. `OPEN5G_EMULATOR_SCREEN_MODE` stays unset, which is `guest`, unless [`android-emulator-host-screen.md`](android-emulator-host-screen.md) is in use.
+
 ## Standalone emulator on one host
 
 This mode is not the lab UE. `android-ue-up.sh` does not load it, so the `ueN` sysctl preset, the route sidecar, and `write_zero` stay in that order. IN4, the ADB chain, socat on `UE_UU`, and the UE netns IPv6 filter are **N/A** here, not a pass. They return with the lab UE. Do not set `ANDROID_UE_UU` for this mode. The lab image path still refuses an empty uu address, `0.0.0.0`, and loopback.

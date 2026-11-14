@@ -27,7 +27,7 @@ Phase 1 subscriber provisioning is `POST /api/profiles/{id}/provision`. It write
 
 `frontend/` is the Next.js Overview, profile editor, emulator screen, and audit screen. It maps `docs/ux/hifi` classes. Demo mode is the default and is labeled as sample data. It does not replace or wrap `docs/ux/prototype/`.
 
-The emulator tab reverse-proxies a ws-scrcpy sidecar for an assigned UE. It is off unless `OPEN5G_EMULATOR_ENABLED=1`. The runbook is [`docs/deploy/android-emulator-dashboard.md`](../docs/deploy/android-emulator-dashboard.md). A down emulator shows status only. There is no reset or wipe control, and this service does not call the core.
+The emulator tab reverse-proxies a ws-scrcpy sidecar for an assigned UE. It is off unless `OPEN5G_EMULATOR_ENABLED=1`. The runbook is [`docs/deploy/android-emulator-dashboard.md`](../docs/deploy/android-emulator-dashboard.md). `OPEN5G_EMULATOR_SCREEN_MODE` defaults to `guest`. `host-agen` dials `SCREEN_UPSTREAM_URL` only when that value is loopback, and the direct host demo is [`docs/deploy/android-emulator-host-screen.md`](../docs/deploy/android-emulator-host-screen.md). A down emulator shows status only. There is no reset or wipe control, and this service does not call the core.
 
 Not in this tree: a production identity provider, a loaded eBPF program, or a claim that Prometheus is already enabled on the lab NFs. `/api/metrics/drilldown` remains an empty stub. `/api/core/restart` does not restart anything. The eBPF skeleton under `ebpf/` compiles without loading. Live session proof waits until SMF is restored in the lab; this repository does not start that NF.
 

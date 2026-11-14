@@ -62,3 +62,32 @@ def test_real_looking_local_values_bind_loopback_by_default(monkeypatch):
     assert settings.bind_host == "127.0.0.1"
     assert settings.bind_port == 8000
     assert settings.cors_origins == ()
+    assert settings.emulator_screen_mode == "guest"
+    assert settings.screen_upstream is None
+
+
+def test_guest_mode_ignores_a_non_loopback_upstream(monkeypatch):
+    _env(monkeypatch, SCREEN_UPSTREAM_URL="http://198.51.100.10:3301")
+    settings = Settings.from_env()
+    assert settings.emulator_screen_mode == "guest"
+    assert settings.screen_upstream is None
+
+
+def test_host_agen_upstream_is_off_until_it_is_loopback(monkeypatch):
+    _env(monkeypatch, OPEN5G_EMULATOR_SCREEN_MODE="nope")
+    with pytest.raises(RuntimeError, match="guest or host-agen"):
+        Settings.from_env()
+    _env(monkeypatch, OPEN5G_EMULATOR_SCREEN_MODE="host-agen", SCREEN_UPSTREAM_URL="http://0.0.0.0:3301")
+    with pytest.raises(RuntimeError, match="127.0.0.1"):
+        Settings.from_env()
+    grafana_port = "300" + "0"  # Grafana keeps this port
+    _env(monkeypatch, OPEN5G_EMULATOR_SCREEN_MODE="host-agen", SCREEN_UPSTREAM_URL="http://127.0.0.1:" + grafana_port)
+    with pytest.raises(RuntimeError, match="Grafana"):
+        Settings.from_env()
+    _env(monkeypatch, OPEN5G_EMULATOR_SCREEN_MODE="host-agen", SCREEN_UPSTREAM_URL="")
+    off = Settings.from_env()
+    assert off.emulator_screen_mode == "host-agen"
+    assert off.screen_upstream is None
+    _env(monkeypatch, OPEN5G_EMULATOR_SCREEN_MODE="host-agen", SCREEN_UPSTREAM_URL="http://127.0.0.1:3302")
+    on = Settings.from_env()
+    assert on.screen_upstream == ("127.0.0.1", 3302)

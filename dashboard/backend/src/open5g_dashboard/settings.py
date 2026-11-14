@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from open5g_dashboard.emulator import origins_are_isolated, parse_targets
+from open5g_dashboard.emulator import origins_are_isolated, parse_screen_mode, parse_screen_upstream, parse_targets
 from open5g_dashboard.telemetry import merge_endpoints, parse_endpoints
 
 
@@ -93,6 +93,8 @@ class Settings:
     bind_host: str = "127.0.0.1"
     bind_port: int = 8000
     emulator_status_stale_seconds: int = 15
+    emulator_screen_mode: str = "guest"
+    screen_upstream: tuple[str, int] | None = None
     emulator_session_limit: int = 10
     emulator_session_window: float = 60.0
 
@@ -143,6 +145,18 @@ class Settings:
                 raise RuntimeError("the screen origin must use a different host from the dashboard")
             if _origin_port(screen_origin) in {"3000", "3001"}:  # Grafana keeps 3000; 3001 is Next inside the web image
                 raise RuntimeError("the screen origin must not use port 3000 (Grafana) or 3001 (Next inside the web image)")
+        try:
+            screen_mode = parse_screen_mode(os.environ.get("OPEN5G_EMULATOR_SCREEN_MODE", ""))
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        screen_upstream = None
+        if screen_mode == "host-agen":
+            try:
+                screen_upstream = parse_screen_upstream(os.environ.get("SCREEN_UPSTREAM_URL", ""))
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+            if screen_upstream is not None and screen_upstream[1] in {3000, 3001}:  # Grafana keeps 3000; 3001 is Next
+                raise RuntimeError("the screen upstream must not use port 3000 (Grafana) or 3001 (Next inside the web image)")
         mongo_database = os.environ.get("OPEN5G_MONGO_DATABASE", "open5gs").strip() or "open5gs"
         mongo_collection = os.environ.get("OPEN5G_MONGO_COLLECTION", "subscribers").strip() or "subscribers"
         return cls(
@@ -177,6 +191,8 @@ class Settings:
             bind_host=_bind_host(os.environ.get("OPEN5G_BIND_HOST", "127.0.0.1")),
             bind_port=_bind_port(os.environ.get("OPEN5G_BIND_PORT", "8000")),
             emulator_status_stale_seconds=stale,
+            emulator_screen_mode=screen_mode,
+            screen_upstream=screen_upstream,
             emulator_session_limit=_bounded_int(
                 os.environ.get("OPEN5G_EMULATOR_SESSION_LIMIT", "10"), 1, 1000, "OPEN5G_EMULATOR_SESSION_LIMIT"
             ),

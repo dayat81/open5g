@@ -4,6 +4,7 @@ import os
 import socket
 import threading
 import time
+from dataclasses import replace
 
 import psycopg
 import pytest
@@ -18,7 +19,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from open5g_dashboard.api import HASHER, create_app
 from open5g_dashboard.db import apply_migrations, upsert_emulator_screen_status
-from open5g_dashboard.emulator_http import create_screen_app, record_screen_probes
+from open5g_dashboard.emulator_http import _target_for, create_screen_app, record_screen_probes
 from open5g_dashboard.settings import Settings
 
 DATABASE_URL = os.environ.get("OPEN5G_TEST_DATABASE_URL", "postgresql:///open5g_test")
@@ -438,6 +439,56 @@ def test_write_from_the_screen_origin_is_rejected(env):
         headers={"x-csrf-token": env["student"].csrf, "origin": "http://127.0.0.1:3300"},
     )
     assert allowed.status_code == 200, allowed.text
+
+
+def test_guest_target_does_not_follow_the_host_upstream():
+    guest = replace(
+        _settings(8000),
+        emulator_allowed_nets=("192.0.2.0/24",),
+        emulator_screen_mode="guest",
+        screen_upstream=("127.0.0.1", 3302),
+    )
+    row = {"internal_host": "192.0.2.32", "internal_port": 8000}
+    assert _target_for(guest, "ue1", row) == ("192.0.2.32", 8000)
+    host = replace(guest, emulator_screen_mode="host-agen")
+    assert _target_for(host, "ue1", row) == ("127.0.0.1", 3302)
+    assert _target_for(replace(host, screen_upstream=None), "ue1", row) is None
+
+
+def test_host_agen_proxy_dials_loopback_and_keeps_control(env):
+    settings = replace(env["settings"], emulator_screen_mode="host-agen", screen_upstream=("127.0.0.1", env["port"]))
+    with psycopg.connect(DATABASE_URL) as conn:
+        conn.execute(
+            "UPDATE emulator_endpoints SET internal_host = %s, internal_port = %s WHERE ue_id = 'ue1'",
+            ("192.0.2.50", 9),
+        )
+    app = create_app(settings)
+    other = _login(TestClient(app), "student-b@example.test", "student-password-2")
+    denied = other.client.get("/api/emulator/ue1")
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "not_owner"
+    assert env["hits"]["http"] == 0
+    assert env["hits"]["ws"] == 0
+    student = _login(TestClient(app), "student-a@example.test", "student-password-1")
+    opened = student.post("/api/emulator/ue1/session")
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["mode"] == "control"
+    screen = TestClient(create_screen_app(settings))
+    path = opened.json()["screen_url"].split("http://testserver", 1)[1]
+    exchange = screen.get(path, follow_redirects=False)
+    assert exchange.status_code == 302, exchange.text
+    page = screen.get("/emulator/ue1/index.html")
+    assert page.status_code == 200, page.text
+    assert page.text == "screen:index.html"
+    assert env["hits"]["http"] == 1
+    instructor = _login(TestClient(app), "instructor-a@example.test", "instructor-password")
+    busy = instructor.post("/api/emulator/ue1/session")
+    assert busy.status_code == 409
+    assert busy.json()["error"]["code"] == "emulator_control_busy"
+    with screen.websocket_connect("/emulator/ue1/socket", headers={"origin": "http://testserver"}) as socket:
+        socket.send_text("ping")
+        assert socket.receive_text() == "echo:ping"
+    assert env["hits"]["ws"] == 1
 
 
 def test_repeated_session_posts_are_limited(env):

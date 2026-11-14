@@ -99,6 +99,29 @@ def parse_targets(raw: str, nets: tuple[str, ...] = (), screen_port: int = 8000)
     return found
 
 
+def parse_screen_mode(raw: str) -> str:
+    mode = raw.strip() or "guest"
+    if mode not in {"guest", "host-agen"}:
+        raise ValueError("emulator screen mode must be guest or host-agen")
+    return mode
+
+
+def parse_screen_upstream(raw: str) -> tuple[str, int] | None:
+    """Loopback base URL used only by host-agen mode. Empty means the dial stays off."""
+
+    text = raw.strip()
+    if not text:
+        return None
+    parsed = urlparse(text)
+    if parsed.username or parsed.password or parsed.scheme not in {"http", "ws"}:
+        raise ValueError("screen upstream must be http://127.0.0.1:port or ws://127.0.0.1:port")
+    if parsed.hostname != "127.0.0.1" or parsed.port is None or not 1 <= parsed.port <= 65535:
+        raise ValueError("screen upstream must use 127.0.0.1 and an explicit port")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("screen upstream must not include a path or query")
+    return "127.0.0.1", parsed.port
+
+
 def origin_allowed(origin: str | None, allowed: tuple[str, ...]) -> bool:
     if not origin or origin == "null" or not allowed:
         return False

@@ -1,0 +1,60 @@
+# Screen beside the emulator that is already running.
+# Do not start or recreate that container. There is no build key.
+# b0-screen is internal. Its compose member is screen-publish only.
+# The emulator is attached later with docker network connect.
+# The sidecar joins the emulator netns and binds its address on b0-screen.
+# The only host publish is 127.0.0.1:3301.
+name: open5g-screen-standalone
+services:
+  screen:
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: open5g-screen
+    restart: "no"
+    network_mode: "container:${ANDROID_EMULATOR_CONTAINER:-b0-agen-emu}"
+    entrypoint: ["/bin/sh", "/opt/android-ue/android-ue-screen.sh"]
+    environment:
+      ANDROID_UE_SCREEN_MODE: standalone
+      ANDROID_UE_SCREEN_BIND: ${ANDROID_UE_SCREEN_BIND:?ANDROID_UE_SCREEN_BIND}
+      ANDROID_UE_SCREEN_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
+      ANDROID_UE_SCREEN_PATH: ${ANDROID_UE_SCREEN_PATH:-/emulator/ue1}
+      ANDROID_UE_SCREEN_MAX_SIZE: ${ANDROID_UE_SCREEN_MAX_SIZE:-800}
+      ANDROID_UE_SCREEN_BIT_RATE: ${ANDROID_UE_SCREEN_BIT_RATE:-2000000}
+      ANDROID_UE_SCREEN_MAX_FPS: ${ANDROID_UE_SCREEN_MAX_FPS:-15}
+      ANDROID_ADB_SERVER_PORT: "5038"
+    volumes:
+      - ../scripts/android-ue-screen.sh:/opt/android-ue/android-ue-screen.sh:ro
+    cpus: 0.5
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true
+  screen-publish:
+    image: ${ANDROID_UE_SCREEN_IMAGE:?ANDROID_UE_SCREEN_IMAGE}
+    container_name: open5g-screen-publish
+    restart: "no"
+    entrypoint: ["/bin/sh", "/opt/open5g/android-ue-screen-publish.sh"]
+    environment:
+      ANDROID_EMULATOR_CONTAINER: ${ANDROID_EMULATOR_CONTAINER:-b0-agen-emu}
+      SCREEN_UPSTREAM_PORT: ${ANDROID_UE_SCREEN_PORT:-8000}
+      SCREEN_PUBLISH_PORT: "3301"
+      SCREEN_PUBLISH_BIND: ${SCREEN_PUBLISH_ADDR:?SCREEN_PUBLISH_ADDR}
+    ports:
+      - "127.0.0.1:${SCREEN_HOST_PORT:-3301}:3301"
+    volumes:
+      - ../scripts/android-ue-screen-bind.sh:/opt/open5g/android-ue-screen-bind.sh:ro
+      - ../scripts/android-ue-screen-publish.sh:/opt/open5g/android-ue-screen-publish.sh:ro
+    networks:
+      b0-screen:
+        ipv4_address: ${SCREEN_PUBLISH_ADDR:?SCREEN_PUBLISH_ADDR}
+    cpus: 0.25
+    mem_limit: 128m
+    security_opt:
+      - no-new-privileges:true
+networks:
+  b0-screen:
+    name: b0-screen
+    internal: true
+    enable_ipv6: false
+    ipam:
+      config:
+        - subnet: ${B0_SCREEN_SUBNET:?B0_SCREEN_SUBNET}
+          gateway: ${B0_SCREEN_GATEWAY:?B0_SCREEN_GATEWAY}

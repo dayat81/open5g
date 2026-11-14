@@ -42,6 +42,7 @@ lab/**/*.local.yaml
 lab/**/override.env
 lab/compose/android-ue.env
 lab/compose/dashboard.env
+lab/compose/screen-standalone.env
 lab/compose/.env
 
 # Editor and OS

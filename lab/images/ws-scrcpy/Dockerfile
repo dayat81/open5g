@@ -1,5 +1,7 @@
-# Build on a machine that can reach the mirror, then load the image on the guest.
+# Build on a machine that can reach the mirror, then load the image.
 # The guest must not pull this during android-ue-up.
+# The Docker host that runs the emulator has no egress either. Do not build
+# or pull this image there. docker save, then load, and pin name@sha256.
 FROM node:22-bookworm-slim@sha256:5ec23b7c622b00547753bc6ffd78085dd868a68aeb41c8e0a1418f033e13d96d
 
 RUN apt-get update \
