@@ -3,6 +3,7 @@
 D=/home/lab/poc-inet; T=2100; UU_BR=br-5bd8dbed8b33; SRC=172.22.10.1
 cpid(){ docker inspect -f '{{.State.Pid}}' $1 2>/dev/null; }
 [ -f $D/guard.pid ] && kill $(cat $D/guard.pid) 2>/dev/null; pkill -f "$D/guard.sh"; rm -f $D/guard.pid
+bash $D/cgnat.sh remove 2>/dev/null
 pkill -f "$D/gost -L"; sleep 1
 SP=$(cpid l5g-server); if [ -n "$SP" ] && [ "$SP" != 0 ]; then N="nsenter -t $SP -n"
   while $N iptables -t nat -D PREROUTING -s 10.45.0.0/16 -m comment --comment poc-inet -j POC_INET 2>/dev/null; do :; done

@@ -4,6 +4,7 @@
 INET_DIR=~/poc-latency/inet
 RUN=$INET_DIR/run                 # pid/log di host lab
 SOCKS_PORT=11080                  # host lab 127.0.0.1:11080 = reverse dynamic SOCKS dari laptop (ssh -R)
+UDP_PORT=11081                    # host lab 127.0.0.1:11081 = gost relay (UDP-over-TCP) di laptop WSL (ssh -R terpisah) -> CGNAT UDP
 TBL_INET=2100                     # ip rule/table di host lab, VM, UPF
 VM_DIR=/home/lab/poc-inet         # binari + script di lab5g-vm
 LAB_USER="${LAB_USER:-LAB_USER}"

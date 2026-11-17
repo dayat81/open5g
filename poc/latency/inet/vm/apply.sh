@@ -61,4 +61,6 @@ iptables -C DOCKER-USER -i ens3 -o $UU_BR -s $SRC ! -d 10.0.0.0/8 -m comment --c
   { iptables -I DOCKER-USER 1 -i ens3 -o $UU_BR -s $SRC ! -d 10.0.0.0/8 -m comment --comment poc-inet -j ACCEPT; log "DOCKER-USER fwd"; }
 iptables -C DOCKER-USER -i $UU_BR -o ens3 -d $SRC -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment poc-inet -j ACCEPT 2>/dev/null || \
   { iptables -I DOCKER-USER 2 -i $UU_BR -o ens3 -d $SRC -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment poc-inet -j ACCEPT; log "DOCKER-USER ret"; }
+# 6) CGNAT UDP (NAT44 100.64.0.1 port-block + egress gost redu -> relay UDP-over-TCP); nonaktif bila file $D/cgnat_off ada
+[ -f $D/cgnat_off ] || bash $D/cgnat.sh apply
 exit 0
