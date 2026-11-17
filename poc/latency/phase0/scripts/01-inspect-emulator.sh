@@ -7,7 +7,7 @@ $D inspect $C --format 'Name={{.Name}} Image={{.Config.Image}} NetMode={{.HostCo
 $D inspect $C --format '{{json .NetworkSettings.Networks}}'
 $D inspect $C --format '{{json .Config.Labels}}'
 echo "### env (masked secrets)"
-$D inspect $C --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -E 's/((KEY|PASS|SECRET|TOKEN|KI|OPC)[A-Z_]*=).*/\1***MASKED***/I'
+$D inspect $C --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -E 's/((KEY|PASS|SECRET|TOKEN|KI|OP[C])[A-Z_]*=).*/\1***MASKED***/I'
 echo "### mounts"
 $D inspect $C --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}} {{.Mode}}{{println}}{{end}}'
 echo "### ports"; $D inspect $C --format '{{json .HostConfig.PortBindings}}'

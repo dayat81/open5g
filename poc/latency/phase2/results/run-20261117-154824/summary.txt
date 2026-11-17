@@ -1,0 +1,44 @@
+skew: VM-magen=[-8.9965, -8.997] -> -8.9967s (±2.2 ms)  EMU-magen=[-3.9293, -3.9302] -> -3.9298s (±6.8 ms)
+koreksi one_way = raw - off_vm + off_emu = raw + 5.0670 s
+logcat: mglt tx=36 echo=36 flows=16
+RTT marker app (UE->reflector->UE): n=36 min=17.5 p50=33.0 p90=43.3 max=55.3 ms
+mglt.log: baris=216 unik(fid,seq,dir,seg)=216 crc_ok=216/216
+  DL s1u(gtp)   n= 36  one_way_corr ms: min=7.1 p50=24.5 p90=33.9 max=41.6  (raw p50=-5.0425s)
+  DL s5s8(gtp)  n= 36  one_way_corr ms: min=7.1 p50=24.5 p90=33.8 max=40.2  (raw p50=-5.0425s)
+  DL sgi        n= 36  one_way_corr ms: min=7.0 p50=24.4 p90=33.7 max=40.1  (raw p50=-5.0426s)
+  UL s1u(gtp)   n= 36  one_way_corr ms: min=6.5 p50=24.0 p90=32.7 max=39.7  (raw p50=-5.0430s)
+  UL s5s8(gtp)  n= 36  one_way_corr ms: min=6.8 p50=24.1 p90=32.9 max=39.9  (raw p50=-5.0429s)
+  UL sgi        n= 36  one_way_corr ms: min=6.9 p50=24.3 p90=33.1 max=40.0  (raw p50=-5.0427s)
+  UL S1-U->SGi (core, jam VM saja): n=36 p50=0.333 ms max=0.662 ms
+  DL SGi->S1-U (core): n=36 p50=0.190 ms max=1.484 ms
+  reflector turnaround di SGi: n=36 p50=0.124 ms max=1.137 ms
+korelasi marker (orig_dst) <-> zeek-live (resp_h:resp_p, dalam tunnel GTP dari UE):
+  10.99.9.20:53 marker=21 sni=None zeek_conn=0 tap=[] tunnel_parents=[]
+  142.251.156.119:443 marker=21 sni=www.google.com zeek_conn=4 tap=['None', 'mgmt'] tunnel_parents=['C8fJnuanXuAKNGQIl', 'Cd52NkSFcSiG5SbFh']
+  104.20.23.154:443 marker=18 sni=example.com zeek_conn=4 tap=['None'] tunnel_parents=['C8fJnuanXuAKNGQIl', 'Cd52NkSFcSiG5SbFh']
+  103.102.166.224:443 marker=18 sni=en.wikipedia.org zeek_conn=5 tap=['None'] tunnel_parents=['C8fJnuanXuAKNGQIl', 'Cd52NkSFcSiG5SbFh']
+  142.251.10.84:443 marker=9 sni=accounts.google.com zeek_conn=1 tap=['None'] tunnel_parents=['C8fJnuanXuAKNGQIl', 'Cd52NkSFcSiG5SbFh']
+  172.217.112.4:443 marker=9 sni=optimizationguide-pa.googleapis.com zeek_conn=1 tap=['None'] tunnel_parents=['C8fJnuanXuAKNGQIl', 'Cd52NkSFcSiG5SbFh']
+  103.102.166.240:443 marker=9 sni=upload.wikimedia.org zeek_conn=2 tap=['None'] tunnel_parents=['C8fJnuanXuAKNGQIl', 'Cd52NkSFcSiG5SbFh']
+  10.99.9.20:853 marker=3 sni=None zeek_conn=4 tap=['None', 'mgmt'] tunnel_parents=['C8fJnuanXuAKNGQIl', 'Cd52NkSFcSiG5SbFh']
+flow app (logcat):
+  udp flow open 10.111.0.2:39709>10.99.9.20:53 uid=10126 pkg=com.android.chrome
+  tcp deproxy 10.111.0.2:60330>172.26.0.1:8080 req="CONNECT example.com:443 HTTP/1.1" -> 104.20.23.154:443 via /10.0.2.16:42242 uid=10126 pkg=com.android.chrome fid=a7a9d488
+  tcp deproxy 10.111.0.2:60340>172.26.0.1:8080 req="CONNECT example.com:443 HTTP/1.1" -> 104.20.23.154:443 via /10.0.2.16:42252 uid=10126 pkg=com.android.chrome fid=55f3deb6
+  udp flow open 10.111.0.2:60474>10.99.9.20:53 uid=10174 pkg=id.magnon.poc.examine
+  udp flow open 10.111.0.2:41786>10.99.9.20:53 uid=10174 pkg=id.magnon.poc.examine
+  tcp deproxy 10.111.0.2:60342>172.26.0.1:8080 req="CONNECT accounts.google.com:443 HTTP/1.1" -> 142.251.10.84:443 via /10.0.2.16:39646 uid=10126 pkg=com.android.chrome fid=624a94f7
+  tcp deproxy 10.111.0.2:47056>172.26.0.1:8080 req="CONNECT www.google.com:443 HTTP/1.1" -> 142.251.156.119:443 via /10.0.2.16:55504 uid=10126 pkg=com.android.chrome fid=b36ad61f
+  udp flow open 10.111.0.2:54978>10.99.9.20:53 uid=10174 pkg=id.magnon.poc.examine
+  tcp deproxy 10.111.0.2:47064>172.26.0.1:8080 req="CONNECT optimizationguide-pa.googleapis.com:443 HTTP/1.1" -> 172.217.112.4:443 via /10.0.2.16:54576 uid=10126 pkg=com.android.chrome fid=a6a02fab
+  udp flow open 10.111.0.2:36309>10.99.9.20:53 uid=10126 pkg=com.android.chrome
+  tcp deproxy 10.111.0.2:37942>172.26.0.1:8080 req="CONNECT www.google.com:443 HTTP/1.1" -> 142.251.156.119:443 via /10.0.2.16:33646 uid=10126 pkg=com.android.chrome fid=fb6a3341
+  tcp deproxy 10.111.0.2:37936>172.26.0.1:8080 req="CONNECT www.wikipedia.org:443 HTTP/1.1" -> 103.102.166.224:443 via /10.0.2.16:60716 uid=10126 pkg=com.android.chrome fid=4063d845
+  udp flow open 10.111.0.2:22877>10.99.9.20:53 uid=10174 pkg=id.magnon.poc.examine
+  udp flow open 10.111.0.2:33843>10.99.9.20:53 uid=10174 pkg=id.magnon.poc.examine
+  tcp deproxy 10.111.0.2:37954>172.26.0.1:8080 req="CONNECT upload.wikimedia.org:443 HTTP/1.1" -> 103.102.166.240:443 via /10.0.2.16:54224 uid=10126 pkg=com.android.chrome fid=34949274
+  tcp deproxy 10.111.0.2:37966>172.26.0.1:8080 req="CONNECT en.wikipedia.org:443 HTTP/1.1" -> 103.102.166.224:443 via /10.0.2.16:60726 uid=10126 pkg=com.android.chrome fid=e7770d7a
+dekomposisi (pcap magen br-emu, n_ul=36 n_dl=36):
+  UL app(t_ue) -> magen br-emu [skew EMU ±]: n=36 min=2.1 p50=2.4 max=3.1 ms
+  UL magen br-emu -> S1-U [skew VM ±2-3ms]: n=36 min=4.1 p50=21.6 max=37.4 ms
+  DL S1-U -> magen br-emu [skew VM]: n=36 min=6.6 p50=8.8 max=11.8 ms

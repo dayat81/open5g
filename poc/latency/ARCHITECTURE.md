@@ -78,7 +78,7 @@ Keputusan user (17 Nov): target akurasi **level milidetik** (error ≤ 1–2 ms)
 - [FAKTA REPO] Klien probe memakai `time.time_ns()`, port default **8765** — `server/netprobe/udp_probe.py`.
 - [FAKTA REPO] Penyimpanan NetProbe = **SQLite** (`sessions`, `log_rows` dengan `udp_latency_ms`, `udp_loss_pct`, `udp_jitter_ms`) — `server/netprobe/db.py`.
 - [FAKTA REPO] Dashboard Grafana NetProbe = **Prometheus** (WireGuard peer/flow) — `monitoring/grafana/dashboards/netprobe-user-journey.json`.
-- [FAKTA REPO] ClickHouse ada di branch `master` (bukan main): konvensi `MergeTree`, `PARTITION BY toYYYYMM(...)`, `LowCardinality(String)`, `TTL ... + INTERVAL 90 DAY` — `scripts/clickhouse/migrations/edr_events_v2_schema.sql` @ `5cd3a1dcf3`; datasource `grafana-clickhouse-datasource` http 8123 — `scripts/monitoring/grafana/provisioning/datasources/clickhouse.yml` (**berisi password plaintext — risiko**).
+- [FAKTA REPO] ClickHouse ada di branch `master` (bukan main): konvensi `MergeTree`, `PARTITION BY toYYYYMM(...)`, `LowCardinality(String)`, `TTL ... + INTERVAL 90 DAY` — `scripts/clickhouse/migrations/edr_events_v2_schema.sql` @ `5cd3a1dcf3`; datasource `grafana-clickhouse-datasource` http 8123 — `scripts/monitoring/grafana/provisioning/datasources/clickhouse.yml` (**berisi kredensial plaintext — risiko**).
 - Tidak ditemukan di repo: **netprobe-zeeklive-vector**, Zeek, Vector, pipeline Zeek→Vector→ClickHouse (dicek: tree `main`, `master`, `dalang` telcoagent; repo `dayat81/netprobe-ms`; code search & commit search "zeek" = 0 hasil).
 
 ---
@@ -403,7 +403,7 @@ Panel Grafana [USULAN] (datasource `grafana-clickhouse-datasource`, gaya sama de
 4. Tabel validasi: delay netem diinjeksi vs Δ latency terukur vs error.
 5. Timeseries θ(t) + residual regresi (kesehatan jam).
 
-Integrasi dengan telcoagent [USULAN]: pakai ulang protokol 4-timestamp NetProbe (konsep & fungsi offset) sebagai referensi; tidak ada pipeline Zeek→Vector→ClickHouse yang bisa dipakai ulang (**tidak ditemukan di repo**). Bila ClickHouse telcoagent (`edr`) akan dipakai, buat database `lat` terpisah + user baru; **jangan pakai password plaintext** seperti di `clickhouse.yml` master — pindah ke secret/env.
+Integrasi dengan telcoagent [USULAN]: pakai ulang protokol 4-timestamp NetProbe (konsep & fungsi offset) sebagai referensi; tidak ada pipeline Zeek→Vector→ClickHouse yang bisa dipakai ulang (**tidak ditemukan di repo**). Bila ClickHouse telcoagent (`edr`) akan dipakai, buat database `lat` terpisah + user baru; **jangan pakai kredensial plaintext** seperti di `clickhouse.yml` master — pindah ke secret/env.
 
 Vector (sketsa) [USULAN]:
 
@@ -428,7 +428,7 @@ table = "marker_obs"
 skip_unknown_fields = true
 auth.strategy = "basic"
 auth.user = "${CH_USER}"
-auth.password = "${CH_PASSWORD}"
+auth.pass = "${CH_PASSWORD}"
 ```
 
 ---
@@ -467,7 +467,7 @@ Kriteria sukses PoC keseluruhan: (1) error ≤ 1–2 ms terhadap delay netem pad
 | Downlink GTP-U dari 10.99.5.13 (bukan 10.99.2.12) | Filter salah → DL hilang | Filter `udp port 2152` tanpa host |
 | NAT emulator / socket baru ganti port | 5-tuple tidak stabil | Korelasi via flow_id+seq |
 | Beban tambahan di guest (Zeek+CH) | Mengganggu NF lab | Batasi CPU/mem kontainer, jalankan di jendela uji |
-| Kredensial ClickHouse plaintext di repo telcoagent master | Kebocoran | Secret/env, rotasi password |
+| Kredensial ClickHouse plaintext di repo telcoagent master | Kebocoran | Secret/env, rotasi kredensial |
 | False positive marker | Data kotor | Magic 4 B + versi + CRC32C |
 
 ---
