@@ -1,0 +1,22 @@
+### 2026-11-17T11:53:57+0700 android ip/route
+eth0             UP             10.0.2.15/8 
+10.99.9.20 via 10.0.2.2 dev eth0 table 1015 src 10.0.2.15 uid 2000 
+    cache mtu 1500 
+### 2026-11-17T11:53:57+0700 android ping
+PING 10.99.9.20 (10.99.9.20) 56(84) bytes of data.
+64 bytes from 10.99.9.20: icmp_seq=1 ttl=255 time=333 ms
+64 bytes from 10.99.9.20: icmp_seq=2 ttl=255 time=35.8 ms
+64 bytes from 10.99.9.20: icmp_seq=3 ttl=255 time=44.5 ms
+64 bytes from 10.99.9.20: icmp_seq=4 ttl=255 time=26.6 ms
+64 bytes from 10.99.9.20: icmp_seq=5 ttl=255 time=43.3 ms
+
+--- 10.99.9.20 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 4004ms
+rtt min/avg/max/mdev = 26.656/96.894/333.975/118.713 ms
+### 2026-11-17T11:54:01+0700 android TCP ke l5g-server:5201 (iperf3 yg sudah ada), 3x
+rc=0
+rc=0
+rc=0
+### 2026-11-17T11:54:06+0700 android UDP ke :9000 (tanpa listener; cukup terlihat di conn.log)
+rc=124
+### 2026-11-17T11:54:09+0700 selesai
