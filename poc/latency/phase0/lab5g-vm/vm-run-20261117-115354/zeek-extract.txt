@@ -1,0 +1,27 @@
+UE_IP=10.45.0.38
+-rw-r----- 1 root lab    5498 Nov 17 04:54 conn.2026-11-17-04-50-00.log
+-rw-r----- 1 root lab     446 Nov 17 04:55 conn.log
+-rw-r----- 1 root lab    4530 Nov 17 04:53 gtpu_agg.2026-11-17-04-50-00.log
+-rw-r----- 1 root lab   10673 Nov 17 04:54 gtpv2.2026-11-17-04-50-00.log
+-rw-r----- 1 root lab    1830 Nov 17 04:54 tunnel.2026-11-17-04-50-00.log
+===== /dev/shm/netprobe-zeek-live/conn.log (header + baris yang memuat 10.45.0.38 / 10.99.9.20 / 10.99.2.)
+===== /dev/shm/netprobe-zeek-live/conn.2026-11-17-04-50-00.log (header + baris yang memuat 10.45.0.38 / 10.99.9.20 / 10.99.2.)
+{"_sensor":"lab5g-vm","ts":1794891233.641913,"uid":"CdEKoS1Q56ybhDaT43","id.orig_h":"10.45.0.38","id.orig_p":58296,"id.resp_h":"10.99.9.20","id.resp_p":5201,"proto":"tcp","duration":0.027444124221801758,"orig_bytes":20,"resp_bytes":9,"conn_state":"SF","local_orig":true,"local_resp":true,"missed_bytes":0,"history":"ShADFXTadft","orig_pkts":24,"orig_ip_bytes":1332,"resp_pkts":18,"resp_ip_bytes":987,"tunnel_parents":["CixY1LCEG62pYPOve","CD4Rfe2CoJncdyHpd","Cyvvtm36t6KTXDxIrg","CL32z3kw8uR4Cc8zg"],"ip_proto":6}
+{"_sensor":"lab5g-vm","ts":1794891234.939704,"uid":"CYhw6f4iRVUWqSwp7g","id.orig_h":"10.45.0.38","id.orig_p":58302,"id.resp_h":"10.99.9.20","id.resp_p":5201,"proto":"tcp","duration":0.026447057723999023,"orig_bytes":20,"resp_bytes":9,"conn_state":"SF","local_orig":true,"local_resp":true,"missed_bytes":0,"history":"ShADFXTadft","orig_pkts":24,"orig_ip_bytes":1332,"resp_pkts":18,"resp_ip_bytes":987,"tunnel_parents":["CixY1LCEG62pYPOve","CD4Rfe2CoJncdyHpd","Cyvvtm36t6KTXDxIrg","CL32z3kw8uR4Cc8zg"],"ip_proto":6}
+{"_sensor":"lab5g-vm","ts":1794891236.293093,"uid":"CvBz27RlPq0WMaC71","id.orig_h":"10.45.0.38","id.orig_p":58304,"id.resp_h":"10.99.9.20","id.resp_p":5201,"proto":"tcp","duration":0.024595975875854492,"orig_bytes":20,"resp_bytes":9,"conn_state":"SF","local_orig":true,"local_resp":true,"missed_bytes":0,"history":"ShADFXTadft","orig_pkts":24,"orig_ip_bytes":1332,"resp_pkts":18,"resp_ip_bytes":987,"tunnel_parents":["CixY1LCEG62pYPOve","CD4Rfe2CoJncdyHpd","Cyvvtm36t6KTXDxIrg","CL32z3kw8uR4Cc8zg"],"ip_proto":6}
+{"_sensor":"lab5g-vm","ts":1794891187.040407,"uid":"CB9pOA2cjiUjwfIPKl","id.orig_h":"10.45.0.38","id.orig_p":8,"id.resp_h":"10.99.9.20","id.resp_p":0,"proto":"icmp","duration":45.9516019821167,"orig_bytes":1344,"resp_bytes":1344,"conn_state":"OTH","local_orig":true,"local_resp":true,"missed_bytes":0,"history":"X","orig_pkts":24,"orig_ip_bytes":2016,"resp_pkts":24,"resp_ip_bytes":2016,"tunnel_parents":["CixY1LCEG62pYPOve","CD4Rfe2CoJncdyHpd","Cyvvtm36t6KTXDxIrg","CL32z3kw8uR4Cc8zg"],"ip_proto":1}
+{"_sensor":"lab5g-vm","ts":1794891237.66544,"uid":"CJUr1F1DwqLSFlrLZ","id.orig_h":"10.45.0.38","id.orig_p":44070,"id.resp_h":"10.99.9.20","id.resp_p":9000,"proto":"udp","duration":0.00033783912658691406,"orig_bytes":54,"resp_bytes":0,"conn_state":"S0","local_orig":true,"local_resp":true,"missed_bytes":0,"history":"D","orig_pkts":3,"orig_ip_bytes":138,"resp_pkts":0,"resp_ip_bytes":0,"tunnel_parents":["CD4Rfe2CoJncdyHpd","CL32z3kw8uR4Cc8zg"],"ip_proto":17}
+{"_sensor":"lab5g-vm","ts":1794891237.665851,"uid":"CPv2pRbG0J8GQGWM3","id.orig_h":"10.99.9.20","id.orig_p":3,"id.resp_h":"10.45.0.38","id.resp_p":3,"proto":"icmp","duration":0.00013899803161621094,"orig_bytes":138,"resp_bytes":0,"conn_state":"OTH","local_orig":true,"local_resp":true,"missed_bytes":0,"orig_pkts":3,"orig_ip_bytes":222,"resp_pkts":0,"resp_ip_bytes":0,"tunnel_parents":["CixY1LCEG62pYPOve","Cyvvtm36t6KTXDxIrg"],"ip_proto":1,"vlan":109}
+===== /dev/shm/netprobe-zeek-live/tunnel.2026-11-17-04-50-00.log (header + baris yang memuat 10.45.0.38 / 10.99.9.20 / 10.99.2.)
+===== VM tcpdump-free: counters UE NAT
+Chain POSTROUTING (policy ACCEPT 23 packets, 1768 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    4   196 DOCKER_POSTROUTING  0    --  *      *       0.0.0.0/0            127.0.0.11          
+    9   646 MASQUERADE  0    --  *      tun_srsue  172.22.10.1          0.0.0.0/0            /* poc-phase0 */
+Chain DOCKER-USER (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+   30  1798 ACCEPT     0    --  ens3   br-5bd8dbed8b33  172.22.10.1          10.99.9.20           /* poc-phase0 */
+   24  1481 ACCEPT     0    --  br-5bd8dbed8b33 ens3    10.99.9.20           172.22.10.1          ctstate RELATED,ESTABLISHED /* poc-phase0 */
+    0     0 ACCEPT     0    --  clab-s1u-br *       0.0.0.0/0            0.0.0.0/0            /* set by containerlab */
+    0     0 ACCEPT     0    --  *      clab-s1u-br  0.0.0.0/0            0.0.0.0/0            /* set by containerlab */
+    0     0 RETURN     0    --  *      *       0.0.0.0/0            0.0.0.0/0           

@@ -1,0 +1,77 @@
+14:41:36.235732 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [S], seq 3206929169, win 29200, options [mss 1460,sackOK,TS val 3019134240 ecr 0,nop,wscale 7], length 0
+14:41:36.271268 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45596: Flags [S.], seq 3055090922, ack 3206929170, win 65160, options [mss 1460,sackOK,TS val 285327547 ecr 3019134240,nop,wscale 7], length 0
+14:41:36.271334 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [.], ack 1, win 229, options [nop,nop,TS val 3019134276 ecr 285327547], length 0
+14:41:36.278882 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [P.], seq 1:37, ack 1, win 229, options [nop,nop,TS val 3019134284 ecr 285327547], length 36
+..UL....magnonpocexamine00000000179490129237
+14:41:36.279662 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [P.], seq 37:38, ack 1, win 229, options [nop,nop,TS val 3019134284 ecr 285327547], length 1
+14:41:36.294941 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45596: Flags [.], ack 37, win 509, options [nop,nop,TS val 285327571 ecr 3019134284], length 0
+14:41:36.294976 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45596: Flags [.], ack 38, win 509, options [nop,nop,TS val 285327571 ecr 3019134284], length 0
+14:41:36.294993 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45596: Flags [P.], seq 1:2, ack 38, win 509, options [nop,nop,TS val 285327571 ecr 3019134284], length 1
+14:41:36.295004 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [.], ack 2, win 229, options [nop,nop,TS val 3019134300 ecr 285327571], length 0
+14:41:36.855998 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [F.], seq 38, ack 2, win 229, options [nop,nop,TS val 3019134861 ecr 285327571], length 0
+14:41:36.890323 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45596: Flags [P.], seq 2:3, ack 39, win 509, options [nop,nop,TS val 285328166 ecr 3019134861], length 1
+14:41:36.890367 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [.], ack 3, win 229, options [nop,nop,TS val 3019134895 ecr 285328166], length 0
+14:41:36.890394 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45596: Flags [P.], seq 3:7, ack 39, win 509, options [nop,nop,TS val 285328166 ecr 3019134861], length 4
+14:41:36.890406 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [.], ack 7, win 229, options [nop,nop,TS val 3019134895 ecr 285328166], length 0
+14:41:36.890422 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45596: Flags [P.], seq 7:11, ack 39, win 509, options [nop,nop,TS val 285328166 ecr 3019134861], length 4
+14:41:36.890432 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [.], ack 11, win 229, options [nop,nop,TS val 3019134895 ecr 285328166], length 0
+14:41:36.891546 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45596: Flags [F.], seq 11, ack 39, win 509, options [nop,nop,TS val 285328166 ecr 3019134861], length 0
+14:41:36.891561 IP 172.26.0.2.45596 > 10.99.9.20.targus-getdata1: Flags [.], ack 12, win 229, options [nop,nop,TS val 3019134896 ecr 285328166], length 0
+14:41:38.358952 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [S], seq 3347985974, win 29200, options [mss 1460,sackOK,TS val 3019136364 ecr 0,nop,wscale 7], length 0
+14:41:38.395195 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45602: Flags [S.], seq 1950125064, ack 3347985975, win 65160, options [mss 1460,sackOK,TS val 285329671 ecr 3019136364,nop,wscale 7], length 0
+14:41:38.395255 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [.], ack 1, win 229, options [nop,nop,TS val 3019136400 ecr 285329671], length 0
+14:41:38.397885 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [P.], seq 1:37, ack 1, win 229, options [nop,nop,TS val 3019136403 ecr 285329671], length 36
+..].....magnonpocexamine00000000179490129449
+14:41:38.398653 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [P.], seq 37:38, ack 1, win 229, options [nop,nop,TS val 3019136403 ecr 285329671], length 1
+14:41:38.419117 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45602: Flags [.], ack 37, win 509, options [nop,nop,TS val 285329695 ecr 3019136403], length 0
+14:41:38.419156 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45602: Flags [.], ack 38, win 509, options [nop,nop,TS val 285329695 ecr 3019136403], length 0
+14:41:38.419189 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45602: Flags [P.], seq 1:2, ack 38, win 509, options [nop,nop,TS val 285329695 ecr 3019136403], length 1
+14:41:38.419210 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [.], ack 2, win 229, options [nop,nop,TS val 3019136424 ecr 285329695], length 0
+14:41:38.898089 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [F.], seq 38, ack 2, win 229, options [nop,nop,TS val 3019136903 ecr 285329695], length 0
+14:41:38.920039 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45602: Flags [P.], seq 2:3, ack 39, win 509, options [nop,nop,TS val 285330196 ecr 3019136903], length 1
+14:41:38.920092 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [.], ack 3, win 229, options [nop,nop,TS val 3019136925 ecr 285330196], length 0
+14:41:38.920138 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45602: Flags [P.], seq 3:7, ack 39, win 509, options [nop,nop,TS val 285330196 ecr 3019136903], length 4
+14:41:38.920163 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [.], ack 7, win 229, options [nop,nop,TS val 3019136925 ecr 285330196], length 0
+14:41:38.920194 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45602: Flags [P.], seq 7:11, ack 39, win 509, options [nop,nop,TS val 285330196 ecr 3019136903], length 4
+14:41:38.920220 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [.], ack 11, win 229, options [nop,nop,TS val 3019136925 ecr 285330196], length 0
+14:41:38.920254 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45602: Flags [F.], seq 11, ack 39, win 509, options [nop,nop,TS val 285330196 ecr 3019136903], length 0
+14:41:38.920278 IP 172.26.0.2.45602 > 10.99.9.20.targus-getdata1: Flags [.], ack 12, win 229, options [nop,nop,TS val 3019136925 ecr 285330196], length 0
+14:41:40.400337 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [S], seq 3884962033, win 29200, options [mss 1460,sackOK,TS val 3019138405 ecr 0,nop,wscale 7], length 0
+14:41:40.438985 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45612: Flags [S.], seq 2354487508, ack 3884962034, win 65160, options [mss 1460,sackOK,TS val 285331715 ecr 3019138405,nop,wscale 7], length 0
+14:41:40.439039 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [.], ack 1, win 229, options [nop,nop,TS val 3019138444 ecr 285331715], length 0
+14:41:40.441429 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [P.], seq 1:37, ack 1, win 229, options [nop,nop,TS val 3019138446 ecr 285331715], length 36
+..e.....magnonpocexamine00000000179490129654
+14:41:40.442078 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [P.], seq 37:38, ack 1, win 229, options [nop,nop,TS val 3019138447 ecr 285331715], length 1
+14:41:40.462717 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45612: Flags [.], ack 37, win 509, options [nop,nop,TS val 285331739 ecr 3019138446], length 0
+14:41:40.462760 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45612: Flags [.], ack 38, win 509, options [nop,nop,TS val 285331739 ecr 3019138447], length 0
+14:41:40.462791 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45612: Flags [P.], seq 1:2, ack 38, win 509, options [nop,nop,TS val 285331739 ecr 3019138447], length 1
+14:41:40.462812 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [.], ack 2, win 229, options [nop,nop,TS val 3019138468 ecr 285331739], length 0
+14:41:40.941113 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [F.], seq 38, ack 2, win 229, options [nop,nop,TS val 3019138946 ecr 285331739], length 0
+14:41:40.983323 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45612: Flags [P.], seq 2:3, ack 39, win 509, options [nop,nop,TS val 285332260 ecr 3019138946], length 1
+14:41:40.983378 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [.], ack 3, win 229, options [nop,nop,TS val 3019138988 ecr 285332260], length 0
+14:41:40.983428 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45612: Flags [P.], seq 3:7, ack 39, win 509, options [nop,nop,TS val 285332260 ecr 3019138946], length 4
+14:41:40.983451 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [.], ack 7, win 229, options [nop,nop,TS val 3019138988 ecr 285332260], length 0
+14:41:40.984447 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45612: Flags [P.], seq 7:11, ack 39, win 509, options [nop,nop,TS val 285332260 ecr 3019138946], length 4
+14:41:40.984479 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [.], ack 11, win 229, options [nop,nop,TS val 3019138989 ecr 285332260], length 0
+14:41:40.984511 IP 10.99.9.20.targus-getdata1 > 172.26.0.2.45612: Flags [F.], seq 11, ack 39, win 509, options [nop,nop,TS val 285332260 ecr 3019138946], length 0
+14:41:40.984534 IP 172.26.0.2.45612 > 10.99.9.20.targus-getdata1: Flags [.], ack 12, win 229, options [nop,nop,TS val 3019138989 ecr 285332260], length 0
+14:41:42.446045 IP 172.26.0.2.52057 > 10.99.9.20.cslistener: UDP, length 33
+c	..Y#(.)..MAGNON-POC seq=1 ts=1794901298542
+14:41:42.472532 IP 10.99.9.20.cslistener > 172.26.0.2.52057: UDP, length 33
+c	.....#(.Y.)%.MAGNON-POC seq=1 ts=1794901298542
+14:41:42.675258 IP 172.26.0.2.52057 > 10.99.9.20.cslistener: UDP, length 33
+c	..Y#(.)..MAGNON-POC seq=2 ts=1794901298774
+14:41:42.712088 IP 10.99.9.20.cslistener > 172.26.0.2.52057: UDP, length 33
+c	.....#(.Y.)!.MAGNON-POC seq=2 ts=1794901298774
+14:41:42.914904 IP 172.26.0.2.52057 > 10.99.9.20.cslistener: UDP, length 33
+c	..Y#(.)..MAGNON-POC seq=3 ts=1794901299014
+14:41:42.947700 IP 10.99.9.20.cslistener > 172.26.0.2.52057: UDP, length 33
+c	.....#(.Y.)(.MAGNON-POC seq=3 ts=1794901299014
+14:41:43.150071 IP 172.26.0.2.52057 > 10.99.9.20.cslistener: UDP, length 33
+c	..Y#(.)..MAGNON-POC seq=4 ts=1794901299249
+14:41:43.187592 IP 10.99.9.20.cslistener > 172.26.0.2.52057: UDP, length 33
+c	.....#(.Y.)!.MAGNON-POC seq=4 ts=1794901299249
+14:41:43.391435 IP 172.26.0.2.52057 > 10.99.9.20.cslistener: UDP, length 33
+c	..Y#(.)..MAGNON-POC seq=5 ts=1794901299490
+14:41:43.428698 IP 10.99.9.20.cslistener > 172.26.0.2.52057: UDP, length 33
+MAGNON-POC seq=5 ts=1794901299490

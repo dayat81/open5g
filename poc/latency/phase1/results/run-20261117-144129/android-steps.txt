@@ -1,0 +1,40 @@
+### 2026-11-17T14:41:30+0700 start VPN
+Starting: Intent { cmp=id.magnon.poc.examine/.MainActivity }
+### 2026-11-17T14:41:34+0700 tun0 / rules / dumpsys
+tun0             UNKNOWN        10.111.0.2/32 
+10.99.9.0/24 dev tun0 table 1000000022 proto static scope link 
+10.111.0.2 dev tun0 table 1000000022 proto static scope link 
+10.99.9.0/24 dev tun0 table 1022 proto static scope link 
+10.111.0.2 dev tun0 table 1022 proto static scope link 
+local 10.111.0.2 dev tun0 table local proto kernel scope host src 10.111.0.2 
+fe80::/64 dev tun0 table 1022 proto kernel metric 256 pref medium
+local fe80::d468:ff97:682c:5989 dev tun0 table local proto kernel metric 0 pref medium
+multicast ff00::/8 dev tun0 table local proto kernel metric 256 pref medium
+11000:	from all iif lo oif dummy0 uidrange 0-0 lookup 1002 
+11000:	from all iif lo oif wlan0 uidrange 0-0 lookup 1016 
+11000:	from all iif lo oif eth0 uidrange 0-0 lookup 1015 
+12000:	from all iif tun0 lookup 97 
+13000:	from all fwmark 0x0/0x20000 iif lo uidrange 10174-10174 lookup 1022 
+13000:	from all fwmark 0x0/0x20000 iif lo uidrange 20174-20174 lookup 1022 
+16000:	from all fwmark 0x10078/0x1ffff iif lo uidrange 10174-10174 lookup 1022 
+16000:	from all fwmark 0x10078/0x1ffff iif lo uidrange 20174-20174 lookup 1022 
+16000:	from all fwmark 0x10078/0x1ffff iif lo uidrange 0-0 lookup 1022 
+17000:	from all iif lo oif tun0 uidrange 10174-10174 lookup 1022 
+  2: VpnNetworkProvider:0
+  NetworkAgentInfo{network{104}  handle{450082295821}  ni{MOBILE[HSPA] CONNECTED extra: epc.tmobile.com} created=2026-11-12T09:18:18.770Z Score(Policies : EVER_EVALUATED ; KeepConnected : 0)  created 13981637  lp{{InterfaceName: eth0 LinkAddresses: [ 10.0.2.15/24 ] DnsAddresses: [ /10.0.2.3 ] Domains: null MTU: 1500 TcpBufferSizes: 2097152,6291456,16777216,512000,2097152,8388608 Routes: [ 0.0.0.0/0 -> 10.0.2.2 eth0 mtu 1500,10.0.2.0/24 -> 0.0.0.0 eth0 mtu 0 ]}}  nc{[ Transports: CELLULAR Capabilities: MMS&SUPL&DUN&FOTA&IMS&CBS&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING&NOT_CONGESTED&NOT_SUSPENDED&NOT_VCN_MANAGED&MMTEL LinkUpBandwidth>=1800Kbps LinkDnBandwidth>=4300Kbps Specifier: <TelephonyNetworkSpecifier [mSubId = 1]> SubscriptionIds: {1} UnderlyingNetworks: Null]}  factorySerialNumber=4}
+      NetworkRequest [ BACKGROUND_REQUEST id=2, [ Transports: CELLULAR Capabilities: INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_VCN_MANAGED RequestorUid: 1000 RequestorPkg: android UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=10, [ Capabilities: NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_VCN_MANAGED Uid: 1000 RequestorUid: 1000 RequestorPkg: android UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=12, [ Transports: CELLULAR Capabilities: INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_VCN_MANAGED Uid: 1000 RequestorUid: 1000 RequestorPkg: android UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=20, [ Transports: CELLULAR|WIFI Capabilities: NOT_VPN RequestorUid: 10157 RequestorPkg: com.android.systemui UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=26, [ Transports: CELLULAR|WIFI Capabilities: NOT_VPN RequestorUid: 10157 RequestorPkg: com.android.systemui UnderlyingNetworks: Null] ]
+  NetworkAgentInfo{network{117}  handle{505916870669}  ni{WIFI CONNECTED extra: } created=2026-11-17T07:17:10.438Z Score(Policies : TRANSPORT_PRIMARY&EVER_EVALUATED&IS_UNMETERED ; KeepConnected : 0)  created 438713272  lp{{InterfaceName: wlan0 LinkAddresses: [ fe80::c5ca:b1d1:2e75:85fe/64,10.0.2.16/24,fec0::98d:ed65:858b:69a6/64,fec0::e658:57f0:12a6:22ca/64 ] DnsAddresses: [ /10.0.2.3 ] Domains: null MTU: 0 ServerAddress: /10.0.2.2 TcpBufferSizes: 524288,1048576,2097152,262144,524288,1048576 Routes: [ fe80::/64 -> :: wlan0 mtu 0,::/0 -> fe80::2 wlan0 mtu 0,fec0::/64 -> :: wlan0 mtu 0,10.0.2.0/24 -> 0.0.0.0 wlan0 mtu 0,0.0.0.0/0 -> 10.0.2.2 wlan0 mtu 0 ]}}  nc{[ Transports: WIFI Capabilities: NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING&FOREGROUND&NOT_CONGESTED&NOT_SUSPENDED&NOT_VCN_MANAGED LinkUpBandwidth>=12000Kbps LinkDnBandwidth>=30000Kbps Specifier: <WifiNetworkAgentSpecifier [WifiConfiguration=, SSID="AndroidWifi", BSSID=02:15:b2:00:00:01, band=1, mMatchLocalOnlySpecifiers=false]> TransportInfo: <SSID: "AndroidWifi", BSSID: 02:15:b2:00:00:01, MAC: 02:15:b2:00:00:00, IP: /10.0.2.16, Security type: 0, Supplicant state: COMPLETED, Wi-Fi standard: 1, RSSI: -50, Link speed: 6Mbps, Tx Link speed: 6Mbps, Max Supported Tx Link speed: 54Mbps, Rx Link speed: 2Mbps, Max Supported Rx Link speed: 54Mbps, Frequency: 2437MHz, Net ID: 0, Metered hint: false, score: 60, isUsable: true, CarrierMerged: false, SubscriptionId: -1, IsPrimary: 1, Trusted: true, Restricted: false, Ephemeral: false, OEM paid: false, OEM private: false, OSU AP: false, FQDN: <none>, Provider friendly name: <none>, Requesting package name: <none>"AndroidWifi"openMLO Information: , AP MLD Address: <none>, AP MLO Link Id: <none>, AP MLO Affiliated links: <none>> SignalStrength: -50 OwnerUid: 10151 AdminUids: [10151] SSID: "AndroidWifi" UnderlyingNetworks: Null]}  factorySerialNumber=5}
+      NetworkRequest [ REQUEST id=1, [ Capabilities: INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_VCN_MANAGED RequestorUid: 1000 RequestorPkg: android UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=9, [ Capabilities: NOT_RESTRICTED&TRUSTED&NOT_VPN&FOREGROUND&NOT_VCN_MANAGED Uid: 1000 RequestorUid: 1000 RequestorPkg: android UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=10, [ Capabilities: NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_VCN_MANAGED Uid: 1000 RequestorUid: 1000 RequestorPkg: android UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=18, [ Transports: WIFI Capabilities: NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_VCN_MANAGED Uid: 1073 RequestorUid: 1073 RequestorPkg: com.google.android.networkstack UnderlyingNetworks: Null] ]
+      NetworkRequest [ TRACK_SYSTEM_DEFAULT id=19, [ Capabilities: INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_VCN_MANAGED RequestorUid: 1073 RequestorPkg: com.google.android.networkstack.tethering UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=20, [ Transports: CELLULAR|WIFI Capabilities: NOT_VPN RequestorUid: 10157 RequestorPkg: com.android.systemui UnderlyingNetworks: Null] ]
+      NetworkRequest [ LISTEN id=26, [ Transports: CELLULAR|WIFI Capabilities: NOT_VPN RequestorUid: 10157 RequestorPkg: com.android.systemui UnderlyingNetworks: Null] ]
+### 2026-11-17T14:41:35+0700 generator (app sama, uid VPN-allowed)
+Starting: Intent { cmp=id.magnon.poc.examine/.GenActivity (has extras) }
+### 2026-11-17T14:41:46+0700 selesai trafik
